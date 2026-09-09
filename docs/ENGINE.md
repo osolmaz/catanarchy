@@ -320,7 +320,7 @@ interface AwardState {
 
 interface RandomCursor {
   readonly algorithm: "catanarchy-prng-v1";
-  readonly state: number;
+  readonly value: number;
   readonly draws: number;
 }
 

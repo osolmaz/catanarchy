@@ -1,6 +1,7 @@
 import {
   checkInvariants,
   createGame,
+  deriveRandomState,
   handleCommand,
   legalActions,
   observe,
@@ -60,6 +61,15 @@ const expectedLegalActionIds = (state: GameState): ReadonlyArray<string> => {
 };
 
 describe("initial placement", () => {
+  it("initializes the future dice and resource-steal streams", () => {
+    const state = Effect.runSync(createGame(config())).state;
+
+    expect(state.random.dice).toEqual(deriveRandomState(state.config.seed, "dice"));
+    expect(state.random.resourceSteal).toEqual(
+      deriveRandomState(state.config.seed, "resource-steal"),
+    );
+  });
+
   it.each([3, 4])("completes a %i-player setup", (playerCount) => {
     const created = Effect.runSync(createGame(config(playerCount)));
     const completed = completeSetup(created.state);

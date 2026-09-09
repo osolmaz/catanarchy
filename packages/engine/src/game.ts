@@ -26,6 +26,7 @@ import { decodeGameCommand, decodeGameConfig, decodeGameEventEnvelope } from "@c
 import { Effect } from "effect";
 import { ReplayViolation, RuleViolation } from "./errors.js";
 import { generateGameMaterials } from "./layout.js";
+import { deriveRandomState } from "./random.js";
 import { STANDARD_TOPOLOGY } from "./topology.js";
 
 const EMPTY_RESOURCES: ResourceCounts = { lumber: 0, brick: 0, wool: 0, grain: 0, ore: 0 };
@@ -98,6 +99,8 @@ export const createGame = (input: GameConfig): Effect.Effect<CommandResult, Rule
       random: {
         board: materials.boardRandom,
         developmentDeck: materials.developmentDeckRandom,
+        dice: deriveRandomState(config.seed, "dice"),
+        resourceSteal: deriveRandomState(config.seed, "resource-steal"),
       },
     };
     const event: EventEnvelope<GameCreatedEvent> = {

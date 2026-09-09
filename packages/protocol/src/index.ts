@@ -177,6 +177,8 @@ export interface GameState {
   readonly random: {
     readonly board: RandomState;
     readonly developmentDeck: RandomState;
+    readonly dice: RandomState;
+    readonly resourceSteal: RandomState;
   };
 }
 
