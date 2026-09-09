@@ -33,6 +33,7 @@ export {
 export type {
   NegotiationActionResult,
   NegotiationPolicy,
+  NegotiationProjectionOptions,
   NegotiationSession,
 } from "./negotiation.js";
 
@@ -543,6 +544,7 @@ const chooseNegotiationAction = async (
   timeoutMs: number,
   maxAttempts: number,
   unavailableAgents: WeakSet<SeatAgent>,
+  eventOffset: number,
 ): Promise<NegotiationChoice> => {
   const request: Omit<AgentNegotiationRequest, "signal"> = {
     matchId: state.matchId,
@@ -552,7 +554,11 @@ const chooseNegotiationAction = async (
     round,
     observation: structuredClone(observe(state, { type: "player", playerId: player.id })),
     negotiation: structuredClone(
-      projectNegotiation(session, { type: "player", playerId: player.id }),
+      projectNegotiation(
+        session,
+        { type: "player", playerId: player.id },
+        { eventOffset, currentWindowOffersOnly: true },
+      ),
     ),
   };
   const traces: NegotiationTrace[] = [];
@@ -604,6 +610,7 @@ const runNegotiationRound = async (
   timeoutMs: number,
   maxAttempts: number,
   unavailableAgents: WeakSet<SeatAgent>,
+  eventOffset: number,
 ): Promise<NegotiationRoundResult> => {
   let state = initialState;
   let session = initialSession;
@@ -624,6 +631,7 @@ const runNegotiationRound = async (
       timeoutMs,
       maxAttempts,
       unavailableAgents,
+      eventOffset,
     );
     if (isPassResult(choice.applied)) passes += 1;
     state = choice.applied.state;
@@ -663,6 +671,7 @@ const runNegotiationWindow = async (
       timeoutMs,
       maxAttempts,
       unavailableAgents,
+      historicalEventCount,
     );
     state = result.state;
     session = result.session;

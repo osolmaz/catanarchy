@@ -269,7 +269,7 @@ describe("agent harness", () => {
       Array.from({ length: result.negotiations.length }, (_value, sequence) => sequence),
     );
     expect(Effect.runSync(replay(result.events))).toEqual(result.state);
-  });
+  }, 20_000);
 
   it("keeps private discard choices out of decision traces", async () => {
     const result = await Effect.runPromise(

@@ -774,18 +774,28 @@ const eventVisible = (
   }
 };
 
+export interface NegotiationProjectionOptions {
+  readonly eventOffset?: number;
+  readonly currentWindowOffersOnly?: boolean;
+}
+
 export const projectNegotiation = (
   session: NegotiationSession,
   viewer: Viewer = { type: "public" },
+  options: NegotiationProjectionOptions = {},
 ): NegotiationView => {
   const promises = session.promises.filter((promise) => promiseVisible(promise, viewer));
   const promiseIds = new Set(promises.map(({ id }) => id));
+  const events = session.events.slice(options.eventOffset ?? 0);
+  const offers = options.currentWindowOffersOnly
+    ? session.offers.filter(({ id }) => id.startsWith(`${session.windowId}:offer:`))
+    : session.offers;
   return {
     schema: "catanarchy.negotiation-view.v1",
     matchId: session.matchId,
     sequence: session.sequence,
-    events: session.events.filter((event) => eventVisible(session, event, viewer)),
-    offers: session.offers.filter((offer) => offerVisible(offer, viewer)),
+    events: events.filter((event) => eventVisible(session, event, viewer)),
+    offers: offers.filter((offer) => offerVisible(offer, viewer)),
     promises,
     evidence: session.evidence.filter(({ promiseId }) => promiseIds.has(promiseId)),
   };
