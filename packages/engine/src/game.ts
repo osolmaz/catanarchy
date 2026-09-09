@@ -478,32 +478,80 @@ const isInitialEvent = (event: GameEvent | undefined): event is EventEnvelope<Ga
   event.sequence === 0 &&
   event.event.type === "game.created";
 
-const hasValidNextMetadata = (event: GameEvent, state: GameState): boolean =>
-  event.schema === "catanarchy.game-event.v1" &&
-  event.matchId === state.matchId &&
-  event.sequence === state.sequence + 1 &&
-  event.event.type !== "game.created";
+const canonicalize = (value: unknown): unknown => {
+  if (Array.isArray(value)) return value.map(canonicalize);
+  if (typeof value !== "object" || value === null) return value;
+  const record = value as Readonly<Record<string, unknown>>;
+  return Object.fromEntries(
+    Object.keys(record)
+      .sort()
+      .map((key) => [key, canonicalize(record[key])]),
+  );
+};
+
+const sameCanonicalValue = (left: unknown, right: unknown): boolean =>
+  JSON.stringify(canonicalize(left)) === JSON.stringify(canonicalize(right));
+
+const commandFromEvent = (state: GameState, envelope: GameEvent): GameCommand | null => {
+  const common = {
+    schema: "catanarchy.command.v1" as const,
+    matchId: envelope.matchId,
+    commandId: envelope.commandId,
+    expectedSequence: state.sequence,
+  };
+  switch (envelope.event.type) {
+    case "settlement.placed":
+      return {
+        ...common,
+        playerId: envelope.event.playerId,
+        command: { type: "place-initial-settlement", vertexId: envelope.event.vertexId },
+      };
+    case "road.placed":
+      return {
+        ...common,
+        playerId: envelope.event.playerId,
+        command: { type: "place-initial-road", edgeId: envelope.event.edgeId },
+      };
+    default:
+      return null;
+  }
+};
+
+const replayFailure = (message: string): ReplayViolation => new ReplayViolation({ message });
 
 export const replay = (
   events: ReadonlyArray<GameEvent>,
-): Effect.Effect<GameState, ReplayViolation> => {
-  const first = events[0];
-  if (!isInitialEvent(first)) {
-    return Effect.fail(
-      new ReplayViolation({ message: "A replay must start with game.created at sequence zero." }),
-    );
-  }
-  let state = first.event.state;
-  if (state.sequence !== 0 || first.matchId !== state.matchId) {
-    return Effect.fail(new ReplayViolation({ message: "The initial event has invalid metadata." }));
-  }
-  for (const event of events.slice(1)) {
-    if (!hasValidNextMetadata(event, state)) {
-      return Effect.fail(
-        new ReplayViolation({ message: "Replay event metadata must be valid and contiguous." }),
+): Effect.Effect<GameState, ReplayViolation> =>
+  Effect.gen(function* () {
+    const first = events[0];
+    if (!isInitialEvent(first)) {
+      return yield* Effect.fail(
+        replayFailure("A replay must start with game.created at sequence zero."),
       );
     }
-    state = applyEvent(state, event);
-  }
-  return Effect.succeed(state);
-};
+    const created = yield* createGame(first.event.state.config).pipe(
+      Effect.mapError(() => replayFailure("The initial game configuration is invalid.")),
+    );
+    if (!sameCanonicalValue(created.events[0], first)) {
+      return yield* Effect.fail(replayFailure("The initial game event is invalid."));
+    }
+
+    let state = created.state;
+    let index = 1;
+    while (index < events.length) {
+      const command = commandFromEvent(state, events[index]!);
+      if (command === null) {
+        return yield* Effect.fail(replayFailure("A replay event cannot start a valid command."));
+      }
+      const expected = yield* decide(state, command).pipe(
+        Effect.mapError(() => replayFailure("A replay event violates the game rules.")),
+      );
+      const actual = events.slice(index, index + expected.length);
+      if (!sameCanonicalValue(expected, actual)) {
+        return yield* Effect.fail(replayFailure("A replay event batch is invalid."));
+      }
+      state = actual.reduce((current, event) => applyEvent(current, event), state);
+      index += expected.length;
+    }
+    return state;
+  });

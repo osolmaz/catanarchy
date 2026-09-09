@@ -198,6 +198,38 @@ describe("replay failures", () => {
     expect(Either.isLeft(Effect.runSync(Effect.either(replay([]))))).toBe(true);
   });
 
+  it("rejects forged initial state and event payloads", () => {
+    const created = Effect.runSync(createGame(config()));
+    const first = created.events[0];
+    if (first.event.type !== "game.created") throw new Error("Expected game creation.");
+    const forgedCreation = {
+      ...first,
+      event: {
+        ...first.event,
+        state: { ...first.event.state, bank: { ...first.event.state.bank, ore: 18 } },
+      },
+    } as GameEvent;
+    const legal = legalActions(created.state)[0]!;
+    const placed = Effect.runSync(handleCommand(created.state, legal.command)).events[0]!;
+    const forgedCompletion = {
+      ...placed,
+      event: { type: "initial-placement.completed" },
+    } as GameEvent;
+    const forgedActor = {
+      ...placed,
+      event:
+        placed.event.type === "settlement.placed"
+          ? { ...placed.event, playerId: "blue" }
+          : placed.event,
+    } as GameEvent;
+
+    expect(Either.isLeft(Effect.runSync(Effect.either(replay([forgedCreation]))))).toBe(true);
+    expect(Either.isLeft(Effect.runSync(Effect.either(replay([first, forgedCompletion]))))).toBe(
+      true,
+    );
+    expect(Either.isLeft(Effect.runSync(Effect.either(replay([first, forgedActor]))))).toBe(true);
+  });
+
   it("rejects a sequence gap, a wrong match, and a second creation event", () => {
     const created = Effect.runSync(createGame(config()));
     const state = applyFirstAction(created.state);

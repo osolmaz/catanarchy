@@ -415,7 +415,7 @@ Initial event types are:
 - `road.placed`
 - `initial-placement.completed`
 
-`game.created` is the first event at sequence zero. Its payload contains the validated configuration, complete layout, hidden development-deck order, initial placement phase, and random cursors after initialization. This one complete event prevents a replay from exposing a partly initialized state. Replay applies its recorded outcomes and does not shuffle again.
+`game.created` is the first event at sequence zero. Its payload contains the validated configuration, complete layout, hidden development-deck order, initial placement phase, and random cursors after initialization. This one complete event prevents a replay from exposing a partly initialized state. For the current native schema, replay regenerates this first state and requires an exact match before it accepts later events.
 
 Private event data stays in the access-controlled authoritative log. Public and seat-specific traces receive redacted projections.
 
@@ -436,7 +436,7 @@ observe(state, viewer): GameObservation
 checkInvariants(state): ReadonlyArray<string>
 ```
 
-`createGame` validates the configuration, draws the initial random values, and emits `game.created` with the first complete state. `decide` decodes and checks one command, including its match ID, then returns domain events. `applyEvent` applies one accepted event without input or randomness. `handleCommand` calls `decide` and `applyEvent` in order. `replay` requires `game.created` first, then checks event version, match ID, and contiguous sequence before applying each remaining event. `checkInvariants` is available to tests and optional debug builds.
+`createGame` validates the configuration, draws the initial random values, and emits `game.created` with the first complete state. `decide` decodes and checks one command, including its match ID, then returns domain events. `applyEvent` applies one accepted event without input or randomness. `handleCommand` calls `decide` and `applyEvent` in order. `replay` regenerates and checks `game.created`. It then reconstructs each command, runs the same rule decision, and requires the recorded event batch to match exactly before applying it. `checkInvariants` is available to tests and optional debug builds.
 
 ## Randomness
 
@@ -451,7 +451,7 @@ Each stream has a fixed algorithm version and cursor. For a bound `n`, bounded i
 
 Random values are consumed only while deciding an accepted random operation. The emitted event stores the outcome and updated cursor. Rejected commands cannot move a cursor.
 
-Changing a random algorithm is a protocol change because it affects seed reproducibility. Event replay remains stable because recorded outcomes do not depend on the new implementation.
+Changing a random algorithm is a protocol change because it affects seed reproducibility. The current replay validator supports its registered algorithm and schema version. Preserving older logs after an algorithm change requires keeping the matching versioned initializer or migrating those logs explicitly.
 
 ## Legal actions and observations
 
