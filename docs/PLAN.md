@@ -38,7 +38,7 @@ The standard game uses 19 terrain hexes and 18 number tokens. It also uses 9 har
 
 The generated board must satisfy the selected setup policy. The first policy will implement the variable setup from the current rulebook. Terrain is shuffled first. Number tokens then follow their defined spiral order while skipping the desert. Harbors occupy legal coastal positions. The robber starts on the desert.
 
-Board topology will use canonical integer identifiers. Hexes will use axial coordinates. Vertices and edges will derive from normalized lattice coordinates, so identity will not depend on insertion order or rendering geometry. Tests will assert that 19 hexes produce 54 vertices and 72 edges.
+The [engine design](ENGINE.md) defines the exact integer coordinate system, canonical IDs, state model, command and event flow, invariants, rule cases, test suites, and Milestone 1 merge gate. The engine supports only the regular radius-two topology during the first release.
 
 ### Initial placement
 
@@ -110,7 +110,7 @@ Each request will include its match and command IDs. It will identify the acting
 
 Events are the permanent record of accepted state changes. Each event will contain a schema identifier and sequence number. It will also contain an event type with its data. Random outcomes will be stored directly in events. Replay will not regenerate them.
 
-The reducer will fold an initial configuration and ordered events into authoritative state. Snapshots are caches and never replace the event log as the source of truth.
+The reducer will fold an initial `game.created` event and all following events into authoritative state. That first event contains the validated configuration and complete initialized game data, so the event log is self-contained. The reduced state stores its latest sequence but not its event history. The match store owns the append-only event log. Snapshots are caches and never replace that log as the source of truth.
 
 ### Observations
 
@@ -142,7 +142,7 @@ The Pi integration will replace the coding system prompt and expose only game to
 
 The harness will use documented Pi SDK APIs to create sessions with custom prompts and tools. It will also use the public subscription, cancellation, and disposal APIs. A Pi core change needs a concrete missing capability and its own plan.
 
-Normal Pi messages and tool results form the private player-session history. The canonical match log remains separate and contains only authorized public or player-specific projections. This prevents one player’s session from becoming a source of truth for the game.
+Normal Pi messages and tool results form the private player-session history. The access-controlled authoritative match log remains separate and contains the private events required for exact replay. Public and seat-specific training traces receive only authorized projections. A player session never becomes a source of truth for the game.
 
 ## Simulator and adapter APIs
 
@@ -183,16 +183,19 @@ Completion requires `npm run simulate` and `npm run check` to pass.
 
 ### Milestone 1: board and setup
 
-- [ ] Implement canonical coordinates for hexes and their vertices and edges.
-- [ ] Generate the standard board graph and verify its counts.
-- [ ] Add terrain and number-token generation.
-- [ ] Add harbor and development-deck generation.
-- [ ] Implement fixed and variable setup policies.
-- [ ] Enumerate and apply both initial placement rounds.
-- [ ] Grant second-settlement resources.
-- [ ] Add property tests for board connectivity and identity stability.
+The [engine design](ENGINE.md) is the detailed contract for this milestone.
 
-Completion requires deterministic replay of complete setup for a fixed seed.
+- [ ] Add branded integer coordinates and stable topology IDs.
+- [ ] Generate the regular 19-hex graph and pass every topology invariant.
+- [ ] Generate terrain and the official number-token spiral from a labeled random stream.
+- [ ] Represent the official frame and project its harbors onto the coastal ring.
+- [ ] Separate the event store from reduced game state and add exact replay.
+- [ ] Implement the forward and reverse initial-placement state machine.
+- [ ] Grant second-settlement resources as part of the accepted placement batch.
+- [ ] Generate canonical legal actions and seat-scoped observations.
+- [ ] Add topology, layout, rule, replay, invariant, and privacy tests.
+
+Completion requires a scripted agent to complete setup for three-player and four-player games through legal action IDs, save the events, and replay them to byte-identical state. Every merge-gate item in the engine design must pass.
 
 ### Milestone 2: production and main turn
 
@@ -273,6 +276,8 @@ Completion requires a repeatable batch that produces byte-stable event logs for 
 Completion requires one unchanged agent to play through the native engine and each supported adapter.
 
 ## Test strategy
+
+The [engine design](ENGINE.md) defines the Milestone 1 test files, mathematical topology checks, generated layout checks, exhaustive legal-action checks, replay cases, state invariants, privacy checks, and rule traceability matrix.
 
 Unit tests will cover rules and pure calculations. Property tests will cover graph structure and resource conservation. They will also cover piece limits and legal-action soundness against reducer invariants. Replay tests will compare complete event streams and final states for fixed inputs. Information-boundary tests will snapshot every viewer projection and search for private fields.
 

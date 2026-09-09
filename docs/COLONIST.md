@@ -158,6 +158,6 @@ The Colonist adapter will declare a capability profile for each observed room. R
 3. A dated Colonist article
 4. The official CATAN base-game rule as a fallback
 
-Each conformance fixture must record the observation date, room options, player count, and relevant application revision when it is visible. A conflict must remain visible in the fixture and this document.
+Each conformance fixture must record the observation date, room options, player count, and relevant application revision when it is visible. A conflict must remain visible in the fixture and this document. Shared base-game cases use the rule IDs and test structure in the [engine design](ENGINE.md).
 
 Timers, chat availability, and interface limits belong to adapter capabilities. Resource movement, legal placement, awards, and victory belong to the game-rule profile. This boundary lets the native engine stay authoritative while the adapter reproduces Colonist behavior accurately.
