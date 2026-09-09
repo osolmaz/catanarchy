@@ -1,0 +1,21 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["typescript", "unicorn", "oxc", "import", "vitest", "node"],
+  "categories": {
+    "correctness": "error"
+  },
+  "ignorePatterns": ["coverage/**", "dist/**", "node_modules/**"],
+  "rules": {
+    "eslint/complexity": ["error", 8],
+    "no-console": "off",
+    "typescript/no-explicit-any": "error",
+    "typescript/no-unsafe-assignment": "error",
+    "typescript/no-unsafe-call": "error",
+    "typescript/no-unsafe-member-access": "error",
+    "typescript/no-unsafe-return": "error",
+    "unicorn/consistent-function-scoping": "off"
+  },
+  "env": {
+    "builtin": true
+  }
+}

@@ -1,0 +1,34 @@
+rules:
+  ts.mutation-required:
+    disabled: true
+    reason: The project uses deterministic unit, property, replay, and conformance tests instead of mutation testing.
+typescript:
+  coverage:
+    threshold: 85
+  complexity:
+    max: 8
+  dry:
+    max_findings: 0
+    paths:
+      - src
+    exclude:
+      - "**/*.test.ts"
+      - "dist/**"
+      - "node_modules/**"
+    copied_blocks:
+      enabled: true
+      min_tokens: 100
+  dependency_boundaries:
+    - from: src/protocol
+      allow: []
+    - from: src/engine
+      allow:
+        - src/protocol
+    - from: src/simulator
+      allow:
+        - src/engine
+        - src/protocol
+    - from: src/index.ts
+      allow:
+        - src/engine
+        - src/protocol
