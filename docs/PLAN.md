@@ -6,6 +6,8 @@ Catanarchy will provide a deterministic Catan simulator and a multi-agent negoti
 
 The first rules target is the current three-player and four-player CATAN base game. Expansions and house rules remain outside the first release.
 
+The current implementation covers the standard board and complete initial placement. It also includes a trusted local web client for starting a game, placing setup pieces, and inspecting accepted-command history. Normal turns, negotiation, adapters, and Pi agents remain planned work.
+
 ## Product boundaries
 
 The repository will keep six concerns separate.
@@ -155,25 +157,29 @@ The Colonist adapter will translate between observed Colonist state and canonica
 
 ## Repository layout
 
-The initial scaffold keeps boundaries as source directories while the contracts settle:
+The repository keeps protocol, engine, and application boundaries in one root TypeScript project:
 
 ```text
-src/
-  protocol/
-  engine/
-  simulator/
+packages/
+  protocol/src/
+  engine/src/
+apps/
+  cli/src/
+  web/src/
 test/
+  engine/
+  web/
 docs/
 ```
 
-Later milestones add source directories for negotiation and the harness. Separate directories will hold agents and adapters. The [web viewer](VIEWER.md) is the first independent application build and triggers an npm workspace split when its implementation starts. The repository will remain one monorepo.
+Later milestones add modules for negotiation, the harness, agents, and adapters. One root package controls dependencies and checks until a module needs independent publishing or release settings. The repository remains one monorepo.
 
 ## Milestones
 
 ### Milestone 0: scaffold
 
 - [x] Initialize the MIT TypeScript project.
-- [x] Add Effect and the Pi SDK dependency.
+- [x] Add Effect and record the Pi SDK as a later integration boundary.
 - [x] Add strict TypeScript with Oxlint and Oxfmt.
 - [x] Add Vitest together with SimpleDoc and Slophammer.
 - [x] Disable mutation testing with a reason in Slophammer configuration.
@@ -186,17 +192,17 @@ Completion requires `npm run simulate` and `npm run check` to pass.
 
 The [engine design](ENGINE.md) is the detailed contract for this milestone.
 
-- [ ] Add branded integer coordinates and stable topology IDs.
-- [ ] Generate the regular 19-hex graph and pass every topology invariant.
-- [ ] Generate terrain and the official number-token spiral from a labeled random stream.
-- [ ] Represent the official frame and project its harbors onto the coastal ring.
-- [ ] Separate the event store from reduced game state and add exact replay.
-- [ ] Implement the forward and reverse initial-placement state machine.
-- [ ] Grant second-settlement resources as part of the accepted placement batch.
-- [ ] Generate canonical legal actions and seat-scoped observations.
-- [ ] Add topology, layout, rule, replay, invariant, and privacy tests.
+- [x] Add integer coordinates and stable topology IDs.
+- [x] Generate the regular 19-hex graph and pass every topology invariant.
+- [x] Generate terrain and the official number-token spiral from a labeled random stream.
+- [x] Place the standard nine-harbor pattern on the coastal ring and shuffle harbor kinds.
+- [x] Separate the event store from reduced game state and add exact replay.
+- [x] Implement the forward and reverse initial-placement state machine.
+- [x] Grant second-settlement resources as part of the accepted placement batch.
+- [x] Generate canonical legal actions and seat-scoped observations.
+- [x] Add topology, layout, rule, replay, invariant, and privacy tests.
 
-Completion requires a scripted agent to complete setup for three-player and four-player games through legal action IDs, save the events, and replay them to byte-identical state. Every merge-gate item in the engine design must pass.
+A scripted three-player or four-player game now completes setup through legal action IDs and replays to the same state. The remaining base-game rules start in Milestone 2.
 
 ### Milestone 2: production and main turn
 
@@ -234,15 +240,16 @@ Completion requires generated graph cases plus full-game tests with deterministi
 
 The [web viewer design](VIEWER.md) is the detailed contract for this milestone.
 
-- [ ] Add viewer-safe frame and replay schemas.
-- [ ] Create the npm workspace and Vite React application.
-- [ ] Render the regular board as layered SVG with canonical topology IDs.
-- [ ] Add replay loading, navigation, playback, and event inspection.
-- [ ] Add public player summaries and the projected event timeline.
+- [x] Add the viewer-safe observation schema.
+- [x] Create the Vite React application.
+- [x] Render the regular board as layered SVG with canonical topology IDs.
+- [x] Add local accepted-command history navigation and event inspection.
+- [x] Add public player summaries and active-seat resource display for local hot-seat play.
+- [ ] Add saved replay bundle loading and timed playback.
 - [ ] Stream live frames through HTTP and server-sent events.
-- [ ] Add reconnect, sequence-gap, privacy, accessibility, and visual tests.
+- [ ] Add reconnect, sequence-gap, remote privacy, accessibility, and visual regression tests.
 
-Completion requires saved and live scripted matches to render correctly in public scope. Seeking and sequential playback must agree, forced disconnects must recover, and the viewer merge gate must pass.
+The first viewer slice is a trusted local setup client. The full milestone will load viewer-safe saved replays and live streams without authoritative state in the browser.
 
 ### Milestone 6: domestic trade and language
 

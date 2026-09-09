@@ -2,9 +2,9 @@
 
 ## Status
 
-The web viewer is planned but not implemented. This document makes it a formal project milestone.
+The first web slice is implemented as a trusted local setup client. It starts seeded three-player and four-player games, renders the standard board, sends initial-placement commands to the native engine, shows public player summaries and the active player's resources, and moves through accepted-command history.
 
-The first viewer is read-only. It displays live matches and saved replays without becoming another game engine. Human command input can be added later through a separate client contract.
+Saved replay loading, timed playback, live streams, and negotiation views remain planned. Those remote and replay modes stay read-only and consume only viewer-safe data. The local setup client is a deliberate exception because the user runs the engine and browser in one trusted process.
 
 ## Goals
 
@@ -23,11 +23,11 @@ The viewer also helps engine development. A wrong edge, harbor, road, or settlem
 
 The first release supports the regular three-player and four-player base-game board defined in the [engine design](ENGINE.md). It renders original geometric shapes and text. It does not use copied board artwork or game assets.
 
-The first release excludes command entry, matchmaking, accounts, ratings, map editing, and expansion layouts. It also excludes public access to referee state.
+The current slice includes command entry only for native initial placement. It excludes normal-turn commands, remote commands, matchmaking, accounts, ratings, map editing, and expansion layouts. It also excludes public access to referee state.
 
 ## Boundary
 
-The viewer consumes viewer-safe protocol data. It does not import authoritative engine state or run game rules.
+The planned remote viewer consumes viewer-safe protocol data. It does not import authoritative engine state or run game rules.
 
 ```text
 engine or adapter
@@ -46,30 +46,27 @@ observation projector
              React UI
 ```
 
-The engine decides what is public or private before serialization. The browser cannot request hidden cards merely by changing a React property or URL query.
+The engine decides what is public or private before remote serialization. The browser cannot request hidden cards merely by changing a React property or URL query.
 
-The viewer does not calculate legal actions, resource production, awards, or victory. It displays those values from observations and projected events. This rule prevents the UI from becoming a second implementation of the game.
+The current local setup client imports the native engine and keeps authoritative state in browser memory. It asks the engine for legal actions and submits selected commands. It does not reimplement placement rules. This mode is suitable only for trusted local hot-seat play and development. It must not become the transport for agent matches or remote spectators.
 
 ## Repository layout
 
-The web application will use this layout when implementation starts:
+The repository uses this module layout:
 
 ```text
 apps/
-  web/
-    src/
-      board/
-      components/
-      replay/
-      transport/
-      views/
-    test/
+  cli/src/
+  web/src/
 packages/
-  protocol/
+  engine/src/
+  protocol/src/
+test/
   engine/
+  web/
 ```
 
-The viewer is the first independent application build. Its implementation therefore triggers the workspace split already allowed by the [implementation plan](PLAN.md). Empty packages do not need to be created before that work starts.
+One root package controls dependencies and quality checks. TypeScript and Vite aliases preserve explicit protocol and engine imports without separate package release settings.
 
 The web application uses React, Vite, strict TypeScript, Effect, Oxlint, and Oxfmt. SVG renders the board. A canvas or WebGL renderer adds complexity without helping this small fixed board.
 
@@ -338,27 +335,19 @@ Screenshots use fixed fonts and viewport sizes. They use fixed replay fixtures w
 
 ### Step 1: viewer protocol
 
-Add the Effect schemas for the viewer protocol. Add public and player projection fixtures. Keep referee fixtures private to tests.
-
-Completion requires protocol and privacy tests to pass.
+In progress. The engine returns typed public and player observations, and privacy tests inspect serialized public output. Saved replay schemas, frame schemas, Effect decoders, and projection fixtures remain to be added before remote viewing.
 
 ### Step 2: application shell
 
-Create the npm workspace and `apps/web` Vite application. Add routing, error boundaries, loading states, and the static page layout. Load a checked replay fixture without a server.
-
-Completion requires production build and component tests to pass.
+Complete for local setup play. `apps/web` contains a Vite React application with seed and player controls, status, board, player summaries, history controls, and an event list. The production build and component tests pass. Routing, error boundaries, and replay-file loading remain part of the remote viewer work.
 
 ### Step 3: board renderer
 
-Implement the SVG transform and ordered layers. Add diagnostic IDs and overlays. Review fixed screenshots against the engine topology fixture.
-
-Completion requires the standard topology and setup positions to render at the correct canonical locations.
+Complete for the standard board and setup pieces. The layered SVG uses canonical hex, edge, and vertex IDs. It renders terrain, number tokens, robber, harbors, roads, settlements, and engine-supplied legal actions. A manual desktop browser smoke test checked the rendered board.
 
 ### Step 4: replay viewer
 
-Add replay-file loading, controls, frame navigation, timeline display, and event inspection. Keep frame selection independent from the engine.
-
-Completion requires sequential playback and direct seeking to agree at every fixture frame.
+In progress. The local client records one complete state after each accepted command and supports first, previous, next, and live navigation. Historical frames cannot send actions. Replay-file loading, timed playback, direct seeking, and viewer-safe event payloads remain planned.
 
 ### Step 5: live viewing
 
@@ -374,7 +363,7 @@ Completion requires a multi-round scripted negotiation replay to display only th
 
 ## Project milestone
 
-The diagnostic SVG renderer can begin during engine Milestone 1. The complete read-only replay and live viewer becomes its own milestone after the base game engine is complete and before Pi agents are added. Negotiation work then extends the existing timeline rather than creating another UI.
+The local SVG setup client ships with engine Milestone 1. The complete read-only replay and live viewer remains its own milestone before Pi agents are added. Negotiation work will extend the same timeline instead of creating another UI.
 
 ## Merge gate
 
@@ -390,4 +379,4 @@ The viewer milestone is complete only when:
 - Keyboard and reduced-motion checks pass.
 - The production web build passes the repository quality gate.
 
-The viewer remains read-only after this milestone. A human-play client needs its own command and authorization plan.
+Remote and saved-replay modes remain read-only after this milestone. The trusted local hot-seat client can send native setup commands under the boundary described above.

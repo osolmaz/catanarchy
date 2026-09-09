@@ -5,9 +5,9 @@
     "declaration": true,
     "declarationMap": true,
     "sourceMap": true,
-    "outDir": "dist",
-    "rootDir": "src"
+    "outDir": "dist/types",
+    "rootDir": "."
   },
-  "include": ["src"],
-  "exclude": ["test", "vitest.config.ts"]
+  "include": ["packages", "apps/cli"],
+  "exclude": ["test", "apps/web", "vitest.config.ts"]
 }

@@ -1,53 +1,51 @@
 {
   "name": "catanarchy",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "description": "A multi-agent Catan simulator for strategic play, negotiation, and training.",
   "license": "MIT",
-  "bin": {
-    "catanarchy": "dist/simulator/demo.js"
-  },
-  "files": [
-    "dist",
-    "README.md",
-    "LICENSE"
-  ],
   "type": "module",
-  "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "default": "./dist/index.js"
-    }
-  },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "npm run build:types && npm run build:web",
+    "build:types": "tsc -p tsconfig.build.json",
+    "build:web": "vite build --config apps/web/vite.config.ts",
     "check": "npm run format:check && npm run lint && npm run typecheck && npm run build && npm run test:coverage && npm run dry && npm run docs:check && npm run slophammer",
+    "dev": "vite --config apps/web/vite.config.ts",
     "docs:check": "simpledoc check",
     "dry": "slophammer-ts dry .",
     "format": "oxfmt --write",
     "format:check": "oxfmt --check",
-    "lint": "oxlint --type-aware --deny-warnings src test",
-    "simulate": "tsx src/simulator/demo.ts",
+    "lint": "oxlint --type-aware --deny-warnings packages apps test",
+    "preview": "vite preview --config apps/web/vite.config.ts",
+    "simulate": "tsx apps/cli/src/index.ts",
     "slophammer": "slophammer-ts check .",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@earendil-works/pi-coding-agent": "0.85.1",
-    "effect": "3.22.2"
+    "effect": "3.22.2",
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
   },
   "devDependencies": {
     "@effect/language-service": "0.87.2",
     "@simpledoc/simpledoc": "0.1.6",
+    "@testing-library/react": "16.3.2",
     "@types/node": "22.19.11",
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3",
+    "@vitejs/plugin-react": "5.1.4",
     "@vitest/coverage-v8": "5.0.0",
+    "fast-check": "4.6.0",
+    "jsdom": "28.1.0",
     "oxfmt": "0.67.0",
     "oxlint": "1.82.0",
     "oxlint-tsgolint": "7.0.2001",
     "slophammer-ts": "0.5.0",
     "tsx": "4.23.13",
     "typescript": "7.0.2",
+    "vite": "7.3.6",
     "vitest": "5.0.0"
   },
   "engines": {
