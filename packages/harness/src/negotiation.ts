@@ -213,6 +213,29 @@ const validOfferBundles = (give: ResourceCounts, receive: ResourceCounts): boole
 const hasResources = (available: ResourceCounts, needed: ResourceCounts): boolean =>
   RESOURCE_KEYS.every((resource) => available[resource] >= needed[resource]);
 
+const scopeChannel = (
+  scope: NegotiationScope,
+  firstPlayerId: PlayerId,
+  secondPlayerId: PlayerId,
+): string =>
+  scope.type === "public"
+    ? "public"
+    : `direct:${[firstPlayerId, secondPlayerId]
+        .toSorted()
+        .map((playerId) => encodeURIComponent(playerId))
+        .join("+")}`;
+
+const nextOfferId = (
+  session: NegotiationSession,
+  scope: NegotiationScope,
+  proposerPlayerId: PlayerId,
+  targetPlayerId: PlayerId,
+): string => {
+  const prefix = `${session.windowId}:offer:${scopeChannel(scope, proposerPlayerId, targetPlayerId)}:`;
+  const count = session.offers.filter(({ id }) => id.startsWith(prefix)).length;
+  return `${prefix}${count + 1}`;
+};
+
 const updateOfferStatus = (
   offers: ReadonlyArray<TradeOffer>,
   offerId: string,
@@ -260,7 +283,7 @@ const createOffer = (
       return yield* fail("invalid-offer", "The negotiation window has too many open offers.");
     }
     const offer: TradeOffer = {
-      id: `${session.windowId}:offer:${session.sequence + 1}`,
+      id: nextOfferId(session, scope, proposerPlayerId, targetPlayerId),
       parentOfferId,
       round,
       gameSequence: state.sequence,
@@ -519,6 +542,17 @@ const validPromiseFields = (
   (action.scope.type === "public" || action.scope.playerId === action.beneficiaryPlayerId) &&
   relatedOfferIsVisible(session, action.relatedOfferId, playerId);
 
+const nextPromiseId = (
+  session: NegotiationSession,
+  scope: NegotiationScope,
+  playerId: PlayerId,
+  beneficiaryPlayerId: PlayerId,
+): string => {
+  const prefix = `${session.windowId}:promise:${scopeChannel(scope, playerId, beneficiaryPlayerId)}:`;
+  const count = session.promises.filter(({ id }) => id.startsWith(prefix)).length;
+  return `${prefix}${count + 1}`;
+};
+
 const recordPromise = (
   state: GameState,
   session: NegotiationSession,
@@ -532,7 +566,7 @@ const recordPromise = (
       return yield* fail("invalid-promise", "The promise fields are invalid.");
     }
     const promise: NegotiationPromise = {
-      id: `${session.windowId}:promise:${session.sequence + 1}`,
+      id: nextPromiseId(session, action.scope, playerId, action.beneficiaryPlayerId),
       round,
       playerId,
       beneficiaryPlayerId: action.beneficiaryPlayerId,
@@ -580,7 +614,7 @@ const recordEvidence = (
       return yield* fail("invalid-promise", "The promise evidence is invalid.");
     }
     const evidence: PromiseEvidence = {
-      id: `${session.windowId}:evidence:${session.sequence + 1}`,
+      id: `${action.promiseId}:evidence:${session.evidence.filter(({ promiseId }) => promiseId === action.promiseId).length + 1}`,
       round,
       playerId,
       promiseId: action.promiseId,
@@ -786,15 +820,18 @@ export const projectNegotiation = (
 ): NegotiationView => {
   const promises = session.promises.filter((promise) => promiseVisible(promise, viewer));
   const promiseIds = new Set(promises.map(({ id }) => id));
-  const events = session.events.slice(options.eventOffset ?? 0);
+  const events = session.events
+    .slice(options.eventOffset ?? 0)
+    .filter((event) => eventVisible(session, event, viewer))
+    .map((event, sequence) => ({ ...event, sequence }));
   const offers = options.currentWindowOffersOnly
     ? session.offers.filter(({ id }) => id.startsWith(`${session.windowId}:offer:`))
     : session.offers;
   return {
     schema: "catanarchy.negotiation-view.v1",
     matchId: session.matchId,
-    sequence: session.sequence,
-    events: events.filter((event) => eventVisible(session, event, viewer)),
+    sequence: events.length,
+    events,
     offers: offers.filter((offer) => offerVisible(offer, viewer)),
     promises,
     evidence: session.evidence.filter(({ promiseId }) => promiseIds.has(promiseId)),
