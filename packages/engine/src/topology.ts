@@ -169,9 +169,25 @@ const freezeVertices = (
     edgeIds: [...vertex.edgeIds].sort(),
   }));
 
-const freezeEdges = (edges: ReadonlyMap<EdgeId, MutableEdge>): ReadonlyArray<TopologyEdge> =>
+const compareEdges = (
+  left: MutableEdge,
+  right: MutableEdge,
+  vertices: ReadonlyMap<VertexId, MutableVertex>,
+): number => {
+  const leftStart = vertices.get(left.vertexIds[0])!;
+  const rightStart = vertices.get(right.vertexIds[0])!;
+  const startOrder = compareCoordinates(leftStart, rightStart);
+  return startOrder === 0
+    ? compareCoordinates(vertices.get(left.vertexIds[1])!, vertices.get(right.vertexIds[1])!)
+    : startOrder;
+};
+
+const freezeEdges = (
+  edges: ReadonlyMap<EdgeId, MutableEdge>,
+  vertices: ReadonlyMap<VertexId, MutableVertex>,
+): ReadonlyArray<TopologyEdge> =>
   [...edges.values()]
-    .sort((left, right) => left.id.localeCompare(right.id))
+    .sort((left, right) => compareEdges(left, right, vertices))
     .map((edge) => ({
       id: edge.id,
       vertexIds: edge.vertexIds,
@@ -269,7 +285,7 @@ export const generateStandardTopology = (): StandardTopology => {
   const edges = new Map<EdgeId, MutableEdge>();
   const hexes = coordinates.map((coordinate) => addHex(coordinate, available, vertices, edges));
   const frozenVertices = freezeVertices(vertices);
-  const frozenEdges = freezeEdges(edges);
+  const frozenEdges = freezeEdges(edges, vertices);
   return {
     schema: "catanarchy.standard-topology.v1",
     hexes,

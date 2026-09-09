@@ -2,6 +2,7 @@ import { Data } from "effect";
 
 export type RuleViolationCode =
   | "duplicate-player-color"
+  | "invalid-config"
   | "duplicate-player-id"
   | "invalid-player-count"
   | "invalid-seed"
