@@ -148,11 +148,12 @@ const assignHarbors = (
 ): { readonly harbors: BoardLayout["harbors"]; readonly state: RandomState } => {
   const offset = nextInt(state, topology.coastalRing.length);
   const kinds = shuffle(HARBOR_SUPPLY, offset.state);
+  const edgeOrder = new Map(topology.edges.map((edge, index) => [edge.id, index]));
   return {
     harbors: HARBOR_RING_INDICES.map((index, kindIndex) => ({
       edgeId: topology.coastalRing[(index + offset.value) % topology.coastalRing.length]!,
       kind: kinds.value[kindIndex]!,
-    })).sort((left, right) => left.edgeId.localeCompare(right.edgeId)),
+    })).sort((left, right) => edgeOrder.get(left.edgeId)! - edgeOrder.get(right.edgeId)!),
     state: kinds.state,
   };
 };
