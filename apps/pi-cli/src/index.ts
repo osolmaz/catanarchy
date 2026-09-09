@@ -58,17 +58,37 @@ interface Estimate {
   readonly highUsd: number;
 }
 
+interface PricingRates {
+  readonly input: number;
+  readonly output: number;
+  readonly cacheRead: number;
+  readonly cacheWrite: number;
+}
+
+const highestRate = (rates: ReadonlyArray<PricingRates>, field: keyof PricingRates): number =>
+  Math.max(...rates.map((rate) => rate[field]));
+
 const modelCost = (
   runtime: ModelRuntime,
   reference: PiModelReference,
   inputTokens: number,
   outputTokens: number,
+  conservative: boolean,
 ): number => {
   const model = runtime.getModel(reference.provider, reference.modelId);
   if (model === undefined) {
     throw new Error(`Unknown Pi model: ${reference.provider}/${reference.modelId}`);
   }
-  return (inputTokens * model.cost.input + outputTokens * model.cost.output) / 1_000_000;
+  if (!conservative) {
+    return (inputTokens * model.cost.input + outputTokens * model.cost.output) / 1_000_000;
+  }
+  const rates: ReadonlyArray<PricingRates> = [model.cost, ...(model.cost.tiers ?? [])];
+  const inputCost =
+    inputTokens *
+    (highestRate(rates, "input") +
+      highestRate(rates, "cacheRead") +
+      highestRate(rates, "cacheWrite"));
+  return (inputCost + outputTokens * highestRate(rates, "output")) / 1_000_000;
 };
 
 const estimateCost = (
@@ -83,8 +103,8 @@ const estimateCost = (
       throw new Error("At least one model reference is required.");
     }
     const decisionsPerSeat = 4 * maxAttempts;
-    lowUsd += decisionsPerSeat * modelCost(runtime, reference, 8_000, 100);
-    highUsd += decisionsPerSeat * modelCost(runtime, reference, 64_000, maxOutputTokens);
+    lowUsd += decisionsPerSeat * modelCost(runtime, reference, 8_000, 100, false);
+    highUsd += decisionsPerSeat * modelCost(runtime, reference, 64_000, maxOutputTokens, true);
   }
   return { lowUsd, highUsd };
 };
