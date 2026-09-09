@@ -52,6 +52,8 @@ const playerColor = (observation: GameObservation, playerId: string): string => 
 const harborLabel = (kind: HarborKind): string =>
   kind === "generic" ? "3:1" : `${kind.slice(0, 1).toUpperCase()} 2:1`;
 
+const probabilityPips = (number: number): number => 6 - Math.abs(7 - number);
+
 export const Board = ({ observation, legalActions, onAction, interactive }: BoardProps) => {
   const vertexById = new Map(observation.topology.vertices.map((vertex) => [vertex.id, vertex]));
   const edgeById = new Map(observation.topology.edges.map((edge) => [edge.id, edge]));
@@ -91,15 +93,27 @@ export const Board = ({ observation, legalActions, onAction, interactive }: Boar
                 {terrain}
               </text>
               {number === undefined ? null : (
-                <g>
-                  <circle cx={center.x} cy={center.y + 12} r="16" className="number-token" />
+                <g
+                  data-number-token={number}
+                  aria-label={`${number} with ${probabilityPips(number)} probability pips`}
+                >
+                  <circle cx={center.x} cy={center.y + 12} r="18" className="number-token" />
                   <text
                     x={center.x}
-                    y={center.y + 18}
+                    y={center.y + 16}
                     textAnchor="middle"
                     className={number === 6 || number === 8 ? "number-label hot" : "number-label"}
                   >
                     {number}
+                  </text>
+                  <text
+                    x={center.x}
+                    y={center.y + 27}
+                    textAnchor="middle"
+                    className="probability-pips"
+                    data-probability-pips={probabilityPips(number)}
+                  >
+                    {"•".repeat(probabilityPips(number))}
                   </text>
                 </g>
               )}

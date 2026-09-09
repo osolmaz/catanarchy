@@ -17,6 +17,13 @@ describe("web simulator", () => {
     expect(screen.getByRole("group", { name: "Catan game board" })).toBeTruthy();
     expect(screen.getAllByRole("button", { name: /^Place settlement on / })).toHaveLength(54);
     expect(container.querySelectorAll("[data-hex-id]")).toHaveLength(19);
+    expect(container.querySelectorAll("[data-number-token]")).toHaveLength(18);
+    expect(
+      container.querySelectorAll('[data-number-token="6"] [data-probability-pips="5"]'),
+    ).toHaveLength(2);
+    expect(
+      container.querySelectorAll('[data-number-token="12"] [data-probability-pips="1"]'),
+    ).toHaveLength(1);
     expect(container.querySelectorAll("[data-legal-vertex]")).toHaveLength(54);
     expect(container.querySelectorAll("[data-harbor-edge]")).toHaveLength(9);
   });

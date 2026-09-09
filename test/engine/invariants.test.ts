@@ -80,6 +80,43 @@ describe("state invariants", () => {
     );
   });
 
+  it("checks each resource supply independently", () => {
+    const state = initialState();
+    const broken: GameState = {
+      ...state,
+      bank: { ...state.bank, lumber: 18, brick: 20 },
+    };
+
+    expect(checkInvariants(broken)).toContain("resource-conservation");
+  });
+
+  it("checks settlement and city piece limits separately", () => {
+    const state = initialState();
+    const buildings = state.topology.vertices.slice(0, 9).map((vertex, index) => ({
+      vertexId: vertex.id,
+      playerId: "red",
+      kind: index < 5 ? ("settlement" as const) : ("city" as const),
+    }));
+    const validSupply: GameState = { ...state, occupancy: { buildings, roads: [] } };
+    const extraCity: GameState = {
+      ...validSupply,
+      occupancy: {
+        ...validSupply.occupancy,
+        buildings: [
+          ...validSupply.occupancy.buildings,
+          {
+            vertexId: state.topology.vertices[9]!.id,
+            playerId: "red",
+            kind: "city",
+          },
+        ],
+      },
+    };
+
+    expect(checkInvariants(validSupply)).not.toContain("building-supply:red");
+    expect(checkInvariants(extraCity)).toContain("building-supply:red");
+  });
+
   it("reports a setup road without its player anchor", () => {
     const state = initialState();
     const broken: GameState = {
