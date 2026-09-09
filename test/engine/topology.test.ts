@@ -50,6 +50,25 @@ describe("standard topology", () => {
       expectVertexRelations(vertex, vertexById, edgeById);
   });
 
+  it("serializes edges in numeric endpoint order", () => {
+    const vertexById = new Map(STANDARD_TOPOLOGY.vertices.map((vertex) => [vertex.id, vertex]));
+    const edgeKey = (edge: TopologyEdge): readonly [number, number, number, number] => {
+      const start = vertexById.get(edge.vertexIds[0])!;
+      const end = vertexById.get(edge.vertexIds[1])!;
+      return [start.y, start.x, end.y, end.x];
+    };
+    const keys = STANDARD_TOPOLOGY.edges.map(edgeKey);
+    const sorted = [...keys].sort((left, right) => {
+      for (let index = 0; index < left.length; index += 1) {
+        const difference = left[index]! - right[index]!;
+        if (difference !== 0) return difference;
+      }
+      return 0;
+    });
+
+    expect(keys).toEqual(sorted);
+  });
+
   it("forms one deterministic coastal ring", () => {
     expect(STANDARD_TOPOLOGY.coastalRing).toHaveLength(30);
     expect(new Set(STANDARD_TOPOLOGY.coastalRing).size).toBe(30);

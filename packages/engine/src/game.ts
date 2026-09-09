@@ -21,6 +21,7 @@ import type {
   Terrain,
   Viewer,
 } from "@catanarchy/protocol";
+import { decodeGameConfig } from "@catanarchy/protocol";
 import { Effect } from "effect";
 import { ReplayViolation, RuleViolation } from "./errors.js";
 import { generateGameMaterials } from "./layout.js";
@@ -68,8 +69,17 @@ const createPlayers = (config: GameConfig): ReadonlyArray<PlayerState> =>
     playedKnights: 0,
   }));
 
-export const createGame = (config: GameConfig): Effect.Effect<CommandResult, RuleViolation> =>
+export const createGame = (input: GameConfig): Effect.Effect<CommandResult, RuleViolation> =>
   Effect.gen(function* () {
+    const config = yield* decodeGameConfig(input).pipe(
+      Effect.mapError(
+        () =>
+          new RuleViolation({
+            code: "invalid-config",
+            message: "The configuration must match catanarchy.game-config.v1.",
+          }),
+      ),
+    );
     yield* validateConfig(config);
     const materials = generateGameMaterials(STANDARD_TOPOLOGY, config.seed);
     const state: GameState = {

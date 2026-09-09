@@ -32,6 +32,7 @@ const applyFirstAction = (state: GameState): GameState => {
 
 describe("configuration failures", () => {
   it.each([
+    { matchId: "", expected: "invalid-config" },
     { seed: -1, expected: "invalid-seed" },
     { seed: 1.5, expected: "invalid-seed" },
     { seed: 0x1_0000_0000, expected: "invalid-seed" },
