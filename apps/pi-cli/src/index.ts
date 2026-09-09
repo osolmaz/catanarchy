@@ -35,7 +35,7 @@ const integerArgument = (
 };
 
 const seed = integerArgument("seed", 42, 0, 0xffff_ffff);
-const timeoutMs = integerArgument("timeout-ms", 90_000, 1);
+const timeoutMs = integerArgument("timeout-ms", 90_000, 1, 0x7fff_ffff);
 const maxAttempts = integerArgument("max-attempts", 1, 1);
 const maxOutputTokens = integerArgument("max-output-tokens", 4_096, 1);
 const outputPath = argument("output");
