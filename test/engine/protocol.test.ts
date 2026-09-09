@@ -127,6 +127,48 @@ describe("protocol boundaries", () => {
     expect(Effect.runSync(decodeGameEventEnvelope(monopolyEvent))).toEqual(monopolyEvent);
   });
 
+  it("decodes award and victory events", () => {
+    const longestRoad = {
+      schema: "catanarchy.game-event.v1",
+      matchId: "protocol",
+      commandId: "road-5",
+      sequence: 30,
+      event: {
+        type: "longest-road.changed",
+        previousPlayerId: null,
+        playerId: "red",
+        length: 5,
+      },
+    };
+    const largestArmy = {
+      ...longestRoad,
+      commandId: "knight-3",
+      event: {
+        type: "largest-army.changed",
+        previousPlayerId: null,
+        playerId: "red",
+        size: 3,
+      },
+    };
+    const won = {
+      ...longestRoad,
+      commandId: "win-1",
+      sequence: 31,
+      event: {
+        type: "game.won",
+        playerId: "red",
+        playerIndex: 0,
+        turn: 12,
+        victoryPoints: 10,
+        revealedVictoryPointCards: 2,
+      },
+    };
+
+    expect(Effect.runSync(decodeGameEventEnvelope(longestRoad))).toEqual(longestRoad);
+    expect(Effect.runSync(decodeGameEventEnvelope(largestArmy))).toEqual(largestArmy);
+    expect(Effect.runSync(decodeGameEventEnvelope(won))).toEqual(won);
+  });
+
   it("exports stable vocabulary", () => {
     expect(PLAYER_COLORS).toEqual(["red", "blue", "white", "orange"]);
     expect(RESOURCE_TYPES).toHaveLength(5);

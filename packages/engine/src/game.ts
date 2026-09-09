@@ -17,10 +17,13 @@ import type {
   GameObservation,
   GamePhase,
   GameState,
+  GameWonEvent,
   HexId,
   InitialResourcesGrantedEvent,
   KnightPlayedEvent,
+  LargestArmyChangedEvent,
   LegalAction,
+  LongestRoadChangedEvent,
   MaritimeTradeCommand,
   MaritimeTradeCompletedEvent,
   PlaceFreeRoadCommand,
@@ -54,6 +57,14 @@ import type {
 } from "@catanarchy/protocol";
 import { decodeGameCommand, decodeGameConfig, decodeGameEventEnvelope } from "@catanarchy/protocol";
 import { Effect } from "effect";
+import {
+  longestRoadLength,
+  resolveLargestArmy,
+  resolveLongestRoad,
+  totalVictoryPoints,
+  victoryPointCardCount,
+  visibleVictoryPoints,
+} from "./awards.js";
 import { ReplayViolation, RuleViolation } from "./errors.js";
 import { generateGameMaterials } from "./layout.js";
 import { deriveRandomState, nextInt } from "./random.js";
@@ -139,6 +150,8 @@ export const createGame = (input: GameConfig): Effect.Effect<CommandResult, Rule
       players: createPlayers(config),
       developmentDeck: materials.developmentDeck,
       developmentDiscard: [],
+      awards: { longestRoadPlayerId: null, largestArmyPlayerId: null },
+      result: null,
       phase: { tag: "setup.settlement", direction: "forward", playerIndex: 0 },
       random: {
         board: materials.boardRandom,
@@ -701,6 +714,38 @@ const applyMonopolyPlayed = (
   };
 };
 
+const applyLongestRoadChanged = (
+  state: GameState,
+  sequence: number,
+  event: LongestRoadChangedEvent,
+): GameState => ({
+  ...state,
+  sequence,
+  awards: { ...state.awards, longestRoadPlayerId: event.playerId },
+});
+
+const applyLargestArmyChanged = (
+  state: GameState,
+  sequence: number,
+  event: LargestArmyChangedEvent,
+): GameState => ({
+  ...state,
+  sequence,
+  awards: { ...state.awards, largestArmyPlayerId: event.playerId },
+});
+
+const applyGameWon = (state: GameState, sequence: number, event: GameWonEvent): GameState => ({
+  ...state,
+  sequence,
+  result: {
+    winnerId: event.playerId,
+    turn: event.turn,
+    victoryPoints: event.victoryPoints,
+    revealedVictoryPointCards: event.revealedVictoryPointCards,
+  },
+  phase: { tag: "game.finished", playerIndex: event.playerIndex, turn: event.turn },
+});
+
 const applySetupEvent = (state: GameState, envelope: GameEvent): GameState | undefined => {
   const { event, sequence } = envelope;
   switch (event.type) {
@@ -763,14 +808,31 @@ const applyEffectEvent = (state: GameState, envelope: GameEvent): GameState | un
   }
 };
 
+const applyOutcomeEvent = (state: GameState, envelope: GameEvent): GameState | undefined => {
+  const { event, sequence } = envelope;
+  switch (event.type) {
+    case "longest-road.changed":
+      return applyLongestRoadChanged(state, sequence, event);
+    case "largest-army.changed":
+      return applyLargestArmyChanged(state, sequence, event);
+    case "game.won":
+      return applyGameWon(state, sequence, event);
+    default:
+      return undefined;
+  }
+};
+
 export const applyEvent = (state: GameState, envelope: GameEvent): GameState =>
   applySetupEvent(state, envelope) ??
   applyNormalEvent(state, envelope) ??
   applyEffectEvent(state, envelope) ??
+  applyOutcomeEvent(state, envelope) ??
   state;
 
 const currentPlayerId = (state: GameState): PlayerId | null =>
-  state.config.players[state.phase.playerIndex]?.id ?? null;
+  state.phase.tag === "game.finished"
+    ? null
+    : (state.config.players[state.phase.playerIndex]?.id ?? null);
 
 const checkCommonCommand = (
   state: GameState,
@@ -1565,6 +1627,79 @@ const decideEffectCommand = (
   }
 };
 
+type OutcomeEvent = LongestRoadChangedEvent | LargestArmyChangedEvent | GameWonEvent;
+
+const appendOutcomeEvent = (
+  initialState: GameState,
+  projectedState: GameState,
+  command: GameCommand,
+  events: GameEvent[],
+  event: OutcomeEvent,
+): GameState => {
+  const envelope = eventEnvelope(
+    initialState,
+    command,
+    initialState.sequence + events.length + 1,
+    event,
+  ) as GameEvent;
+  events.push(envelope);
+  return applyEvent(projectedState, envelope);
+};
+
+const activeTurn = (
+  state: GameState,
+): { readonly playerIndex: number; readonly turn: number } | null => {
+  const phase = state.phase;
+  if (!("turn" in phase) || phase.tag === "game.finished") return null;
+  return {
+    playerIndex: phase.tag === "turn.discard" ? phase.rollerIndex : phase.playerIndex,
+    turn: phase.turn,
+  };
+};
+
+const withDerivedOutcomes = (
+  state: GameState,
+  command: GameCommand,
+  baseEvents: EventBatch,
+): EventBatch => {
+  const events: GameEvent[] = [...baseEvents];
+  let projected = events.reduce((current, event) => applyEvent(current, event), state);
+  const longestRoad = resolveLongestRoad(projected);
+  if (longestRoad.playerId !== projected.awards.longestRoadPlayerId) {
+    projected = appendOutcomeEvent(state, projected, command, events, {
+      type: "longest-road.changed",
+      previousPlayerId: projected.awards.longestRoadPlayerId,
+      playerId: longestRoad.playerId,
+      length: longestRoad.value,
+    });
+  }
+  const largestArmy = resolveLargestArmy(projected);
+  if (largestArmy.playerId !== projected.awards.largestArmyPlayerId) {
+    projected = appendOutcomeEvent(state, projected, command, events, {
+      type: "largest-army.changed",
+      previousPlayerId: projected.awards.largestArmyPlayerId,
+      playerId: largestArmy.playerId,
+      size: largestArmy.value,
+    });
+  }
+  const turn = activeTurn(projected);
+  const playerId = turn === null ? undefined : projected.config.players[turn.playerIndex]?.id;
+  if (turn !== null && playerId !== undefined) {
+    const victoryPoints = totalVictoryPoints(projected, playerId);
+    if (victoryPoints >= 10) {
+      appendOutcomeEvent(state, projected, command, events, {
+        type: "game.won",
+        playerId,
+        playerIndex: turn.playerIndex,
+        turn: turn.turn,
+        victoryPoints,
+        revealedVictoryPointCards: victoryPointCardCount(projected, playerId),
+      });
+    }
+  }
+  return [events[0]!, ...events.slice(1)];
+};
+
 export const decide = (
   state: GameState,
   input: GameCommand,
@@ -1584,7 +1719,8 @@ export const decide = (
       decideSetupCommand(state, command) ??
       decideNormalCommand(state, command) ??
       decideEffectCommand(state, command);
-    return yield* decision;
+    const events = yield* decision;
+    return withDerivedOutcomes(state, command, events);
   });
 
 export const handleCommand = (
@@ -1884,11 +2020,19 @@ export const observe = (state: GameState, viewer: Viewer = { type: "public" }): 
         settlements: buildings.filter(({ kind }) => kind === "settlement").length,
         cities: buildings.filter(({ kind }) => kind === "city").length,
         roads: state.occupancy.roads.filter(({ playerId }) => playerId === configured.id).length,
+        longestRoadLength: longestRoadLength(state, configured.id),
+        playedKnights: player.playedKnights,
+        hasLongestRoad: state.awards.longestRoadPlayerId === configured.id,
+        hasLargestArmy: state.awards.largestArmyPlayerId === configured.id,
+        visibleVictoryPoints: visibleVictoryPoints(state, configured.id),
       };
     }),
     bank: state.bank,
+    awards: state.awards,
+    result: state.result,
     ownResources: ownPlayer?.resources ?? null,
     ownDevelopmentCards: ownPlayer?.developmentCards ?? null,
+    ownVictoryPoints: ownPlayer === undefined ? null : totalVictoryPoints(state, ownPlayer.id),
   };
 };
 

@@ -50,6 +50,8 @@ describe("web simulator", () => {
 
     expect(screen.getByText("Red: roll the dice (turn 1)")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Roll dice" })).toBeTruthy();
+    expect(screen.getAllByText(/2 visible VP/)).toHaveLength(4);
+    expect(screen.getByText("2", { selector: ".resource-line" })).toBeTruthy();
     expect(container.querySelectorAll("[data-building-vertex]")).toHaveLength(8);
     expect(container.querySelectorAll("[data-road-edge]")).toHaveLength(8);
     expect(firstLegalAction(container)).toBeNull();

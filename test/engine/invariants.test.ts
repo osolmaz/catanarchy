@@ -172,6 +172,51 @@ describe("state invariants", () => {
     );
   });
 
+  it("checks award holders and terminal results", () => {
+    const state = initialState();
+    const broken: GameState = {
+      ...state,
+      awards: { longestRoadPlayerId: "ghost", largestArmyPlayerId: "ghost" },
+      result: {
+        winnerId: "red",
+        turn: 4,
+        victoryPoints: 9,
+        revealedVictoryPointCards: 1,
+      },
+      phase: { tag: "turn.roll", playerIndex: 0, turn: 3, developmentCardPlayed: false },
+    };
+
+    expect(checkInvariants(broken)).toEqual(
+      expect.arrayContaining([
+        "longest-road-player",
+        "largest-army-player",
+        "longest-road-holder",
+        "largest-army-holder",
+        "game-result-phase",
+        "winner-score",
+        "winner-score-mismatch",
+        "winner-revealed-cards",
+        "winner-phase",
+      ]),
+    );
+  });
+
+  it("reports an unknown winner", () => {
+    const state = initialState();
+    const broken: GameState = {
+      ...state,
+      result: {
+        winnerId: "ghost",
+        turn: 1,
+        victoryPoints: 10,
+        revealedVictoryPointCards: 0,
+      },
+      phase: { tag: "game.finished", playerIndex: 0, turn: 1 },
+    };
+
+    expect(checkInvariants(broken)).toContain("winner-player");
+  });
+
   it("reports a setup road without its player anchor", () => {
     const state = initialState();
     const broken: GameState = {

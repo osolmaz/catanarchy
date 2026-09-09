@@ -1,4 +1,10 @@
 import type { GameState, ResourceCounts } from "@catanarchy/protocol";
+import {
+  resolveLargestArmy,
+  resolveLongestRoad,
+  totalVictoryPoints,
+  victoryPointCardCount,
+} from "./awards.js";
 
 const RESOURCE_KEYS = ["lumber", "brick", "wool", "grain", "ore"] as const;
 
@@ -94,6 +100,68 @@ const supplyViolations = (state: GameState): ReadonlyArray<string> => [
   ...developmentCardViolations(state),
 ];
 
+const awardViolations = (state: GameState): ReadonlyArray<string> => {
+  const violations: string[] = [];
+  const playerIds = new Set(state.players.map(({ id }) => id));
+  if (
+    state.awards.longestRoadPlayerId !== null &&
+    !playerIds.has(state.awards.longestRoadPlayerId)
+  ) {
+    violations.push("longest-road-player");
+  }
+  if (
+    state.awards.largestArmyPlayerId !== null &&
+    !playerIds.has(state.awards.largestArmyPlayerId)
+  ) {
+    violations.push("largest-army-player");
+  }
+  if (resolveLongestRoad(state).playerId !== state.awards.longestRoadPlayerId) {
+    violations.push("longest-road-holder");
+  }
+  if (resolveLargestArmy(state).playerId !== state.awards.largestArmyPlayerId) {
+    violations.push("largest-army-holder");
+  }
+  return violations;
+};
+
+const winnerScoreViolations = (state: GameState): ReadonlyArray<string> => {
+  if (state.result === null) return [];
+  const violations: string[] = [];
+  if (state.result.victoryPoints < 10) violations.push("winner-score");
+  if (totalVictoryPoints(state, state.result.winnerId) !== state.result.victoryPoints) {
+    violations.push("winner-score-mismatch");
+  }
+  if (
+    victoryPointCardCount(state, state.result.winnerId) !== state.result.revealedVictoryPointCards
+  ) {
+    violations.push("winner-revealed-cards");
+  }
+  return violations;
+};
+
+const winnerPhaseViolations = (state: GameState, winnerIndex: number): ReadonlyArray<string> => {
+  if (state.result === null) return [];
+  return state.phase.tag !== "game.finished" ||
+    state.phase.playerIndex !== winnerIndex ||
+    state.phase.turn !== state.result.turn
+    ? ["winner-phase"]
+    : [];
+};
+
+const resultViolations = (state: GameState): ReadonlyArray<string> => {
+  const violations: string[] = [];
+  const finished = state.phase.tag === "game.finished";
+  if ((state.result === null) === finished) violations.push("game-result-phase");
+  if (state.result === null) return violations;
+  const winnerIndex = state.config.players.findIndex(({ id }) => id === state.result?.winnerId);
+  if (winnerIndex < 0) return [...violations, "winner-player"];
+  return [
+    ...violations,
+    ...winnerScoreViolations(state),
+    ...winnerPhaseViolations(state, winnerIndex),
+  ];
+};
+
 const validPlayerIndex = (state: GameState, playerIndex: number): boolean =>
   Number.isSafeInteger(playerIndex) && playerIndex >= 0 && playerIndex < state.players.length;
 
@@ -162,5 +230,7 @@ export const checkInvariants = (state: GameState): ReadonlyArray<string> => [
   ...occupancyViolations(state),
   ...distanceViolations(state),
   ...supplyViolations(state),
+  ...awardViolations(state),
+  ...resultViolations(state),
   ...phaseViolations(state),
 ];
