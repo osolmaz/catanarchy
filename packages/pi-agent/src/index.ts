@@ -55,17 +55,21 @@ type ToolResult = {
 export class ActionSelectionGate {
   private legalActionIds = new Set<string>();
   private selection: Selection | undefined;
+  private failed = false;
 
   begin(legalActionIds: ReadonlyArray<string>): void {
     this.legalActionIds = new Set(legalActionIds);
     this.selection = undefined;
+    this.failed = false;
   }
 
   choose(actionId: string, reason?: string): ToolResult {
-    if (!this.legalActionIds.has(actionId)) {
+    if (this.failed || !this.legalActionIds.has(actionId)) {
+      this.selection = undefined;
+      this.failed = true;
       return {
         content: [
-          { type: "text", text: "That action ID is not legal. The decision attempt failed." },
+          { type: "text", text: "The action is invalid or this decision attempt already failed." },
         ],
         details: { accepted: false },
         isError: true,
@@ -73,6 +77,8 @@ export class ActionSelectionGate {
       };
     }
     if (this.selection !== undefined) {
+      this.selection = undefined;
+      this.failed = true;
       return {
         content: [{ type: "text", text: "An action was already selected for this decision." }],
         details: { accepted: false },
@@ -89,8 +95,9 @@ export class ActionSelectionGate {
   }
 
   take(): Selection | undefined {
-    const selection = this.selection;
+    const selection = this.failed ? undefined : this.selection;
     this.selection = undefined;
+    this.failed = false;
     return selection;
   }
 }
