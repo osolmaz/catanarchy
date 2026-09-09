@@ -223,8 +223,8 @@ describe("initial-placement harness", () => {
     expect(result.decisions[1]).toMatchObject({ outcome: "fallback" });
   });
 
-  it("quarantines an agent when cancellation does not settle", async () => {
-    const cancel = vi.fn<SeatAgent["cancel"]>(async () => new Promise<void>(() => {}));
+  it("quarantines an agent when its cancelled decision does not settle", async () => {
+    const cancel = vi.fn<SeatAgent["cancel"]>(async () => {});
     const result = await Effect.runPromise(
       runInitialPlacement({
         config: config(3),
