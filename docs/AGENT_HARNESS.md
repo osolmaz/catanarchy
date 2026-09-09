@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The agent harness lets scripted agents and Pi model agents use the same game protocol. It can run a bounded number of decisions through a complete native game, including awards and victory. Negotiation will use the same agent boundary in a later milestone.
+The agent harness lets scripted agents and Pi model agents use the same game protocol. It can run a bounded number of decisions through a complete native game, including awards, victory, and optional negotiation windows.
 
 ## Module boundaries
 
@@ -12,6 +12,39 @@ The implementation has two modules.
 - `packages/pi-agent` adapts one Pi `AgentSession` to the harness agent interface. It owns model lookup, the seat system prompt, the `choose_action` tool, timeout cancellation, usage collection, and session disposal.
 
 The engine stays deterministic and has no Pi dependency. The Pi tool selects an action but does not change game state. Only the harness can pass the selected command to the engine.
+
+## Negotiation contract
+
+Negotiation is a harness protocol layered over the game engine. Speech and proposals do not change authoritative game state. Only a completed `domestic-trade` engine command moves resource cards.
+
+A negotiation window opens once when a normal turn first reaches `turn.action`. It uses these fixed bounds from its policy:
+
+- a positive maximum round count
+- one negotiation operation per seat in each round
+- a maximum message length
+- a maximum number of open offers
+
+The active player acts first in each round. The other seats follow in table order. A full round of passes closes the window early. The window also closes at the round limit. Closing expires all open offers. The normal game-action decision follows the window. Builds do not reopen it during the same turn.
+
+An agent can return one of these operations:
+
+- pass
+- send a public or directed message
+- make a public or directed offer with exact give and receive bundles
+- counter an open offer
+- accept, reject, or withdraw an open offer
+- record a nonbinding promise
+- attach later evidence to a recorded promise
+
+Every operation is decoded at the untrusted agent boundary. Offers are immutable. A counteroffer closes its parent and creates a new offer with reversed participants. Only the active turn player and one other player can be parties to an offer. Only the target can accept or reject it, and only its proposer can withdraw it.
+
+Acceptance rechecks the offer status, game sequence, participants, and both current hands. The harness normalizes the offer into the active player's `domestic-trade` command and asks the engine to settle it. A successful settlement records the exact game-event sequence and expires all other open offers from the older game sequence. A failed or stale settlement records a failure and moves no cards.
+
+Messages and promises have no rule effect. Each new turn window carries the prior match transcript, promises, and evidence forward. Promise evidence can therefore refer to an authorized promise from an earlier turn and records a participant's note with a valid game-event sequence. It does not decide whether a promise was kept. This keeps argument and belief data available for training without making natural language authoritative.
+
+Negotiation records use their own deterministic sequence. Public views contain public speech, public offers, offer status changes, and completed trades. A seat view also contains directed records where that seat is the sender, recipient, proposer, or target. Other directed records are absent rather than redacted. Promises and evidence use the same scope rule.
+
+The optional `SeatAgent.negotiate` method uses the same isolated seat instance as game decisions. Agents without this method pass. Negotiation failures, deadlines, and invalid operations become bounded pass outcomes and operational traces. They do not stop a valid game.
 
 ## Decision contract
 
@@ -124,6 +157,10 @@ Deterministic tests cover these cases:
 - round-robin model assignment
 - three-player and four-player setup completion
 - bounded normal-turn, discard, robber, and development-card decisions
+- public and directed negotiation projection without private-record leaks
+- offer, counteroffer, reply, withdrawal, expiry, and promise records
+- stale, conflicting, malformed, and impossible trade attempts
+- four scripted bargaining agents that settle a trade and finish a game
 - a complete deterministic game with exact event replay
 - terminal games with no further agent request
 - stable event and trace order

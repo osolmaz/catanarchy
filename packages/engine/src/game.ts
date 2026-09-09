@@ -8,6 +8,8 @@ import type {
   DevelopmentCardBoughtEvent,
   DiceRolledEvent,
   DiscardResourceCommand,
+  DomesticTradeCommand,
+  DomesticTradeCompletedEvent,
   EndTurnCommand,
   EventEnvelope,
   GameCommand,
@@ -440,6 +442,27 @@ const applyMaritimeTrade = (
   };
 };
 
+const applyDomesticTrade = (
+  state: GameState,
+  sequence: number,
+  event: DomesticTradeCompletedEvent,
+): GameState => {
+  const spent = spendPlayerResources(
+    spendPlayerResources(state.players, event.playerId, event.give),
+    event.partnerPlayerId,
+    event.receive,
+  );
+  return {
+    ...state,
+    sequence,
+    players: updatePlayerResources(
+      updatePlayerResources(spent, event.playerId, event.receive),
+      event.partnerPlayerId,
+      event.give,
+    ),
+  };
+};
+
 const applyTurnEnded = (state: GameState, sequence: number, event: TurnEndedEvent): GameState => ({
   ...state,
   sequence,
@@ -764,6 +787,18 @@ const applySetupEvent = (state: GameState, envelope: GameEvent): GameState | und
   }
 };
 
+const applyTradeEvent = (state: GameState, envelope: GameEvent): GameState | undefined => {
+  const { event, sequence } = envelope;
+  switch (event.type) {
+    case "maritime-trade.completed":
+      return applyMaritimeTrade(state, sequence, event);
+    case "domestic-trade.completed":
+      return applyDomesticTrade(state, sequence, event);
+    default:
+      return undefined;
+  }
+};
+
 const applyNormalEvent = (state: GameState, envelope: GameEvent): GameState | undefined => {
   const { event, sequence } = envelope;
   switch (event.type) {
@@ -777,8 +812,6 @@ const applyNormalEvent = (state: GameState, envelope: GameEvent): GameState | un
       return applyCityBuilt(state, sequence, event);
     case "development-card.bought":
       return applyDevelopmentCardBought(state, sequence, event);
-    case "maritime-trade.completed":
-      return applyMaritimeTrade(state, sequence, event);
     case "turn.ended":
       return applyTurnEnded(state, sequence, event);
     default:
@@ -825,6 +858,7 @@ const applyOutcomeEvent = (state: GameState, envelope: GameEvent): GameState | u
 export const applyEvent = (state: GameState, envelope: GameEvent): GameState =>
   applySetupEvent(state, envelope) ??
   applyNormalEvent(state, envelope) ??
+  applyTradeEvent(state, envelope) ??
   applyEffectEvent(state, envelope) ??
   applyOutcomeEvent(state, envelope) ??
   state;
@@ -1285,6 +1319,65 @@ const decideMaritimeTrade = (
     });
   });
 
+const validTradeBundle = (resources: ResourceCounts): boolean =>
+  RESOURCE_KEYS.every(
+    (resource) => Number.isSafeInteger(resources[resource]) && resources[resource] >= 0,
+  ) && resourceTotal(resources) > 0;
+
+const disjointTradeBundles = (give: ResourceCounts, receive: ResourceCounts): boolean =>
+  RESOURCE_KEYS.every((resource) => give[resource] === 0 || receive[resource] === 0);
+
+const validDomesticTradeBundles = (command: DomesticTradeCommand): boolean =>
+  validTradeBundle(command.give) &&
+  validTradeBundle(command.receive) &&
+  disjointTradeBundles(command.give, command.receive);
+
+const domesticTradeResourcesAvailable = (
+  state: GameState,
+  playerId: PlayerId,
+  partner: PlayerState,
+  command: DomesticTradeCommand,
+): boolean => {
+  const player = playerById(state, playerId);
+  return (
+    player !== undefined &&
+    hasResources(player.resources, command.give) &&
+    hasResources(partner.resources, command.receive)
+  );
+};
+
+const decideDomesticTrade = (
+  state: GameState,
+  envelope: GameCommand,
+  command: DomesticTradeCommand,
+): Effect.Effect<EventBatch, RuleViolation> =>
+  Effect.gen(function* () {
+    yield* requireActionPhase(state);
+    const partner = playerById(state, command.partnerPlayerId);
+    if (partner === undefined || partner.id === envelope.playerId) {
+      return yield* failure("invalid-trade", "A domestic trade needs one other player.");
+    }
+    if (!validDomesticTradeBundles(command)) {
+      return yield* failure(
+        "invalid-trade",
+        "Both domestic-trade bundles must be positive and disjoint.",
+      );
+    }
+    if (!domesticTradeResourcesAvailable(state, envelope.playerId, partner, command)) {
+      return yield* failure(
+        "insufficient-resources",
+        "Both players must still hold the agreed resources.",
+      );
+    }
+    return actionEvent(state, envelope, {
+      type: "domestic-trade.completed" as const,
+      playerId: envelope.playerId,
+      partnerPlayerId: partner.id,
+      give: command.give,
+      receive: command.receive,
+    });
+  });
+
 const decideEndTurn = (
   state: GameState,
   envelope: GameCommand,
@@ -1579,6 +1672,20 @@ const decideSetupCommand = (
   }
 };
 
+const decideTradeCommand = (
+  state: GameState,
+  command: GameCommand,
+): Effect.Effect<EventBatch, RuleViolation> | undefined => {
+  switch (command.command.type) {
+    case "maritime-trade":
+      return decideMaritimeTrade(state, command, command.command);
+    case "domestic-trade":
+      return decideDomesticTrade(state, command, command.command);
+    default:
+      return undefined;
+  }
+};
+
 const decideNormalCommand = (
   state: GameState,
   command: GameCommand,
@@ -1594,8 +1701,6 @@ const decideNormalCommand = (
       return decideBuildCity(state, command, command.command);
     case "buy-development-card":
       return decideBuyDevelopmentCard(state, command, command.command);
-    case "maritime-trade":
-      return decideMaritimeTrade(state, command, command.command);
     case "end-turn":
       return decideEndTurn(state, command, command.command);
     default:
@@ -1718,6 +1823,7 @@ export const decide = (
     const decision =
       decideSetupCommand(state, command) ??
       decideNormalCommand(state, command) ??
+      decideTradeCommand(state, command) ??
       decideEffectCommand(state, command);
     const events = yield* decision;
     return withDerivedOutcomes(state, command, events);
@@ -2075,6 +2181,40 @@ const setupCommandFromEvent = (state: GameState, envelope: GameEvent): GameComma
   }
 };
 
+const tradeCommandFromEvent = (state: GameState, envelope: GameEvent): GameCommand | undefined => {
+  const common = {
+    schema: "catanarchy.command.v1" as const,
+    matchId: envelope.matchId,
+    commandId: envelope.commandId,
+    expectedSequence: state.sequence,
+  };
+  switch (envelope.event.type) {
+    case "maritime-trade.completed":
+      return {
+        ...common,
+        playerId: envelope.event.playerId,
+        command: {
+          type: "maritime-trade",
+          give: envelope.event.give,
+          receive: envelope.event.receive,
+        },
+      };
+    case "domestic-trade.completed":
+      return {
+        ...common,
+        playerId: envelope.event.playerId,
+        command: {
+          type: "domestic-trade",
+          partnerPlayerId: envelope.event.partnerPlayerId,
+          give: envelope.event.give,
+          receive: envelope.event.receive,
+        },
+      };
+    default:
+      return undefined;
+  }
+};
+
 const normalCommandFromEvent = (state: GameState, envelope: GameEvent): GameCommand | undefined => {
   const common = {
     schema: "catanarchy.command.v1" as const,
@@ -2108,16 +2248,6 @@ const normalCommandFromEvent = (state: GameState, envelope: GameEvent): GameComm
         ...common,
         playerId: envelope.event.playerId,
         command: { type: "buy-development-card" },
-      };
-    case "maritime-trade.completed":
-      return {
-        ...common,
-        playerId: envelope.event.playerId,
-        command: {
-          type: "maritime-trade",
-          give: envelope.event.give,
-          receive: envelope.event.receive,
-        },
       };
     case "turn.ended":
       return { ...common, playerId: envelope.event.playerId, command: { type: "end-turn" } };
@@ -2184,6 +2314,7 @@ const effectCommandFromEvent = (state: GameState, envelope: GameEvent): GameComm
 const commandFromEvent = (state: GameState, envelope: GameEvent): GameCommand | null =>
   setupCommandFromEvent(state, envelope) ??
   normalCommandFromEvent(state, envelope) ??
+  tradeCommandFromEvent(state, envelope) ??
   effectCommandFromEvent(state, envelope) ??
   null;
 

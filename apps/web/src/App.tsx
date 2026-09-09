@@ -6,11 +6,13 @@ import type {
   GamePhase,
   GameState,
   LegalAction,
+  NegotiationView,
   PlayerColor,
 } from "@catanarchy/protocol";
 import { Effect, Either } from "effect";
 import { useMemo, useState } from "react";
 import { Board } from "./Board.js";
+import { NegotiationTimeline } from "./NegotiationTimeline.js";
 
 interface LocalGame {
   readonly states: ReadonlyArray<GameState>;
@@ -34,6 +36,16 @@ const startGame = (seed: number, playerCount: number): LocalGame => {
   const result = Effect.runSync(createGame(makeConfig(seed, playerCount)));
   return { states: [result.state], events: result.events };
 };
+
+const emptyNegotiation = (matchId: string): NegotiationView => ({
+  schema: "catanarchy.negotiation-view.v1",
+  matchId,
+  sequence: 0,
+  events: [],
+  offers: [],
+  promises: [],
+  evidence: [],
+});
 
 const resourceText = (resources: GameState["bank"] | null): string =>
   resources === null
@@ -333,6 +345,15 @@ export const App = () => {
                 ? "None"
                 : observation.ownDevelopmentCards.map(({ card }) => card).join(" · ")}
             </p>
+          </section>
+
+          <section className="panel">
+            <h2>Negotiation</h2>
+            <NegotiationTimeline
+              negotiation={emptyNegotiation(state.matchId)}
+              gameEvents={game.events}
+              throughGameSequence={state.sequence}
+            />
           </section>
 
           <section className="panel">

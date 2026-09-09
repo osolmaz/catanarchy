@@ -4,7 +4,7 @@
 
 The first web slice is implemented as a trusted local game client. It starts seeded three-player and four-player games, renders the standard board, submits commands to the native engine, shows public scores, award progress, and the active player's private state, and moves through accepted-command history. It supports native games from setup through a terminal winner.
 
-Saved replay loading, timed playback, live streams, and negotiation views remain planned. Those remote and replay modes stay read-only and consume only viewer-safe data. The local setup client is a deliberate exception because the user runs the engine and browser in one trusted process.
+Saved replay loading, timed playback, live streams, and negotiation transport remain planned. The implemented negotiation timeline consumes already projected harness records and never decides trade legality. Those remote and replay modes stay read-only and consume only viewer-safe data. The local setup client is a deliberate exception because the user runs the engine and browser in one trusted process.
 
 ## Goals
 
@@ -357,7 +357,9 @@ Completion requires a live scripted match to remain correct across a forced disc
 
 ### Step 6: negotiation views
 
-Add chat visibility, offer state, counteroffers, and transfer outcomes when the negotiation protocol is implemented. Preserve the distinction between speech and binding operations.
+Render projected negotiation records in sequence beside binding game events. Message cards show the speaker and public or directed scope. Offer cards show both resource bundles, their current status, and a parent offer when the record is a counteroffer. Promise and evidence cards are marked as nonbinding claims. A completed domestic trade is marked as a binding engine result and links to its game-event sequence.
+
+The component accepts a public or one-seat projection. It does not receive hidden negotiation records and does not implement its own filtering. Tests render the same multi-round transcript through public and seat projections and verify that unauthorized directed text, bundles, and promise evidence are absent from the browser input and output.
 
 Completion requires a multi-round scripted negotiation replay to display only the messages authorized for each scope.
 

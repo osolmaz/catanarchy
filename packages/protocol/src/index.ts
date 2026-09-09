@@ -341,6 +341,14 @@ export interface MaritimeTradeCompletedEvent {
   readonly rate: 2 | 3 | 4;
 }
 
+export interface DomesticTradeCompletedEvent {
+  readonly type: "domestic-trade.completed";
+  readonly playerId: PlayerId;
+  readonly partnerPlayerId: PlayerId;
+  readonly give: ResourceCounts;
+  readonly receive: ResourceCounts;
+}
+
 export interface TurnEndedEvent {
   readonly type: "turn.ended";
   readonly playerId: PlayerId;
@@ -443,6 +451,7 @@ export type GameEvent =
   | EventEnvelope<CityBuiltEvent>
   | EventEnvelope<DevelopmentCardBoughtEvent>
   | EventEnvelope<MaritimeTradeCompletedEvent>
+  | EventEnvelope<DomesticTradeCompletedEvent>
   | EventEnvelope<TurnEndedEvent>
   | EventEnvelope<ResourceDiscardedEvent>
   | EventEnvelope<RobberMovedEvent>
@@ -552,6 +561,16 @@ export const GameEventEnvelopeSchema = Schema.Union(
       give: ResourceSchema,
       receive: ResourceSchema,
       rate: Schema.Literal(2, 3, 4),
+    }),
+  }),
+  Schema.Struct({
+    ...EventEnvelopeSchemaFields,
+    event: Schema.Struct({
+      type: Schema.Literal("domestic-trade.completed"),
+      playerId: Schema.String,
+      partnerPlayerId: Schema.String,
+      give: ResourceCountsSchema,
+      receive: ResourceCountsSchema,
     }),
   }),
   Schema.Struct({
@@ -692,6 +711,13 @@ export interface MaritimeTradeCommand {
   readonly receive: Resource;
 }
 
+export interface DomesticTradeCommand {
+  readonly type: "domestic-trade";
+  readonly partnerPlayerId: PlayerId;
+  readonly give: ResourceCounts;
+  readonly receive: ResourceCounts;
+}
+
 export interface EndTurnCommand {
   readonly type: "end-turn";
 }
@@ -739,6 +765,7 @@ export type GameCommandPayload =
   | BuildCityCommand
   | BuyDevelopmentCardCommand
   | MaritimeTradeCommand
+  | DomesticTradeCommand
   | EndTurnCommand
   | DiscardResourceCommand
   | MoveRobberCommand
@@ -809,6 +836,15 @@ export const GameCommandSchema = Schema.Union(
       type: Schema.Literal("maritime-trade"),
       give: ResourceSchema,
       receive: ResourceSchema,
+    }),
+  }),
+  Schema.Struct({
+    ...CommandEnvelopeSchemaFields,
+    command: Schema.Struct({
+      type: Schema.Literal("domestic-trade"),
+      partnerPlayerId: Schema.String,
+      give: ResourceCountsSchema,
+      receive: ResourceCountsSchema,
     }),
   }),
   Schema.Struct({
@@ -901,6 +937,197 @@ export interface GameObservation {
 export type Viewer =
   | { readonly type: "public" }
   | { readonly type: "player"; readonly playerId: PlayerId };
+
+export type NegotiationScope =
+  | { readonly type: "public" }
+  | { readonly type: "direct"; readonly playerId: PlayerId };
+
+export type TradeOfferStatus =
+  | "open"
+  | "accepted"
+  | "rejected"
+  | "withdrawn"
+  | "countered"
+  | "expired"
+  | "failed";
+
+export interface TradeOffer {
+  readonly id: string;
+  readonly parentOfferId: string | null;
+  readonly round: number;
+  readonly gameSequence: number;
+  readonly proposerPlayerId: PlayerId;
+  readonly targetPlayerId: PlayerId;
+  readonly scope: NegotiationScope;
+  readonly give: ResourceCounts;
+  readonly receive: ResourceCounts;
+  readonly status: TradeOfferStatus;
+}
+
+export interface NegotiationPromise {
+  readonly id: string;
+  readonly round: number;
+  readonly playerId: PlayerId;
+  readonly beneficiaryPlayerId: PlayerId;
+  readonly scope: NegotiationScope;
+  readonly text: string;
+  readonly relatedOfferId: string | null;
+}
+
+export interface PromiseEvidence {
+  readonly id: string;
+  readonly round: number;
+  readonly playerId: PlayerId;
+  readonly promiseId: string;
+  readonly gameSequence: number;
+  readonly text: string;
+}
+
+export type NegotiationAction =
+  | { readonly type: "pass" }
+  | { readonly type: "send-message"; readonly scope: NegotiationScope; readonly text: string }
+  | {
+      readonly type: "make-offer";
+      readonly targetPlayerId: PlayerId;
+      readonly scope: NegotiationScope;
+      readonly give: ResourceCounts;
+      readonly receive: ResourceCounts;
+    }
+  | {
+      readonly type: "counter-offer";
+      readonly offerId: string;
+      readonly scope: NegotiationScope;
+      readonly give: ResourceCounts;
+      readonly receive: ResourceCounts;
+    }
+  | { readonly type: "accept-offer"; readonly offerId: string }
+  | { readonly type: "reject-offer"; readonly offerId: string }
+  | { readonly type: "withdraw-offer"; readonly offerId: string }
+  | {
+      readonly type: "record-promise";
+      readonly beneficiaryPlayerId: PlayerId;
+      readonly scope: NegotiationScope;
+      readonly text: string;
+      readonly relatedOfferId: string | null;
+    }
+  | {
+      readonly type: "record-promise-evidence";
+      readonly promiseId: string;
+      readonly gameSequence: number;
+      readonly text: string;
+    };
+
+const NegotiationScopeSchema = Schema.Union(
+  Schema.Struct({ type: Schema.Literal("public") }),
+  Schema.Struct({ type: Schema.Literal("direct"), playerId: Schema.String }),
+);
+
+export const NegotiationActionSchema = Schema.Union(
+  Schema.Struct({ type: Schema.Literal("pass") }),
+  Schema.Struct({
+    type: Schema.Literal("send-message"),
+    scope: NegotiationScopeSchema,
+    text: Schema.String,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("make-offer"),
+    targetPlayerId: Schema.String,
+    scope: NegotiationScopeSchema,
+    give: ResourceCountsSchema,
+    receive: ResourceCountsSchema,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("counter-offer"),
+    offerId: Schema.String,
+    scope: NegotiationScopeSchema,
+    give: ResourceCountsSchema,
+    receive: ResourceCountsSchema,
+  }),
+  Schema.Struct({ type: Schema.Literal("accept-offer"), offerId: Schema.String }),
+  Schema.Struct({ type: Schema.Literal("reject-offer"), offerId: Schema.String }),
+  Schema.Struct({ type: Schema.Literal("withdraw-offer"), offerId: Schema.String }),
+  Schema.Struct({
+    type: Schema.Literal("record-promise"),
+    beneficiaryPlayerId: Schema.String,
+    scope: NegotiationScopeSchema,
+    text: Schema.String,
+    relatedOfferId: Schema.NullOr(Schema.String),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("record-promise-evidence"),
+    promiseId: Schema.String,
+    gameSequence: Schema.Number,
+    text: Schema.String,
+  }),
+);
+export const decodeNegotiationAction = Schema.decodeUnknown(NegotiationActionSchema);
+
+export type NegotiationWindowCloseReason = "all-passed" | "round-limit" | "game-ended";
+
+export type NegotiationEventPayload =
+  | {
+      readonly type: "negotiation.window-opened";
+      readonly windowId: string;
+      readonly turn: number;
+      readonly turnPlayerId: PlayerId;
+      readonly maxRounds: number;
+    }
+  | {
+      readonly type: "negotiation.message-sent";
+      readonly round: number;
+      readonly playerId: PlayerId;
+      readonly scope: NegotiationScope;
+      readonly text: string;
+    }
+  | {
+      readonly type: "negotiation.player-passed";
+      readonly round: number;
+      readonly playerId: PlayerId;
+    }
+  | { readonly type: "trade.offer-created"; readonly offer: TradeOffer }
+  | {
+      readonly type: "trade.offer-closed";
+      readonly offerId: string;
+      readonly playerId: PlayerId | null;
+      readonly status: Exclude<TradeOfferStatus, "open" | "accepted" | "failed">;
+    }
+  | {
+      readonly type: "trade.offer-accepted";
+      readonly offerId: string;
+      readonly playerId: PlayerId;
+      readonly gameEventSequence: number;
+    }
+  | {
+      readonly type: "trade.offer-failed";
+      readonly offerId: string;
+      readonly playerId: PlayerId;
+      readonly reason: "invalid" | "stale";
+    }
+  | { readonly type: "negotiation.promise-recorded"; readonly promise: NegotiationPromise }
+  | { readonly type: "negotiation.promise-evidence-recorded"; readonly evidence: PromiseEvidence }
+  | {
+      readonly type: "negotiation.window-closed";
+      readonly windowId: string;
+      readonly reason: NegotiationWindowCloseReason;
+    };
+
+export interface NegotiationEvent {
+  readonly schema: "catanarchy.negotiation-event.v1";
+  readonly matchId: string;
+  readonly sequence: number;
+  readonly gameSequence: number;
+  readonly event: NegotiationEventPayload;
+}
+
+export interface NegotiationView {
+  readonly schema: "catanarchy.negotiation-view.v1";
+  readonly matchId: string;
+  readonly sequence: number;
+  readonly events: ReadonlyArray<NegotiationEvent>;
+  readonly offers: ReadonlyArray<TradeOffer>;
+  readonly promises: ReadonlyArray<NegotiationPromise>;
+  readonly evidence: ReadonlyArray<PromiseEvidence>;
+}
 
 export interface CommandResult {
   readonly state: GameState;

@@ -2,7 +2,7 @@
 
 Catanarchy is a deterministic Catan simulator for agent research. The long-term goal is to let agents play, talk, negotiate, and make structured trades through one protocol. Native games and external adapters will use the same commands and observations.
 
-The current simulator supports the regular three-player and four-player board, initial placement, production, building, maritime trade, robber theft, development cards, Longest Road, Largest Army, scoring, and game completion. The local web app can submit these actions and inspect accepted-command history. A Pi agent harness can run complete scripted or model-driven games with isolated sessions and game-only tools. Domestic trade, negotiation, and adapters come later.
+The current simulator supports the regular three-player and four-player board, initial placement, production, building, maritime and domestic trade, robber theft, development cards, Longest Road, Largest Army, scoring, and game completion. The harness runs bounded public or directed negotiation rounds with offers, counteroffers, messages, promises, and atomic trade settlement. The local web app can submit game actions, inspect accepted-command history, and render projected negotiation timelines. A Pi agent harness can run complete scripted or model-driven games with isolated sessions and game-only tools. Pi negotiation tools and external adapters come later.
 
 ## Start the web app
 

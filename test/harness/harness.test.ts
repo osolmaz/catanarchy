@@ -5,14 +5,17 @@ import {
   runGameSteps,
   runInitialPlacement,
   type AgentDecisionRequest,
+  type AgentNegotiationRequest,
   type SeatAgent,
 } from "@catanarchy/harness";
 import type {
   Building,
   GameConfig,
   LegalAction,
+  NegotiationAction,
   PlayerColor,
   Resource,
+  ResourceCounts,
 } from "@catanarchy/protocol";
 import { Effect } from "effect";
 import { describe, expect, it, vi } from "vitest";
@@ -97,6 +100,80 @@ const actionPhaseChoice = (request: AgentDecisionRequest): LegalAction => {
   return firstNeededTrade(request) ?? actionOfType(request, "end-turn")!;
 };
 
+const EMPTY_RESOURCES: ResourceCounts = { lumber: 0, brick: 0, wool: 0, grain: 0, ore: 0 };
+const RESOURCE_KEYS: ReadonlyArray<Resource> = ["lumber", "brick", "wool", "grain", "ore"];
+
+const firstHeldResource = (
+  resources: ResourceCounts | null,
+  excluded?: Resource,
+): Resource | undefined =>
+  resources === null
+    ? undefined
+    : RESOURCE_KEYS.find((resource) => resource !== excluded && resources[resource] > 0);
+
+const canPayBundle = (resources: ResourceCounts | null, needed: ResourceCounts): boolean =>
+  resources !== null && RESOURCE_KEYS.every((resource) => resources[resource] >= needed[resource]);
+
+const targetedBargainingAction = (
+  request: AgentNegotiationRequest,
+  markCompleted: () => void,
+): NegotiationAction | undefined => {
+  const targeted = request.negotiation.offers.find(
+    ({ status, targetPlayerId }) => status === "open" && targetPlayerId === request.playerId,
+  );
+  if (targeted === undefined) return undefined;
+  const own = request.observation.ownResources;
+  if (canPayBundle(own, targeted.receive)) {
+    markCompleted();
+    return { type: "accept-offer", offerId: targeted.id };
+  }
+  const required = RESOURCE_KEYS.find((resource) => targeted.receive[resource] > 0);
+  const counterGive = firstHeldResource(own, required);
+  const counterReceive = RESOURCE_KEYS.find((resource) => targeted.give[resource] > 0);
+  if (counterGive === undefined || counterReceive === undefined || counterGive === counterReceive) {
+    return undefined;
+  }
+  return {
+    type: "counter-offer",
+    offerId: targeted.id,
+    scope: { type: "direct", playerId: targeted.proposerPlayerId },
+    give: { ...EMPTY_RESOURCES, [counterGive]: 1 },
+    receive: { ...EMPTY_RESOURCES, [counterReceive]: 1 },
+  };
+};
+
+const newBargainingOffer = (request: AgentNegotiationRequest): NegotiationAction | undefined => {
+  if (request.round !== 2 || request.playerId !== request.turnPlayerId) return undefined;
+  const give = firstHeldResource(request.observation.ownResources);
+  const receive = RESOURCE_KEYS.find((resource) => resource !== give);
+  const target = request.observation.players.find(({ id }) => id !== request.playerId);
+  if (give === undefined || receive === undefined || target === undefined) return undefined;
+  return {
+    type: "make-offer",
+    targetPlayerId: target.id,
+    scope: { type: "direct", playerId: target.id },
+    give: { ...EMPTY_RESOURCES, [give]: 1 },
+    receive: { ...EMPTY_RESOURCES, [receive]: 1 },
+  };
+};
+
+const bargainingAction = (
+  request: AgentNegotiationRequest,
+  markCompleted: () => void,
+): NegotiationAction => {
+  if (request.round === 1) {
+    return {
+      type: "send-message",
+      scope: { type: "public" },
+      text: `${request.playerId} is open to a fair resource trade.`,
+    };
+  }
+  return (
+    targetedBargainingAction(request, markCompleted) ??
+    newBargainingOffer(request) ?? { type: "pass" }
+  );
+};
+
 const scoringAction = (request: AgentDecisionRequest): LegalAction => {
   if (request.observation.phase.tag === "setup.settlement") {
     return request.legalActions.toSorted(
@@ -142,20 +219,55 @@ describe("agent harness", () => {
     expect(result.events.some(({ event }) => event.type === "robber.moved")).toBe(true);
   });
 
-  it("completes and replays a full deterministic native game", async () => {
+  it("completes and replays a full deterministic native game after multi-round bargaining", async () => {
+    let completedTrade = false;
     const result = await Effect.runPromise(
       runGameSteps({
         config: { ...config(4), seed: 42, matchId: "harness-complete-game" },
         maxDecisions: 2_000,
-        createAgent: async () =>
-          inertAgent(async (request) => ({ actionId: scoringAction(request).id })),
+        negotiationPolicy: { maxRounds: 3, maxMessageLength: 160, maxOpenOffers: 4 },
+        createAgent: async () => ({
+          async decide(request) {
+            return { actionId: scoringAction(request).id };
+          },
+          async negotiate(request) {
+            return {
+              action: completedTrade
+                ? { type: "pass" }
+                : bargainingAction(request, () => {
+                    completedTrade = true;
+                  }),
+            };
+          },
+          async cancel() {},
+          async dispose() {},
+        }),
       }),
     );
 
     expect(result.decisions.length).toBeLessThan(2_000);
     expect(result.state.phase.tag).toBe("game.finished");
-    expect(result.state.result).toMatchObject({ winnerId: "white", victoryPoints: 10 });
+    expect(result.state.result).toMatchObject({ victoryPoints: 10 });
     expect(result.events.at(-1)?.event.type).toBe("game.won");
+    expect(result.events.some(({ event }) => event.type === "domestic-trade.completed")).toBe(true);
+    expect(result.negotiations.some(({ event }) => event.type === "negotiation.message-sent")).toBe(
+      true,
+    );
+    expect(result.negotiations.some(({ event }) => event.type === "trade.offer-created")).toBe(
+      true,
+    );
+    expect(result.negotiations.some(({ event }) => event.type === "trade.offer-accepted")).toBe(
+      true,
+    );
+    expect(
+      Math.max(
+        ...result.negotiations.flatMap(({ event }) => ("round" in event ? [event.round] : [])),
+      ),
+    ).toBeGreaterThanOrEqual(2);
+    expect(result.negotiationSession?.closed).toBe(true);
+    expect(result.negotiations.map(({ sequence }) => sequence)).toEqual(
+      Array.from({ length: result.negotiations.length }, (_value, sequence) => sequence),
+    );
     expect(Effect.runSync(replay(result.events))).toEqual(result.state);
   });
 

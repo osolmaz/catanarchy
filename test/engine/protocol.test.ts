@@ -2,6 +2,7 @@ import {
   decodeGameCommand,
   decodeGameConfig,
   decodeGameEventEnvelope,
+  decodeNegotiationAction,
   DEVELOPMENT_CARDS,
   GameConfigSchema,
   PLAYER_COLORS,
@@ -125,6 +126,46 @@ describe("protocol boundaries", () => {
     expect(Effect.runSync(decodeGameCommand(plenty))).toEqual(plenty);
     expect(Effect.runSync(decodeGameEventEnvelope(robberEvent))).toEqual(robberEvent);
     expect(Effect.runSync(decodeGameEventEnvelope(monopolyEvent))).toEqual(monopolyEvent);
+  });
+
+  it("decodes domestic trades and negotiation actions", () => {
+    const resources = { lumber: 1, brick: 0, wool: 0, grain: 0, ore: 0 };
+    const command = {
+      schema: "catanarchy.command.v1",
+      matchId: "protocol",
+      commandId: "domestic-1",
+      playerId: "red",
+      expectedSequence: 22,
+      command: {
+        type: "domestic-trade",
+        partnerPlayerId: "blue",
+        give: resources,
+        receive: { ...resources, lumber: 0, brick: 1 },
+      },
+    };
+    const event = {
+      schema: "catanarchy.game-event.v1",
+      matchId: "protocol",
+      commandId: "domestic-1",
+      sequence: 23,
+      event: { ...command.command, type: "domestic-trade.completed", playerId: "red" },
+    };
+    const offer = {
+      type: "make-offer",
+      targetPlayerId: "blue",
+      scope: { type: "direct", playerId: "blue" },
+      give: resources,
+      receive: { ...resources, lumber: 0, brick: 1 },
+    };
+
+    expect(Effect.runSync(decodeGameCommand(command))).toEqual(command);
+    expect(Effect.runSync(decodeGameEventEnvelope(event))).toEqual(event);
+    expect(Effect.runSync(decodeNegotiationAction(offer))).toEqual(offer);
+    expect(
+      Either.isLeft(
+        Effect.runSync(Effect.either(decodeNegotiationAction({ ...offer, type: "unknown" }))),
+      ),
+    ).toBe(true);
   });
 
   it("decodes award and victory events", () => {
