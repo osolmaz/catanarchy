@@ -37,6 +37,7 @@ export interface NegotiationSession {
   readonly windowId: string;
   readonly turn: number;
   readonly turnPlayerId: PlayerId;
+  readonly gameSequence: number;
   readonly policy: NegotiationPolicy;
   readonly sequence: number;
   readonly events: ReadonlyArray<NegotiationEvent>;
@@ -168,6 +169,7 @@ export const openNegotiationWindow = (
       windowId,
       turn: state.phase.turn,
       turnPlayerId,
+      gameSequence: state.sequence,
       policy,
       sequence: initialSequence,
       events: [...inherited.events, opened],
@@ -450,7 +452,10 @@ const acceptOffer = (
     return {
       state: settlement.right.state,
       gameEvents: settlement.right.events,
-      session: expireOpenOffers(settlement.right.state, recorded),
+      session: expireOpenOffers(settlement.right.state, {
+        ...recorded,
+        gameSequence: settlement.right.state.sequence,
+      }),
     };
   });
 
@@ -645,6 +650,15 @@ const applyOfferAction = (
   }
 };
 
+const windowMatchesState = (state: GameState, session: NegotiationSession): boolean => {
+  if (state.phase.tag !== "turn.action") return false;
+  return (
+    state.phase.turn === session.turn &&
+    state.sequence === session.gameSequence &&
+    state.config.players[state.phase.playerIndex]?.id === session.turnPlayerId
+  );
+};
+
 const validateActionContext = (
   state: GameState,
   session: NegotiationSession,
@@ -652,7 +666,11 @@ const validateActionContext = (
   playerId: PlayerId,
 ): Effect.Effect<void, NegotiationViolation> =>
   Effect.gen(function* () {
-    if (session.closed || state.matchId !== session.matchId) {
+    if (
+      session.closed ||
+      state.matchId !== session.matchId ||
+      !windowMatchesState(state, session)
+    ) {
       return yield* fail("invalid-window", "The negotiation window is closed or mismatched.");
     }
     if (!playerExists(state, playerId)) {

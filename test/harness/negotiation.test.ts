@@ -267,7 +267,7 @@ describe("negotiation protocol", () => {
     expect(session.offers.map(({ status }) => status)).toEqual(["rejected", "withdrawn"]);
   });
 
-  it("records stale and impossible acceptance without moving cards", async () => {
+  it("records impossible settlement and rejects a stale window", async () => {
     const state = actionState();
     let session = await open(state);
     ({ session } = await apply(state, session, 1, "red", {
@@ -297,15 +297,30 @@ describe("negotiation protocol", () => {
       receive: { ...EMPTY, brick: 1 },
     }));
     const changedState = { ...state, sequence: state.sequence + 1 };
-    const stale = await apply(changedState, session, 1, "blue", {
-      type: "accept-offer",
-      offerId: session.offers[0]!.id,
-    });
-    expect(stale.state).toEqual(changedState);
-    expect(stale.session.events.at(-1)?.event).toMatchObject({
-      type: "trade.offer-failed",
-      reason: "stale",
-    });
+    const stale = await Effect.runPromise(
+      Effect.either(
+        applyNegotiationAction(changedState, session, 1, "blue", {
+          type: "accept-offer",
+          offerId: session.offers[0]!.id,
+        }),
+      ),
+    );
+    expect(Either.isLeft(stale) && stale.left.code).toBe("invalid-window");
+
+    const endedState: GameState = {
+      ...state,
+      phase: { tag: "turn.roll", playerIndex: 1, turn: 2, developmentCardPlayed: false },
+    };
+    const afterTurn = await Effect.runPromise(
+      Effect.either(
+        applyNegotiationAction(endedState, session, 1, "red", {
+          type: "send-message",
+          scope: { type: "public" },
+          text: "Too late",
+        }),
+      ),
+    );
+    expect(Either.isLeft(afterTurn) && afterTurn.left.code).toBe("invalid-window");
   });
 
   it("enforces actor, scope, offer, text, and policy limits", async () => {
