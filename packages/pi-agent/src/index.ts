@@ -65,10 +65,11 @@ export class ActionSelectionGate {
     if (!this.legalActionIds.has(actionId)) {
       return {
         content: [
-          { type: "text", text: "That action ID is not legal. Choose one listed action ID." },
+          { type: "text", text: "That action ID is not legal. The decision attempt failed." },
         ],
         details: { accepted: false },
         isError: true,
+        terminate: true,
       };
     }
     if (this.selection !== undefined) {
@@ -76,6 +77,7 @@ export class ActionSelectionGate {
         content: [{ type: "text", text: "An action was already selected for this decision." }],
         details: { accepted: false },
         isError: true,
+        terminate: true,
       };
     }
     this.selection = { actionId, ...(reason === undefined ? {} : { reason }) };
