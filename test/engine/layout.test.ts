@@ -61,6 +61,13 @@ const verifyMaterials = (seed: number) => {
   expect(materials.layout.harbors).toHaveLength(9);
   expect(new Set(materials.layout.harbors.map(({ edgeId }) => edgeId)).size).toBe(9);
   expect(materials.layout.harbors.every(({ edgeId }) => coastal.has(edgeId))).toBe(true);
+  const edgeOrder = new Map(STANDARD_TOPOLOGY.edges.map((edge, index) => [edge.id, index]));
+  const serializedHarborOrder = materials.layout.harbors.map(({ edgeId }) =>
+    edgeOrder.get(edgeId)!,
+  );
+  expect(serializedHarborOrder).toEqual(
+    [...serializedHarborOrder].sort((left, right) => left - right),
+  );
   const harborIndexes = materials.layout.harbors
     .map(({ edgeId }) => STANDARD_TOPOLOGY.coastalRing.indexOf(edgeId))
     .sort((left, right) => left - right);
