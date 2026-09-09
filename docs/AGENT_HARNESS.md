@@ -81,13 +81,13 @@ A decision trace contains:
 - match ID, sequence, player ID, and attempt number
 - model provider and model ID when applicable
 - selected action ID
-- model reason when supplied
+- model reason when supplied, except for private discard choices
 - elapsed milliseconds
 - input, output, cache, and total token counts when the runtime reports them
 - reported cost when the runtime reports it
 - fallback status and a sanitized failure category
 
-A match result contains the final state, ordered engine events, and ordered decision traces. Raw provider requests, hidden authoritative state, Pi messages, and credentials are not part of the trace.
+A match result contains the final state, ordered engine events, and ordered decision traces. Discard action IDs use opaque per-sequence option numbers, and the harness removes the model reason for those choices. Raw provider requests, hidden authoritative state, Pi messages, and credentials are not part of the trace.
 
 The command-line runner prints the match result summary. It writes a JSON result only when the caller supplies `--output`. Output files are operational artifacts and must not be committed by default.
 

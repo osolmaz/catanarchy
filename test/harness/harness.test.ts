@@ -59,6 +59,34 @@ describe("agent harness", () => {
     expect(result.events.some(({ event }) => event.type === "robber.moved")).toBe(true);
   });
 
+  it("keeps private discard choices out of decision traces", async () => {
+    const result = await Effect.runPromise(
+      runGameSteps({
+        config: { ...config(4), seed: 9, matchId: "harness-private-discards" },
+        maxDecisions: 300,
+        createAgent: async () =>
+          inertAgent(async (request) => {
+            const action =
+              request.observation.phase.tag === "turn.action"
+                ? (request.legalActions.find(({ id }) => id === "end-turn") ?? firstAction(request))
+                : firstAction(request);
+            return {
+              actionId: action.id,
+              reason: `Private choice: ${JSON.stringify(action.command.command)}`,
+            };
+          }),
+      }),
+    );
+    const discardTraces = result.decisions.filter(({ actionId }) =>
+      actionId?.startsWith("private-option:"),
+    );
+
+    expect(result.events.some(({ event }) => event.type === "resource.discarded")).toBe(true);
+    expect(discardTraces.length).toBeGreaterThan(0);
+    expect(discardTraces.every(({ reason }) => reason === undefined)).toBe(true);
+    expect(JSON.stringify(discardTraces)).not.toMatch(/lumber|brick|wool|grain|ore/);
+  });
+
   it("rejects an invalid game-step limit before creating agents", async () => {
     const createAgent = vi.fn<() => Promise<SeatAgent>>(async () => createFirstLegalAgent());
     await expect(
