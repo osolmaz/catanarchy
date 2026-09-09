@@ -16,7 +16,9 @@
     "format": "oxfmt --write",
     "format:check": "oxfmt --check",
     "lint": "oxlint --type-aware --deny-warnings packages apps test",
+    "play:pi": "tsx apps/pi-cli/src/index.ts",
     "preview": "vite preview --config apps/web/vite.config.ts",
+    "probe:pi": "tsx apps/pi-cli/src/probe.ts",
     "simulate": "tsx apps/cli/src/index.ts",
     "slophammer": "slophammer-ts check .",
     "test": "vitest run",
@@ -24,9 +26,11 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@earendil-works/pi-coding-agent": "0.85.1",
     "effect": "3.22.2",
     "react": "19.2.8",
-    "react-dom": "19.2.8"
+    "react-dom": "19.2.8",
+    "typebox": "1.3.7"
   },
   "devDependencies": {
     "@effect/language-service": "0.87.2",

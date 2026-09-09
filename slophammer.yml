@@ -26,9 +26,22 @@ typescript:
     - from: packages/engine/src
       allow:
         - packages/protocol/src
+    - from: packages/harness/src
+      allow:
+        - packages/engine/src
+        - packages/protocol/src
+    - from: packages/pi-agent/src
+      allow:
+        - packages/harness/src
+        - packages/protocol/src
     - from: apps/cli/src
       allow:
         - packages/engine/src
+        - packages/protocol/src
+    - from: apps/pi-cli/src
+      allow:
+        - packages/harness/src
+        - packages/pi-agent/src
         - packages/protocol/src
     - from: apps/web/src
       allow:
