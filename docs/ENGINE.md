@@ -2,9 +2,9 @@
 
 ## Status
 
-The standard board, setup, production, and main action phase are implemented. The engine rolls deterministic dice, resolves production and bank shortages, applies paid building and maritime trade, sells development cards, advances turns, lists legal actions, projects observations, and replays accepted events. A seven enters `turn.robber`, which is the explicit Milestone 3 boundary.
+The standard board, setup, production, main action phase, rolled-seven discards, robber theft, and action development cards are implemented. The engine uses deterministic random streams, finite supplies, typed effect phases, exhaustive legal actions, seat-scoped observations, and replayable events. Victory Point cards stay hidden for the awards and victory milestone.
 
-The test suite checks topology, 1,000 generated layouts, deterministic random streams, setup rules, normal-turn rules, replay, invariants, failures, legal actions, and private-state boundaries. Colonist-specific evidence remains in the [Colonist compatibility profile](COLONIST.md).
+The test suite checks topology, 1,000 generated layouts, deterministic random streams, setup and normal-turn rules, robber and development-card effects, replay, invariants, failures, legal actions, and private-state boundaries. Colonist-specific evidence remains in the [Colonist compatibility profile](COLONIST.md).
 
 ## Scope
 
@@ -95,6 +95,77 @@ Public observations expose the dice result through the phase and retain public p
 ### Milestone 2 tests
 
 Tests cover deterministic dice, production, robber blocking, both shortage branches, every cost, bank conservation, piece limits, road blocking, settlement distance and connection, city replacement, deck exhaustion, harbor rates, turn order, stale commands, replay batches, exhaustive legal actions, observation privacy, and agent request isolation.
+
+## Milestone 3 contract
+
+Milestone 3 resolves a rolled seven and adds the action development cards. It follows the [2025 CATAN rulebook](https://www.catan.com/sites/default/files/2025-03/CN3081%20CATAN%E2%80%93The%20Game%20Rulebook%20secure%20%281%29.pdf) and the [official base-game FAQ](https://www.catan.com/faq/basegame). Colonist's published base-game rules describe the same behavior. The protocol keeps its existing `v1` identifiers and changes the contract in place.
+
+### Turn state and continuations
+
+Every normal-turn phase records whether the active player has played an action development card during that turn. `end-turn` resets this value for the next player.
+
+Milestone 3 adds three phases:
+
+- `turn.discard` selects one resource card at a time from a player who must discard. It records the roller, that player's remaining discard count, and the later players in the queue.
+- `turn.robber` selects a new robber hex and an eligible victim. It records whether a seven or Knight caused the move and where play resumes.
+- `turn.free-road` places the remaining free roads from Road Building.
+
+A typed turn continuation records whether an effect returns to `turn.roll`, `turn.action`, or an earlier pending robber move. This permits a Knight played after a seven to resolve its own robber move and then return to the robber move required by the seven. It also lets Road Building return to a pending robber move. The state does not use optional fields or an implicit phase stack.
+
+### Rolled seven and discards
+
+A seven produces no resources. Each player with more than seven resource cards must discard half of their hand, rounded down. The engine creates the deterministic discard queue in configured player order. The official action is simultaneous, so this order is an execution detail and cannot change the required amount or any other player's legal choices.
+
+A discard command returns one named resource card to the bank. One-card commands keep legal-action lists bounded to the five resource types instead of enumerating every possible hand partition. Only the current discarding player receives their resource identities. When their count reaches zero, the next queued player becomes active. After the queue is empty, the roller must activate the robber.
+
+### Robber movement and theft
+
+The robber must move to a different land hex. For each destination, a legal action names one opponent with a settlement or city on that hex. If there is no opponent building, the action names no victim. The active player cannot rob themselves and cannot omit a victim when an opponent building is present.
+
+The chosen victim is eligible even when they have no resource cards because hand contents are private. In that case, no theft occurs. Otherwise, the engine selects one random card uniformly from the victim's complete resource-card multiset. The authoritative event records the stolen resource and the next `resourceSteal` random cursor. Public observations expose only changed card counts. Each involved player sees only their own resulting hand.
+
+After a seven's robber move, play enters `turn.action`. A Knight's robber move returns to the phase that was interrupted.
+
+### Development-card timing
+
+A player may play at most one action development card during a turn. They cannot play a card bought during that same turn. They can play an eligible card before rolling, during the action phase, or while the robber move from a seven is pending. They cannot start another development-card effect while discards or free roads are being resolved.
+
+Playing a card removes one matching owned card. Played Knights increase the player's `playedKnights` count. Award ownership remains Milestone 4 work.
+
+Victory Point cards stay hidden and have no ordinary play action. Milestone 4 will reveal any number of them when they make the active player win, including cards bought on that turn. This is the rulebook's explicit exception to normal development-card timing.
+
+### Development-card effects
+
+- **Knight:** Start a robber move, then return to the interrupted phase. A Knight played while a seven's robber move is pending causes two robber moves in the correct order.
+- **Road Building:** Place up to two legal roads without paying resources. Each road uses the normal connection and piece-supply rules at the time it is placed. The effect ends early only when the player has no road piece or no legal edge.
+- **Year of Plenty:** Name two resources, which can be the same. Take the requested cards that remain in the bank. A finite bank can therefore grant zero, one, or two cards.
+- **Monopoly:** Name one resource. Every opponent transfers all cards of that type to the active player. The bank does not participate.
+
+The official 2025 edition calls Year of Plenty “Invention.” The protocol keeps `year-of-plenty`, which is the established project card identifier.
+
+### Commands, events, and legal actions
+
+Milestone 3 adds these command payloads:
+
+- `discard-resource`
+- `move-robber`
+- `play-knight`
+- `play-road-building`
+- `place-free-road`
+- `play-year-of-plenty`
+- `play-monopoly`
+
+It adds matching replayable events: `resource.discarded`, `robber.moved`, `knight.played`, `road-building.played`, `free-road.placed`, `year-of-plenty.played`, and `monopoly.played`.
+
+Discard actions enumerate resource types in the player's hand. Robber actions enumerate every valid destination and victim pair. Free-road actions enumerate every currently valid edge. Development-card actions appear only when ownership, purchase-turn timing, the one-card limit, and the current phase permit them. Finite bank and piece supplies can reduce an accepted card's effect.
+
+### Information boundary
+
+A player observation adds that player's development-card identities and purchase turns. Public observations and opponent summaries expose only counts. Discarded and stolen resource identities stay in the authoritative event log and do not enter observations or decision traces.
+
+### Milestone 3 tests
+
+Tests cover discard thresholds, odd totals, queue order, card-by-card choices, robber destination and victim rules, empty victims, weighted deterministic theft, random-cursor use, nested Knight movement, all action-card timing rules and effects, finite bank and road supply, replay, legal-action soundness, invariants, viewer controls, and seat isolation.
 
 ## Design rules
 

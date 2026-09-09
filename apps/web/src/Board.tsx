@@ -54,6 +54,35 @@ const harborLabel = (kind: HarborKind): string =>
 
 const probabilityPips = (number: number): number => 6 - Math.abs(7 - number);
 
+const collectLegalBoardActions = (legalActions: ReadonlyArray<LegalAction>) => {
+  const byVertex = new Map<VertexId, LegalAction>();
+  const byEdge = new Map<EdgeId, LegalAction>();
+  for (const action of legalActions) {
+    const command = action.command.command;
+    switch (command.type) {
+      case "place-initial-settlement":
+      case "build-settlement":
+      case "build-city":
+        byVertex.set(command.vertexId, action);
+        break;
+      case "place-initial-road":
+      case "build-road":
+      case "place-free-road":
+        byEdge.set(command.edgeId, action);
+        break;
+      default:
+        break;
+    }
+  }
+  return { byVertex, byEdge };
+};
+
+const roadActionVerb = (action: LegalAction): string => {
+  if (action.command.command.type === "build-road") return "Build";
+  if (action.command.command.type === "place-free-road") return "Place free";
+  return "Place";
+};
+
 export const Board = ({ observation, legalActions, onAction, interactive }: BoardProps) => {
   const vertexById = new Map(observation.topology.vertices.map((vertex) => [vertex.id, vertex]));
   const edgeById = new Map(observation.topology.edges.map((edge) => [edge.id, edge]));
@@ -61,24 +90,7 @@ export const Board = ({ observation, legalActions, onAction, interactive }: Boar
     observation.layout.terrain.map((item) => [item.hexId, item.terrain]),
   );
   const numberByHex = new Map(observation.layout.numbers.map((item) => [item.hexId, item.number]));
-  const legalByVertex = new Map<VertexId, LegalAction>();
-  const legalByEdge = new Map<EdgeId, LegalAction>();
-  for (const action of legalActions) {
-    const command = action.command.command;
-    switch (command.type) {
-      case "place-initial-settlement":
-      case "build-settlement":
-      case "build-city":
-        legalByVertex.set(command.vertexId, action);
-        break;
-      case "place-initial-road":
-      case "build-road":
-        legalByEdge.set(command.edgeId, action);
-        break;
-      default:
-        break;
-    }
-  }
+  const { byVertex: legalByVertex, byEdge: legalByEdge } = collectLegalBoardActions(legalActions);
 
   return (
     <svg className="board" viewBox="0 0 540 460" role="group" aria-label="Catan game board">
@@ -238,7 +250,7 @@ export const Board = ({ observation, legalActions, onAction, interactive }: Boar
                 className="legal-road"
                 role="button"
                 tabIndex={0}
-                aria-label={`${action.command.command.type === "build-road" ? "Build" : "Place"} road on ${id}`}
+                aria-label={`${roadActionVerb(action)} road on ${id}`}
                 onClick={() => onAction(action)}
                 onKeyDown={(event) => {
                   if (event.key === "Enter" || event.key === " ") onAction(action);

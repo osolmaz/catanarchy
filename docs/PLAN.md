@@ -6,7 +6,7 @@ Catanarchy will provide a deterministic Catan simulator and a multi-agent negoti
 
 The first rules target is the current three-player and four-player CATAN base game. Expansions and house rules remain outside the first release.
 
-The current implementation covers the standard board, complete initial placement, production, paid building, development-card purchases, maritime trade, normal turn order, a trusted local web client, and the Pi agent harness. A rolled seven stops at the explicit robber boundary for Milestone 3. Negotiation and adapters remain planned work.
+The current implementation covers the standard board, complete initial placement, production, paid building, maritime trade, rolled-seven discards, robber theft, action development cards, a trusted local web client, and the Pi agent harness. Awards, victory, negotiation, and adapters remain planned work.
 
 ## Product boundaries
 
@@ -218,17 +218,19 @@ The [Milestone 2 engine contract](ENGINE.md#milestone-2-contract) locks the phas
 - [x] Allow legal ordering between trade and build operations.
 - [x] Add exhaustive legal-action generation.
 
-Seeded games now progress from setup through normal turns without manual state changes. A seven stops at `turn.robber` until Milestone 3 adds discard, robber movement, and theft.
+Seeded games now progress from setup through normal turns without manual state changes.
 
 ### Milestone 3: robber and development cards
 
-- [ ] Implement discard queues for a seven.
-- [ ] Implement robber movement with victim selection and private theft.
-- [ ] Implement all development-card effects.
-- [ ] Enforce purchase-turn and one-card-per-turn restrictions.
-- [ ] Test finite bank and deck behavior.
+The [Milestone 3 engine contract](ENGINE.md#milestone-3-contract) locks discard execution, robber continuations, deterministic theft, development-card timing and effects, finite supplies, privacy, and tests before implementation.
 
-Completion requires conformance tests for every robber and development-card rule listed above.
+- [x] Implement discard queues for a seven.
+- [x] Implement robber movement with victim selection and private theft.
+- [x] Implement all action development-card effects and preserve hidden Victory Point cards for Milestone 4.
+- [x] Enforce purchase-turn and one-card-per-turn restrictions.
+- [x] Test finite bank and deck behavior.
+
+Conformance tests cover the robber and development-card rules in the Milestone 3 contract.
 
 ### Milestone 4: awards and victory
 

@@ -74,7 +74,12 @@ describe("initial placement", () => {
     const created = Effect.runSync(createGame(config(playerCount)));
     const completed = completeSetup(created.state);
 
-    expect(completed.state.phase).toEqual({ tag: "turn.roll", playerIndex: 0, turn: 1 });
+    expect(completed.state.phase).toEqual({
+      tag: "turn.roll",
+      playerIndex: 0,
+      turn: 1,
+      developmentCardPlayed: false,
+    });
     expect(completed.state.occupancy.buildings).toHaveLength(playerCount * 2);
     expect(completed.state.occupancy.roads).toHaveLength(playerCount * 2);
     for (const player of completed.state.players) {

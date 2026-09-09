@@ -61,20 +61,31 @@ const pieceSupplyViolations = (state: GameState): ReadonlyArray<string> => {
 };
 
 const developmentCardViolations = (state: GameState): ReadonlyArray<string> => {
-  const violations = state.players
-    .filter((player) =>
+  const violations = state.players.flatMap((player) => {
+    const playerViolations: string[] = [];
+    if (
       player.developmentCards.some(
         ({ purchasedTurn }) => !Number.isSafeInteger(purchasedTurn) || purchasedTurn < 1,
-      ),
-    )
-    .map((player) => `development-card-turn:${player.id}`);
+      )
+    ) {
+      playerViolations.push(`development-card-turn:${player.id}`);
+    }
+    if (!Number.isSafeInteger(player.playedKnights) || player.playedKnights < 0) {
+      playerViolations.push(`played-knights:${player.id}`);
+    }
+    return playerViolations;
+  });
   const ownedCount = state.players.reduce(
     (total, player) => total + player.developmentCards.length,
     0,
   );
-  return state.developmentDeck.length + ownedCount === 25
-    ? violations
-    : [...violations, "development-card-conservation"];
+  const playedKnightCount = state.players.reduce(
+    (total, player) => total + player.playedKnights,
+    0,
+  );
+  const totalCount =
+    state.developmentDeck.length + state.developmentDiscard.length + ownedCount + playedKnightCount;
+  return totalCount === 25 ? violations : [...violations, "development-card-conservation"];
 };
 
 const supplyViolations = (state: GameState): ReadonlyArray<string> => [
@@ -83,14 +94,68 @@ const supplyViolations = (state: GameState): ReadonlyArray<string> => [
   ...developmentCardViolations(state),
 ];
 
+const validPlayerIndex = (state: GameState, playerIndex: number): boolean =>
+  Number.isSafeInteger(playerIndex) && playerIndex >= 0 && playerIndex < state.players.length;
+
+const discardPhaseViolations = (
+  state: GameState,
+  phase: Extract<GameState["phase"], { readonly tag: "turn.discard" }>,
+): ReadonlyArray<string> => {
+  const violations: string[] = [];
+  if (!validPlayerIndex(state, phase.rollerIndex)) violations.push("discard-roller");
+  const entries = [{ playerIndex: phase.playerIndex, remaining: phase.remaining }, ...phase.queue];
+  if (entries.some(({ playerIndex }) => !validPlayerIndex(state, playerIndex))) {
+    violations.push("discard-player");
+  }
+  if (entries.some(({ remaining }) => !Number.isSafeInteger(remaining) || remaining < 1)) {
+    violations.push("discard-remaining");
+  }
+  if (duplicateValues(entries.map(({ playerIndex }) => String(playerIndex)))) {
+    violations.push("duplicate-discard-player");
+  }
+  if (
+    entries.some(({ playerIndex, remaining }) => {
+      const player = state.players[playerIndex];
+      return (
+        player !== undefined &&
+        resourceValues(player.resources).reduce((a, b) => a + b, 0) < remaining
+      );
+    })
+  ) {
+    violations.push("discard-exceeds-hand");
+  }
+  return violations;
+};
+
+const turnNumberViolations = (turn: number): ReadonlyArray<string> =>
+  !Number.isSafeInteger(turn) || turn < 1 ? ["turn-number"] : [];
+
+const freeRoadPhaseViolations = (
+  phase: Extract<GameState["phase"], { readonly tag: "turn.free-road" }>,
+): ReadonlyArray<string> =>
+  !Number.isSafeInteger(phase.remaining) || phase.remaining < 1 || phase.remaining > 2
+    ? ["free-road-remaining"]
+    : [];
+
+const turnPhaseViolations = (state: GameState): ReadonlyArray<string> => {
+  const phase = state.phase;
+  if (!("turn" in phase)) return [];
+  const violations = [...turnNumberViolations(phase.turn)];
+  if (phase.tag === "turn.discard") violations.push(...discardPhaseViolations(state, phase));
+  if (phase.tag === "turn.free-road") violations.push(...freeRoadPhaseViolations(phase));
+  return violations;
+};
+
 const phaseViolations = (state: GameState): ReadonlyArray<string> => {
-  if (state.phase.playerIndex < 0 || state.phase.playerIndex >= state.players.length)
-    return ["active-player"];
-  if (state.phase.tag !== "setup.road") return [];
+  if (!validPlayerIndex(state, state.phase.playerIndex)) return ["active-player"];
+  const violations = [...turnPhaseViolations(state)];
+  if (state.phase.tag !== "setup.road") return violations;
   const player = state.players[state.phase.playerIndex];
   const settlementId = state.phase.settlementId;
   const anchor = state.occupancy.buildings.find(({ vertexId }) => vertexId === settlementId);
-  return player === undefined || anchor?.playerId !== player.id ? ["road-anchor"] : [];
+  return player === undefined || anchor?.playerId !== player.id
+    ? [...violations, "road-anchor"]
+    : violations;
 };
 
 export const checkInvariants = (state: GameState): ReadonlyArray<string> => [
