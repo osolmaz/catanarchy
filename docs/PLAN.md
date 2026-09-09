@@ -6,7 +6,7 @@ Catanarchy will provide a deterministic Catan simulator and a multi-agent negoti
 
 The first rules target is the current three-player and four-player CATAN base game. Expansions and house rules remain outside the first release.
 
-The current implementation covers the regular board and native base-game rules from setup through victory, a trusted local web client, and the Pi agent harness. Domestic trade, negotiation, remote viewing, and adapters remain planned work.
+The current implementation covers the regular board and native base-game rules from setup through victory, atomic domestic trade, bounded negotiation, a trusted local web client, and the Pi agent harness. Pi negotiation tools, remote viewing, and adapters remain planned work.
 
 ## Product boundaries
 
@@ -261,14 +261,16 @@ The first viewer slice is a trusted local setup client. The full milestone will 
 
 ### Milestone 6: domestic trade and language
 
-- [ ] Add negotiation windows and policy limits.
-- [ ] Add public and directed messages.
-- [ ] Add offers and counteroffers.
-- [ ] Add replies with withdrawal and expiry.
-- [ ] Validate and atomically commit accepted trades.
-- [ ] Record nonbinding promises and later evidence.
-- [ ] Extend the web timeline with scope-safe message and offer views.
-- [ ] Add adversarial tests for stale or conflicting offers and impossible trades.
+The [domestic-trade engine contract](ENGINE.md#milestone-6-domestic-trade-contract), [negotiation harness contract](AGENT_HARNESS.md#negotiation-contract), and [negotiation viewer design](VIEWER.md#step-6-negotiation-views) lock this milestone before implementation.
+
+- [x] Add one bounded negotiation window when a turn first reaches the action phase.
+- [x] Add public and directed messages.
+- [x] Add immutable offers and counteroffers between the active player and one other seat.
+- [x] Add acceptance, rejection, withdrawal, stale-offer expiry, and window expiry.
+- [x] Validate and atomically commit accepted trades through one engine command.
+- [x] Record nonbinding promises and participant-supplied later evidence.
+- [x] Extend the web timeline with scope-safe message and offer views.
+- [x] Add adversarial tests for stale or conflicting offers and impossible trades.
 
 Completion requires four scripted agents to conduct multi-round bargaining and finish a valid game. The viewer must show the resulting public and seat-specific negotiations without private-data leaks.
 

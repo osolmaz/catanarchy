@@ -385,6 +385,13 @@ aside {
   line-height: 1.6;
 }
 
+.timeline-empty {
+  margin: 0;
+  color: #66736c;
+  font-size: 0.85rem;
+}
+
+.negotiation-timeline,
 .events {
   max-height: 300px;
   overflow: auto;
@@ -393,6 +400,7 @@ aside {
   list-style: none;
 }
 
+.negotiation-timeline li,
 .events li {
   display: grid;
   grid-template-columns: 2.5rem 1fr;
@@ -402,10 +410,17 @@ aside {
   font-size: 0.84rem;
 }
 
+.negotiation-timeline li.binding {
+  border-left: 3px solid #33745e;
+  padding-left: 0.45rem;
+  background: #e6f0e8;
+}
+
 .events li.future {
   opacity: 0.35;
 }
 
+.negotiation-timeline code,
 .events code {
   color: #3d6d5e;
 }

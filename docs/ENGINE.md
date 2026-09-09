@@ -2,7 +2,7 @@
 
 ## Status
 
-The regular base-game engine is complete through victory. It supports setup, production, building, maritime trade, discards, robber theft, development cards, Longest Road, Largest Army, visible and hidden scoring, and a terminal winner state. The engine uses deterministic random streams, finite supplies, typed effect phases, exhaustive legal actions, seat-scoped observations, and replayable events.
+The regular base-game engine is complete through victory and domestic trade. It supports setup, production, building, maritime trade, atomic agreed domestic trades, discards, robber theft, development cards, Longest Road, Largest Army, visible and hidden scoring, and a terminal winner state. The engine uses deterministic random streams, finite supplies, typed effect phases, exhaustive parameter-free legal actions, seat-scoped observations, and replayable events.
 
 The test suite checks topology, 1,000 generated layouts, deterministic random streams, setup and normal-turn rules, robber and development-card effects, generated road graphs, awards, scoring, complete-game replay, invariants, failures, legal actions, and private-state boundaries. Colonist-specific evidence remains in the [Colonist compatibility profile](COLONIST.md).
 
@@ -206,6 +206,18 @@ A `game.won` event records the winner, turn, final score, and number of revealed
 ### Milestone 4 tests
 
 Focused graph fixtures cover lines, forks, cycles, cycle branches, edge reuse prevention, and opponent-building interruptions. State tests cover award thresholds, retention, transfer, tied vacancies, visible and hidden scores, same-turn Victory Point purchases, inactive-player delays, event ordering, terminal legal actions, replay, observations, viewer output, and invariant failures. A bounded deterministic harness run must also complete a native game without manual state changes.
+
+## Milestone 6 domestic-trade contract
+
+Domestic trade has one binding engine operation. The active player submits `domestic-trade` during `turn.action`. The command names one other player and two resource bundles: what the active player gives and what that player receives. Both bundles must contain at least one card, all counts must be nonnegative integers, and one resource type cannot occur on both sides. The engine rejects gifts, self-trades, unavailable cards, stale commands, and trades outside the action phase.
+
+A successful command emits one `domestic-trade.completed` event. The reducer removes both bundles before it adds either bundle. This makes settlement atomic and preserves the total supply. A rejected settlement changes no state and emits no event. Exact resource bundles are public because completed domestic trades are table-visible game actions.
+
+Offers, counteroffers, acceptance, withdrawal, messages, promises, and promise evidence stay outside authoritative game state. They are negotiation records owned by the harness. Acceptance asks the engine to settle the agreed structured trade at the current game sequence. A resource change makes all older open offers stale. The harness then records either the completed game-event sequence or the failed settlement without changing the engine rules.
+
+The normal legal-action list does not enumerate domestic trades. Their resource bundles are parameterized and can be large. The harness decodes and validates the structured offer, obtains both players' agreement, and then sends the exact engine command. Adapters must provide the same settlement result even when an external site presents offers through a different interface.
+
+Conformance tests cover valid exchanges, each invalid bundle shape, missing resources on either side, self-trades, wrong phases, stale settlement, exact replay, and supply conservation.
 
 ## Design rules
 
