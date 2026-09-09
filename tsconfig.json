@@ -3,7 +3,12 @@
     "target": "ES2023",
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
-    "lib": ["ES2023"],
+    "paths": {
+      "@catanarchy/engine": ["./packages/engine/src/index.ts"],
+      "@catanarchy/protocol": ["./packages/protocol/src/index.ts"]
+    },
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
     "strict": true,
     "noEmit": true,
     "noUncheckedIndexedAccess": true,
@@ -20,6 +25,6 @@
     "types": ["node", "vitest/globals"],
     "plugins": [{ "name": "@effect/language-service" }]
   },
-  "include": ["src", "test", "vitest.config.ts"],
+  "include": ["apps", "packages", "test", "vitest.config.ts"],
   "exclude": ["coverage", "dist", "node_modules"]
 }

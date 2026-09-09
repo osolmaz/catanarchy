@@ -1,11 +1,20 @@
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 
+const fromRoot = (path: string): string => fileURLToPath(new URL(path, import.meta.url));
+
 export default defineConfig({
+  resolve: {
+    alias: {
+      "@catanarchy/engine": fromRoot("packages/engine/src/index.ts"),
+      "@catanarchy/protocol": fromRoot("packages/protocol/src/index.ts"),
+    },
+  },
   test: {
-    include: ["test/**/*.test.ts"],
+    include: ["test/**/*.test.{ts,tsx}"],
     coverage: {
       provider: "v8",
-      include: ["src/engine/**/*.ts", "src/protocol/**/*.ts"],
+      include: ["packages/engine/src/**/*.ts", "packages/protocol/src/**/*.ts"],
       reporter: ["text", "json", "html"],
       thresholds: {
         lines: 85,

@@ -2,9 +2,9 @@
 
 ## Status
 
-The board and rules engine are not implemented yet. The current scaffold validates a match configuration and supplies seeded random values. It creates a small initial state with two startup events. Its tests cover only that scaffold.
+The standard board and initial-placement engine are implemented. The engine generates the regular topology and a seeded layout, creates the development deck, applies initial settlements and roads in forward and reverse player order, grants starting resources, lists legal actions, projects observations, and replays accepted events.
 
-This document is the implementation contract for the standard board and initial-placement milestone. The broader sequence remains in the [implementation plan](PLAN.md). Colonist-specific evidence remains in the [Colonist compatibility profile](COLONIST.md).
+The test suite checks topology, 1,000 generated layouts, deterministic random streams, setup rules for three and four players, replay, invariants, failures, legal actions, and private-state boundaries. Normal turns begin in Milestone 2 of the [implementation plan](PLAN.md). Colonist-specific evidence remains in the [Colonist compatibility profile](COLONIST.md).
 
 ## Scope
 
@@ -220,9 +220,9 @@ interface HarborPlacement {
 
 The standard supply has four generic 3:1 harbors and one 2:1 harbor for each of the five resources. All nine harbor edges must be distinct coastal edges.
 
-Harbor positions belong to `BoardLayout`, not `StandardTopology`. This supports the shuffled standard frame and lets an adapter report the regular Colonist board without changing graph identity.
+Harbor positions belong to `BoardLayout`, not `StandardTopology`. This lets a native game shuffle harbor kinds and lets an adapter report an observed regular board without changing graph identity.
 
-The exact native harbor-position procedure must come from a reviewed representation of the official six frame pieces. The implementation must not invent a spacing rule from a screenshot. A fixed fixture must identify each frame segment, its allowed joins, and its harbor attachment edges. Tests then project a shuffled frame onto the ordered coastal ring.
+The headless board uses the standard nine-harbor attachment pattern on its ordered 30-edge coastal ring. The clockwise gaps between harbor edges are six gaps of three edges and three gaps of four edges. The pattern repeats `3, 4, 3` three times. A seeded rotation removes dependence on an arbitrary first coastal edge, and a separate shuffle assigns the four generic and five resource harbor kinds. Tests check the exact gap multiset, distinct coastal edges, and harbor supply for 1,000 seeds. A graphical frame is presentation data and does not enter the engine topology.
 
 ### Layout state
 
@@ -231,14 +231,14 @@ The persistent layout shape is:
 ```ts
 interface BoardLayout {
   readonly topology: "standard-radius-2";
-  readonly terrainByHex: ReadonlyArray<readonly [HexId, Terrain]>;
-  readonly numberByHex: ReadonlyArray<readonly [HexId, NumberToken]>;
+  readonly terrain: ReadonlyArray<TerrainPlacement>;
+  readonly numbers: ReadonlyArray<NumberPlacement>;
   readonly harbors: ReadonlyArray<HarborPlacement>;
   readonly robberHexId: HexId;
 }
 ```
 
-Pairs and harbors use canonical order. Effect Schema validates all external layout data. Engine invariants then validate cross-field rules that a field schema cannot express.
+Placements and harbors use canonical order. Native layouts come from the deterministic generator. Future adapters must decode external layout data at their boundary, then run cross-field engine invariants.
 
 ### Development deck initialization
 
@@ -282,20 +282,18 @@ interface GameState {
   readonly matchId: MatchId;
   readonly sequence: number;
   readonly config: GameConfig;
+  readonly topology: StandardTopology;
   readonly layout: BoardLayout;
   readonly occupancy: BoardOccupancy;
   readonly bank: ResourceCounts;
   readonly players: ReadonlyArray<PlayerState>;
   readonly developmentDeck: ReadonlyArray<DevelopmentCard>;
-  readonly phase: GamePhase;
-  readonly awards: AwardState;
+  readonly phase: SetupPhase;
   readonly random: RandomCursors;
 }
 ```
 
-The state does not contain its event history. The match store owns the append-only event log. A snapshot contains `GameState` at a known sequence and can be replaced by replay at any time.
-
-The current scaffold stores events inside `GameState`. Milestone 1 removes that field before the state becomes a public contract.
+The state does not contain its event history. The local caller owns the append-only event log. A snapshot contains `GameState` at a known sequence and can be replaced by replay at any time. A durable match store will be added with the harness.
 
 Resource counts and supporting state use fixed records:
 
@@ -475,22 +473,20 @@ Expected values must not come from the production helper under test. Topology te
 
 ### Test files
 
-Milestone 1 adds these focused suites:
+Milestone 1 uses these focused suites:
 
 ```text
 test/engine/topology.test.ts
 test/engine/layout.test.ts
-test/engine/layout.property.test.ts
-test/engine/development-deck.test.ts
-test/engine/setup.test.ts
-test/engine/legal-actions.test.ts
-test/engine/replay.test.ts
-test/engine/invariants.property.test.ts
-test/engine/observations.test.ts
-test/fixtures/standard-board.v1.json
+test/engine/game.test.ts
+test/engine/errors.test.ts
+test/engine/random.test.ts
+test/engine/invariants.test.ts
+test/engine/protocol.test.ts
+test/web/app.test.tsx
 ```
 
-Vitest remains the test runner. Fast-check supplies generated inputs for seeds and command sequences. It also supplies malformed boundary data. Mutation testing remains excluded.
+Vitest is the test runner. Fast-check supplies generated seeds and setup paths. Table-driven tests cover malformed commands and replay logs. Mutation testing remains excluded.
 
 ### Topology tests
 
@@ -502,18 +498,17 @@ Topology tests cover every invariant in the topology table. They also verify:
 - Each internal edge has two adjacent hexes.
 - Each coastal edge has one adjacent hex.
 - Walking the coastal ring returns to its start after 30 unique edges.
-- Reversing generator insertion order produces byte-identical serialized topology.
-- The generated topology matches the reviewed standard-board fixture.
+- Repeated generation produces the same canonical topology.
 
-A diagnostic renderer can produce an SVG from topology data for human inspection. The generated image is a debugging aid and does not become a rule oracle or game asset. The full replay and live interface follows the separate [web viewer design](VIEWER.md).
+The SVG board provides a second, visual check of the generated topology. The rendered image is a debugging aid and does not become a rule oracle or game asset. The full replay and live interface follows the separate [web viewer design](VIEWER.md).
 
 ### Layout tests
 
 Layout tests verify each terrain, token, and harbor supply against direct expected values. They check that the desert has no number and holds the initial robber. They verify the A-to-R token order along the selected spiral while skipping the desert.
 
-Property tests run at least 1,000 generated seeds in CI. Every generated layout must pass all layout invariants. A fixed seed has a checked JSON fixture and stable hash. A test must not require two different seeds to produce different layouts because a random mapping can have valid collisions.
+Property tests run 1,000 generated seeds in CI. Every generated layout must pass all layout invariants. Fixed-seed equality checks deterministic output. A test does not require two different seeds to produce different layouts because a random mapping can have valid collisions.
 
-Harbor tests use the reviewed frame fixture. They check every legal frame join and require nine distinct coastal attachments. Separate assertions check the harbor-kind supply and deterministic projection onto the coastal ring.
+Harbor tests check nine distinct coastal attachments, the standard six three-edge gaps and three four-edge gaps, the exact harbor-kind supply, and deterministic placement.
 
 ### Placement tests
 
@@ -525,18 +520,17 @@ At each sampled setup state, a soundness test submits every listed legal action 
 
 ### Replay and transaction tests
 
-Replay tests compare live handling with reduction of the emitted event stream. Both paths must produce byte-identical canonical state. Serialization between each event must not change the result.
+Replay tests compare live handling with reduction of the emitted event stream. Both paths produce equal canonical state.
 
 The suites also verify:
 
 - Event sequences are contiguous.
-- A stale expected sequence changes no state.
-- A repeated command ID returns the stored result only once.
-- A failed command emits no event.
-- A failed command consumes no random value.
-- A multi-event command is appended atomically.
-- Truncating the log at any committed batch boundary gives the expected valid intermediate state.
-- Resuming from every committed prefix reaches the same final setup state.
+- Replays reject a missing or misplaced `game.created` event.
+- Stale commands fail before the caller receives events or a replacement state.
+- Wrong-player, wrong-phase, unknown-location, occupied-location, distance, and road-anchor errors have stable codes.
+- Resuming from every accepted-command prefix reaches the same final setup state and event stream.
+
+Command-ID deduplication and durable atomic appends belong to the future match store. Setup commands do not draw random values.
 
 ### State invariant tests
 
@@ -544,17 +538,17 @@ The suites also verify:
 
 - Occupancy uniqueness and settlement distance
 - Setup road anchoring
-- Non-negative resources and card conservation
-- Piece limits and active-player bounds
-- Phase requirements and event sequence agreement
+- Non-negative resources and resource-card conservation
+- Building and road limits together with active-player bounds
+- Setup road-anchor phase requirements
 
 The production path can enable invariant checks in development and conformance runs. Release batch simulation can disable repeated checks after the same command paths have passed the suite.
 
 ### Observation tests
 
-Observation tests build states with distinctive private card values for every player. Each player projection must contain that player's private values and only permitted counts for opponents. Public projections contain no private card identities.
+Observation tests compare the public projection with an active-player projection after setup. The active player receives their resource values. Public output contains only each player's resource and development-card counts, and serialized public output contains no development deck.
 
-The tests inspect serialized output rather than only TypeScript fields. This catches leaks introduced by schema encoders or JSON conversion.
+Development-card draw work must extend these tests with distinctive private hands before that feature can merge.
 
 ### Rule traceability
 
@@ -578,33 +572,23 @@ A rule change must update its scenario or add a new one. An unclear rule remains
 
 ### Step 1: identifiers and topology
 
-Add branded coordinate and ID schemas. Generate the standard graph and canonical indexes. Add the topology fixture and invariant suite.
-
-Completion requires all topology checks to pass from different generator insertion orders.
+Complete. The engine generates stable coordinate-based IDs, canonical indexes, and the standard graph. The invariant suite checks the full topology.
 
 ### Step 2: standard layout
 
-Add terrain and number-token generation with the labeled board stream. Add the reviewed frame representation and harbor projection. Initialize the development deck from its independent stream. Emit the complete layout and private deck order in the first `game.created` event.
-
-Completion requires at least 1,000 generated seeds, the fixed-seed fixture, and development-deck checks to pass every invariant.
+Complete. The engine generates terrain, number tokens, harbors, and the development deck from labeled random streams. The first `game.created` event contains the complete state needed for exact replay.
 
 ### Step 3: event-state cutover
 
-Remove the event array from `GameState`. Add command and event envelopes, the reducer, replay validation, and atomic handling. Preserve the existing schema identifier and replace the scaffold contract in place.
-
-Completion requires replay from each valid event prefix and exact continuation from its random cursors.
+Complete. Commands produce ordered events, reducers produce state, and the event log stays outside `GameState`. Replay checks its initial event and contiguous sequence numbers.
 
 ### Step 4: initial placement
 
-Implement the tagged setup phases and placement events. Add distance, occupancy, road-anchor, turn-order, and starting-resource rules.
-
-Completion requires scripted legal play to finish setup for three-player and four-player games.
+Complete. Tagged phases enforce settlement distance, road anchoring, forward and reverse order, and second-settlement resources for three-player and four-player games.
 
 ### Step 5: legal actions and observations
 
-Generate stable legal actions and seat-scoped observations. Add exhaustive soundness and completeness checks together with serialized privacy tests.
-
-Completion requires a scripted agent to use observations and action IDs only, complete setup, save the event log, then replay it to the same state.
+Complete for setup. Stable action IDs cover each legal settlement or road. Public observations hide resource identities and the development deck. Player observations reveal only that player's resources.
 
 ## Merge gate
 
@@ -617,6 +601,6 @@ Milestone 1 is complete only when:
 - Replay and prefix-resume tests pass.
 - Serialized observation tests find no private-state leak.
 - `npm run check` passes with the configured coverage and complexity limits.
-- A manual review confirms the harbor frame fixture against the official diagram.
+- A manual browser smoke test confirms the rendered topology, harbor positions, and setup controls.
 
 The merge gate provides strong evidence. It does not replace later live Colonist conformance tests or the full-game rule suites in later milestones.

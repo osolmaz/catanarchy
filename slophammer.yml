@@ -10,25 +10,27 @@ typescript:
   dry:
     max_findings: 0
     paths:
-      - src
+      - packages
+      - apps
     exclude:
       - "**/*.test.ts"
+      - "**/*.test.tsx"
       - "dist/**"
       - "node_modules/**"
     copied_blocks:
       enabled: true
       min_tokens: 100
   dependency_boundaries:
-    - from: src/protocol
+    - from: packages/protocol/src
       allow: []
-    - from: src/engine
+    - from: packages/engine/src
       allow:
-        - src/protocol
-    - from: src/simulator
+        - packages/protocol/src
+    - from: apps/cli/src
       allow:
-        - src/engine
-        - src/protocol
-    - from: src/index.ts
+        - packages/engine/src
+        - packages/protocol/src
+    - from: apps/web/src
       allow:
-        - src/engine
-        - src/protocol
+        - packages/engine/src
+        - packages/protocol/src
