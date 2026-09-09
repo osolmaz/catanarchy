@@ -176,8 +176,14 @@ describe("initial-placement harness", () => {
         config: config(3),
         decisionTimeoutMs: 1,
         createAgent: async () => ({
-          async decide() {
-            return new Promise(() => {});
+          async decide(request) {
+            return new Promise((resolve) => {
+              request.signal.addEventListener(
+                "abort",
+                () => resolve({ actionId: firstAction(request).id }),
+                { once: true },
+              );
+            });
           },
           cancel,
           async dispose() {},
