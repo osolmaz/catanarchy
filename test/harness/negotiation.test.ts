@@ -140,6 +140,13 @@ describe("negotiation protocol", () => {
       receive: { ...EMPTY, brick: 1 },
     }));
     ({ session } = await apply(state, session, 2, "red", {
+      type: "make-offer",
+      targetPlayerId: "white",
+      scope: { type: "public" },
+      give: { ...EMPTY, wool: 1 },
+      receive: { ...EMPTY, grain: 1 },
+    }));
+    ({ session } = await apply(state, session, 2, "red", {
       type: "record-promise",
       beneficiaryPlayerId: "blue",
       scope: { type: "direct", playerId: "blue" },
@@ -154,14 +161,20 @@ describe("negotiation protocol", () => {
       text: "The current board is the evidence point.",
     }));
 
-    const publicJson = JSON.stringify(projectNegotiation(session));
-    const redJson = JSON.stringify(
-      projectNegotiation(session, { type: "player", playerId: "red" }),
-    );
-    const whiteJson = JSON.stringify(
-      projectNegotiation(session, { type: "player", playerId: "white" }),
-    );
+    const publicView = projectNegotiation(session);
+    const redView = projectNegotiation(session, { type: "player", playerId: "red" });
+    const whiteView = projectNegotiation(session, { type: "player", playerId: "white" });
+    const publicJson = JSON.stringify(publicView);
+    const redJson = JSON.stringify(redView);
+    const whiteJson = JSON.stringify(whiteView);
 
+    expect(session.offers[1]?.id).toMatch(/:offer:public:1$/);
+    expect(publicView.events.map(({ sequence }) => sequence)).toEqual(
+      Array.from({ length: publicView.events.length }, (_value, sequence) => sequence),
+    );
+    expect(publicView.sequence).toBe(publicView.events.length);
+    expect(whiteView.sequence).toBe(whiteView.events.length);
+    expect(redView.events.length).toBeGreaterThan(whiteView.events.length);
     expect(publicJson).toContain("Public argument");
     expect(publicJson).not.toContain("Secret blue message");
     expect(publicJson).not.toContain("avoid your route");
