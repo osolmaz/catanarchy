@@ -1,10 +1,11 @@
-import type {
-  AgentDecision,
-  AgentDecisionRequest,
-  AgentModelIdentity,
-  AgentUsage,
-  SeatAgent,
-  SeatAgentFactory,
+import {
+  AgentDecisionError,
+  type AgentDecision,
+  type AgentDecisionRequest,
+  type AgentModelIdentity,
+  type AgentUsage,
+  type SeatAgent,
+  type SeatAgentFactory,
 } from "@catanarchy/harness";
 import type { LegalAction, PlayerConfig } from "@catanarchy/protocol";
 import {
@@ -180,25 +181,33 @@ class SdkDecisionChannel implements PiDecisionChannel {
     signal.addEventListener("abort", abort, { once: true });
     try {
       await this.#session.prompt(prompt, { expandPromptTemplates: false });
+    } catch (error) {
+      throw new AgentDecisionError({
+        message: error instanceof Error ? error.message : "The model request failed.",
+        usage: usageDifference(before, this.#session.getSessionStats()),
+      });
     } finally {
       signal.removeEventListener("abort", abort);
     }
+    const usage = usageDifference(before, this.#session.getSessionStats());
     const toolSelection = this.#gate.take();
     const responseText = extractAssistantText(this.#session.messages);
     const textSelection = selectActionFromText(responseText, legalActionIds);
     const selection = toolSelection ?? textSelection;
     if (selection === undefined) {
       const preview = responseText.replaceAll(/\s+/g, " ").trim().slice(0, 300);
-      throw new Error(
-        preview.length === 0
-          ? "The model did not select a legal action and returned no text."
-          : `The model did not select a legal action. Response: ${preview}`,
-      );
+      throw new AgentDecisionError({
+        message:
+          preview.length === 0
+            ? "The model did not select a legal action and returned no text."
+            : `The model did not select a legal action. Response: ${preview}`,
+        usage,
+      });
     }
     return {
       ...selection,
       selectionMode: toolSelection === undefined ? "text" : "tool",
-      usage: usageDifference(before, this.#session.getSessionStats()),
+      usage,
     };
   }
 
