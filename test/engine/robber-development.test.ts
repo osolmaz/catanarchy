@@ -171,6 +171,11 @@ describe("seven and robber resolution", () => {
       queue: [{ playerIndex: 1, remaining: 4 }],
     });
     expect(actionTypes(state)).toEqual(["discard-resource"]);
+    const discardActionIds = legalActions(state).map(({ id }) => id);
+    expect(discardActionIds.every((id) => id.startsWith(`private-option:${state.sequence}:`))).toBe(
+      true,
+    );
+    expect(discardActionIds.join(":")).not.toMatch(/lumber|brick|wool|grain|ore/);
     expect(checkInvariants(state)).toEqual([]);
 
     for (let index = 0; index < 4; index += 1) {

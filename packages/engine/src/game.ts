@@ -1725,8 +1725,11 @@ const legalMaritimeActions = (state: GameState, playerId: PlayerId): ReadonlyArr
 const legalDiscardActions = (state: GameState, playerId: PlayerId): ReadonlyArray<LegalAction> => {
   const player = playerById(state, playerId);
   if (player === undefined) return [];
-  return RESOURCE_KEYS.filter((resource) => player.resources[resource] > 0).map((resource) =>
-    makeAction(state, playerId, `discard:${resource}`, { type: "discard-resource", resource }),
+  return RESOURCE_KEYS.filter((resource) => player.resources[resource] > 0).map((resource, index) =>
+    makeAction(state, playerId, `private-option:${state.sequence}:${index + 1}`, {
+      type: "discard-resource",
+      resource,
+    }),
   );
 };
 

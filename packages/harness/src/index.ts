@@ -235,16 +235,19 @@ const selectedTrace = (
   agent: SeatAgent,
   request: Omit<AgentDecisionRequest, "signal">,
   decision: AgentDecision,
-  actionId: string,
+  action: LegalAction,
   attempt: number,
   elapsedMs: number,
-): DecisionTrace => ({
-  ...baseTrace(agent, request, attempt, "selected", elapsedMs),
-  actionId,
-  ...(decision.reason === undefined ? {} : { reason: decision.reason }),
-  ...(decision.usage === undefined ? {} : { usage: decision.usage }),
-  ...(decision.selectionMode === undefined ? {} : { selectionMode: decision.selectionMode }),
-});
+): DecisionTrace => {
+  const privateChoice = action.command.command.type === "discard-resource";
+  return {
+    ...baseTrace(agent, request, attempt, "selected", elapsedMs),
+    actionId: action.id,
+    ...(!privateChoice && decision.reason !== undefined ? { reason: decision.reason } : {}),
+    ...(decision.usage === undefined ? {} : { usage: decision.usage }),
+    ...(decision.selectionMode === undefined ? {} : { selectionMode: decision.selectionMode }),
+  };
+};
 
 const failedAttemptTrace = (
   agent: SeatAgent,
@@ -294,7 +297,7 @@ const chooseAction = async (
       const action = canonicalActions.find(({ id }) => id === decision.actionId);
       const elapsedMs = performance.now() - startedAt;
       if (action !== undefined) {
-        traces.push(selectedTrace(agent, request, decision, action.id, attempt, elapsedMs));
+        traces.push(selectedTrace(agent, request, decision, action, attempt, elapsedMs));
         return { action, traces };
       }
       traces.push(invalidActionTrace(agent, request, decision, attempt, elapsedMs));
