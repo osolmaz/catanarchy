@@ -1,36 +1,61 @@
 import type {
+  BuildCityCommand,
+  BuildRoadCommand,
+  BuildSettlementCommand,
+  BuyDevelopmentCardCommand,
+  CityBuiltEvent,
   CommandResult,
+  DevelopmentCardBoughtEvent,
+  DiceRolledEvent,
+  EndTurnCommand,
   EventEnvelope,
   GameCommand,
   GameConfig,
   GameCreatedEvent,
   GameEvent,
   GameObservation,
+  GamePhase,
   GameState,
-  InitialPlacementCompletedEvent,
   InitialResourcesGrantedEvent,
   LegalAction,
+  MaritimeTradeCommand,
+  MaritimeTradeCompletedEvent,
   PlaceInitialRoadCommand,
   PlaceInitialSettlementCommand,
   PlayerId,
   PlayerState,
   Resource,
   ResourceCounts,
+  ResourceGrant,
+  RoadBuiltEvent,
   RoadPlacedEvent,
+  RollDiceCommand,
+  SettlementBuiltEvent,
   SettlementPlacedEvent,
-  SetupPhase,
   Terrain,
+  TurnEndedEvent,
   Viewer,
 } from "@catanarchy/protocol";
 import { decodeGameCommand, decodeGameConfig, decodeGameEventEnvelope } from "@catanarchy/protocol";
 import { Effect } from "effect";
 import { ReplayViolation, RuleViolation } from "./errors.js";
 import { generateGameMaterials } from "./layout.js";
-import { deriveRandomState } from "./random.js";
+import { deriveRandomState, nextInt } from "./random.js";
 import { STANDARD_TOPOLOGY } from "./topology.js";
 
+const RESOURCE_KEYS = ["lumber", "brick", "wool", "grain", "ore"] as const;
 const EMPTY_RESOURCES: ResourceCounts = { lumber: 0, brick: 0, wool: 0, grain: 0, ore: 0 };
 const FULL_BANK: ResourceCounts = { lumber: 19, brick: 19, wool: 19, grain: 19, ore: 19 };
+const ROAD_COST: ResourceCounts = { lumber: 1, brick: 1, wool: 0, grain: 0, ore: 0 };
+const SETTLEMENT_COST: ResourceCounts = { lumber: 1, brick: 1, wool: 1, grain: 1, ore: 0 };
+const CITY_COST: ResourceCounts = { lumber: 0, brick: 0, wool: 0, grain: 2, ore: 3 };
+const DEVELOPMENT_CARD_COST: ResourceCounts = {
+  lumber: 0,
+  brick: 0,
+  wool: 1,
+  grain: 1,
+  ore: 1,
+};
 const TERRAIN_RESOURCE: Readonly<Partial<Record<Terrain, Resource>>> = {
   forest: "lumber",
   hill: "brick",
@@ -38,6 +63,8 @@ const TERRAIN_RESOURCE: Readonly<Partial<Record<Terrain, Resource>>> = {
   field: "grain",
   mountain: "ore",
 };
+
+type EventBatch = readonly [GameEvent, ...ReadonlyArray<GameEvent>];
 
 const failure = (
   code: RuleViolation["code"],
@@ -129,21 +156,46 @@ const subtractResources = (left: ResourceCounts, right: ResourceCounts): Resourc
   ore: left.ore - right.ore,
 });
 
+const resourceAmount = (resource: Resource, amount: number): ResourceCounts => ({
+  ...EMPTY_RESOURCES,
+  [resource]: amount,
+});
+
+const hasResources = (available: ResourceCounts, needed: ResourceCounts): boolean =>
+  RESOURCE_KEYS.every((resource) => available[resource] >= needed[resource]);
+
+const playerById = (state: GameState, playerId: PlayerId): PlayerState | undefined =>
+  state.players.find(({ id }) => id === playerId);
+
+const updatePlayer = (
+  players: ReadonlyArray<PlayerState>,
+  playerId: PlayerId,
+  update: (player: PlayerState) => PlayerState,
+): ReadonlyArray<PlayerState> =>
+  players.map((player) => (player.id === playerId ? update(player) : player));
+
 const updatePlayerResources = (
   players: ReadonlyArray<PlayerState>,
   playerId: PlayerId,
   resources: ResourceCounts,
 ): ReadonlyArray<PlayerState> =>
-  players.map((player) =>
-    player.id === playerId
-      ? { ...player, resources: addResources(player.resources, resources) }
-      : player,
-  );
+  updatePlayer(players, playerId, (player) => ({
+    ...player,
+    resources: addResources(player.resources, resources),
+  }));
 
-const nextPhaseAfterRoad = (state: GameState): SetupPhase => {
-  if (state.phase.tag !== "setup.road") {
-    return state.phase;
-  }
+const spendPlayerResources = (
+  players: ReadonlyArray<PlayerState>,
+  playerId: PlayerId,
+  cost: ResourceCounts,
+): ReadonlyArray<PlayerState> =>
+  updatePlayer(players, playerId, (player) => ({
+    ...player,
+    resources: subtractResources(player.resources, cost),
+  }));
+
+const nextPhaseAfterRoad = (state: GameState): GamePhase => {
+  if (state.phase.tag !== "setup.road") return state.phase;
   const { direction, playerIndex } = state.phase;
   if (direction === "forward") {
     return playerIndex === state.players.length - 1
@@ -160,9 +212,7 @@ const applySettlement = (
   sequence: number,
   event: SettlementPlacedEvent,
 ): GameState => {
-  if (state.phase.tag !== "setup.settlement") {
-    return state;
-  }
+  if (state.phase.tag !== "setup.settlement") return state;
   return {
     ...state,
     sequence,
@@ -203,17 +253,133 @@ const applyRoad = (state: GameState, sequence: number, event: RoadPlacedEvent): 
   phase: nextPhaseAfterRoad(state),
 });
 
-const applyCompleted = (
-  state: GameState,
-  sequence: number,
-  _event: InitialPlacementCompletedEvent,
-): GameState => ({
+const applyCompleted = (state: GameState, sequence: number): GameState => ({
   ...state,
   sequence,
   phase: { tag: "turn.roll", playerIndex: 0, turn: 1 },
 });
 
-export const applyEvent = (state: GameState, envelope: GameEvent): GameState => {
+const totalGrants = (grants: ReadonlyArray<ResourceGrant>): ResourceCounts =>
+  grants.reduce((total, grant) => addResources(total, grant.resources), EMPTY_RESOURCES);
+
+const applyDiceRolled = (state: GameState, sequence: number, event: DiceRolledEvent): GameState => {
+  const diceTotal = event.dice[0] + event.dice[1];
+  return {
+    ...state,
+    sequence,
+    random: { ...state.random, dice: event.nextRandom },
+    bank: subtractResources(state.bank, totalGrants(event.grants)),
+    players: event.grants.reduce(
+      (players, grant) => updatePlayerResources(players, grant.playerId, grant.resources),
+      state.players,
+    ),
+    phase:
+      diceTotal === 7
+        ? {
+            tag: "turn.robber",
+            playerIndex: state.phase.playerIndex,
+            turn: state.phase.tag === "turn.roll" ? state.phase.turn : 1,
+            dice: event.dice,
+          }
+        : {
+            tag: "turn.action",
+            playerIndex: state.phase.playerIndex,
+            turn: state.phase.tag === "turn.roll" ? state.phase.turn : 1,
+            dice: event.dice,
+          },
+  };
+};
+
+const applyRoadBuilt = (state: GameState, sequence: number, event: RoadBuiltEvent): GameState => ({
+  ...state,
+  sequence,
+  bank: addResources(state.bank, ROAD_COST),
+  players: spendPlayerResources(state.players, event.playerId, ROAD_COST),
+  occupancy: {
+    ...state.occupancy,
+    roads: [...state.occupancy.roads, { edgeId: event.edgeId, playerId: event.playerId }],
+  },
+});
+
+const applySettlementBuilt = (
+  state: GameState,
+  sequence: number,
+  event: SettlementBuiltEvent,
+): GameState => ({
+  ...state,
+  sequence,
+  bank: addResources(state.bank, SETTLEMENT_COST),
+  players: spendPlayerResources(state.players, event.playerId, SETTLEMENT_COST),
+  occupancy: {
+    ...state.occupancy,
+    buildings: [
+      ...state.occupancy.buildings,
+      { vertexId: event.vertexId, playerId: event.playerId, kind: "settlement" },
+    ],
+  },
+});
+
+const applyCityBuilt = (state: GameState, sequence: number, event: CityBuiltEvent): GameState => ({
+  ...state,
+  sequence,
+  bank: addResources(state.bank, CITY_COST),
+  players: spendPlayerResources(state.players, event.playerId, CITY_COST),
+  occupancy: {
+    ...state.occupancy,
+    buildings: state.occupancy.buildings.map((building) =>
+      building.vertexId === event.vertexId ? { ...building, kind: "city" } : building,
+    ),
+  },
+});
+
+const applyDevelopmentCardBought = (
+  state: GameState,
+  sequence: number,
+  event: DevelopmentCardBoughtEvent,
+): GameState => ({
+  ...state,
+  sequence,
+  bank: addResources(state.bank, DEVELOPMENT_CARD_COST),
+  players: updatePlayer(state.players, event.playerId, (player) => ({
+    ...player,
+    resources: subtractResources(player.resources, DEVELOPMENT_CARD_COST),
+    developmentCards: [
+      ...player.developmentCards,
+      { card: event.card, purchasedTurn: event.purchasedTurn },
+    ],
+  })),
+  developmentDeck: state.developmentDeck.slice(1),
+});
+
+const applyMaritimeTrade = (
+  state: GameState,
+  sequence: number,
+  event: MaritimeTradeCompletedEvent,
+): GameState => {
+  const given = resourceAmount(event.give, event.rate);
+  const received = resourceAmount(event.receive, 1);
+  return {
+    ...state,
+    sequence,
+    bank: addResources(subtractResources(state.bank, received), given),
+    players: updatePlayer(state.players, event.playerId, (player) => ({
+      ...player,
+      resources: addResources(subtractResources(player.resources, given), received),
+    })),
+  };
+};
+
+const applyTurnEnded = (state: GameState, sequence: number, event: TurnEndedEvent): GameState => ({
+  ...state,
+  sequence,
+  phase: {
+    tag: "turn.roll",
+    playerIndex: event.nextPlayerIndex,
+    turn: event.nextTurn,
+  },
+});
+
+const applySetupEvent = (state: GameState, envelope: GameEvent): GameState | undefined => {
   const { event, sequence } = envelope;
   switch (event.type) {
     case "game.created":
@@ -225,14 +391,39 @@ export const applyEvent = (state: GameState, envelope: GameEvent): GameState => 
     case "road.placed":
       return applyRoad(state, sequence, event);
     case "initial-placement.completed":
-      return applyCompleted(state, sequence, event);
+      return applyCompleted(state, sequence);
+    default:
+      return undefined;
   }
 };
 
-const currentPlayerId = (state: GameState): PlayerId | null => {
-  const player = state.config.players[state.phase.playerIndex];
-  return player?.id ?? null;
+const applyNormalEvent = (state: GameState, envelope: GameEvent): GameState | undefined => {
+  const { event, sequence } = envelope;
+  switch (event.type) {
+    case "dice.rolled":
+      return applyDiceRolled(state, sequence, event);
+    case "road.built":
+      return applyRoadBuilt(state, sequence, event);
+    case "settlement.built":
+      return applySettlementBuilt(state, sequence, event);
+    case "city.built":
+      return applyCityBuilt(state, sequence, event);
+    case "development-card.bought":
+      return applyDevelopmentCardBought(state, sequence, event);
+    case "maritime-trade.completed":
+      return applyMaritimeTrade(state, sequence, event);
+    case "turn.ended":
+      return applyTurnEnded(state, sequence, event);
+    default:
+      return undefined;
+  }
 };
+
+export const applyEvent = (state: GameState, envelope: GameEvent): GameState =>
+  applySetupEvent(state, envelope) ?? applyNormalEvent(state, envelope) ?? state;
+
+const currentPlayerId = (state: GameState): PlayerId | null =>
+  state.config.players[state.phase.playerIndex]?.id ?? null;
 
 const checkCommonCommand = (
   state: GameState,
@@ -245,7 +436,7 @@ const checkCommonCommand = (
     return failure("stale-command", "The command does not use the current event sequence.");
   }
   if (currentPlayerId(state) !== command.playerId) {
-    return failure("wrong-player", "Only the active player can place a piece.");
+    return failure("wrong-player", "Only the active player can take an action.");
   }
   return Effect.void;
 };
@@ -266,12 +457,10 @@ const isSettlementLocationLegal = (state: GameState, vertexId: string): boolean 
 const startingResources = (state: GameState, vertexId: string): ResourceCounts => {
   const vertex = state.topology.vertices.find(({ id }) => id === vertexId);
   const terrainByHex = new Map(state.layout.terrain.map(({ hexId, terrain }) => [hexId, terrain]));
-  const resources = { ...EMPTY_RESOURCES };
+  let resources = EMPTY_RESOURCES;
   for (const hexId of vertex?.adjacentHexIds ?? []) {
     const resource = TERRAIN_RESOURCE[terrainByHex.get(hexId) ?? "desert"];
-    if (resource !== undefined) {
-      resources[resource] += 1;
-    }
+    if (resource !== undefined) resources = addResources(resources, resourceAmount(resource, 1));
   }
   return resources;
 };
@@ -293,7 +482,7 @@ const settlementEvents = (
   state: GameState,
   envelope: GameCommand,
   command: PlaceInitialSettlementCommand,
-): readonly [GameEvent, ...ReadonlyArray<GameEvent>] => {
+): EventBatch => {
   const placed = eventEnvelope(state, envelope, state.sequence + 1, {
     type: "settlement.placed" as const,
     playerId: envelope.playerId,
@@ -314,14 +503,13 @@ const decideSettlement = (
   state: GameState,
   envelope: GameCommand,
   command: PlaceInitialSettlementCommand,
-): Effect.Effect<readonly [GameEvent, ...ReadonlyArray<GameEvent>], RuleViolation> => {
+): Effect.Effect<EventBatch, RuleViolation> => {
   if (state.phase.tag !== "setup.settlement") {
-    return failure("wrong-command", "The game is waiting for an initial road.");
+    return failure("wrong-command", "The game is not waiting for an initial settlement.");
   }
   const vertex = state.topology.vertices.find(({ id }) => id === command.vertexId);
-  if (vertex === undefined) {
+  if (vertex === undefined)
     return failure("unknown-location", "The settlement vertex does not exist.");
-  }
   if (state.occupancy.buildings.some((building) => building.vertexId === vertex.id)) {
     return failure("occupied-vertex", "The settlement vertex is occupied.");
   }
@@ -331,18 +519,16 @@ const decideSettlement = (
   return Effect.succeed(settlementEvents(state, envelope, command));
 };
 
-const decideRoad = (
+const decideInitialRoad = (
   state: GameState,
   envelope: GameCommand,
   command: PlaceInitialRoadCommand,
-): Effect.Effect<readonly [GameEvent, ...ReadonlyArray<GameEvent>], RuleViolation> => {
+): Effect.Effect<EventBatch, RuleViolation> => {
   if (state.phase.tag !== "setup.road") {
-    return failure("wrong-command", "The game is waiting for an initial settlement.");
+    return failure("wrong-command", "The game is not waiting for an initial road.");
   }
   const edge = state.topology.edges.find(({ id }) => id === command.edgeId);
-  if (edge === undefined) {
-    return failure("unknown-location", "The road edge does not exist.");
-  }
+  if (edge === undefined) return failure("unknown-location", "The road edge does not exist.");
   if (state.occupancy.roads.some((road) => road.edgeId === edge.id)) {
     return failure("occupied-edge", "The road edge is occupied.");
   }
@@ -357,16 +543,400 @@ const decideRoad = (
   if (state.phase.direction !== "reverse" || state.phase.playerIndex !== 0) {
     return Effect.succeed([placed]);
   }
-  const completed = eventEnvelope(state, envelope, state.sequence + 2, {
-    type: "initial-placement.completed" as const,
+  return Effect.succeed([
+    placed,
+    eventEnvelope(state, envelope, state.sequence + 2, {
+      type: "initial-placement.completed" as const,
+    }),
+  ]);
+};
+
+interface ProductionResult {
+  readonly grants: ReadonlyArray<ResourceGrant>;
+  readonly shortages: ReadonlyArray<Resource>;
+}
+
+const producedResource = (
+  state: GameState,
+  hexId: string,
+  number: number,
+  numbers: ReadonlyMap<string, number>,
+  terrain: ReadonlyMap<string, Terrain>,
+): Resource | undefined => {
+  if (hexId === state.layout.robberHexId) return undefined;
+  if (numbers.get(hexId) !== number) return undefined;
+  return TERRAIN_RESOURCE[terrain.get(hexId) ?? "desert"];
+};
+
+const productionClaims = (state: GameState, number: number): ReadonlyArray<ResourceGrant> => {
+  const numbers = new Map(
+    state.layout.numbers.map((placement) => [placement.hexId, placement.number]),
+  );
+  const terrain = new Map(
+    state.layout.terrain.map((placement) => [placement.hexId, placement.terrain]),
+  );
+  const claims = new Map<PlayerId, ResourceCounts>();
+  for (const building of state.occupancy.buildings) {
+    const vertex = state.topology.vertices.find(({ id }) => id === building.vertexId);
+    const production = building.kind === "city" ? 2 : 1;
+    const adjacentHexIds = vertex === undefined ? [] : vertex.adjacentHexIds;
+    for (const hexId of adjacentHexIds) {
+      const resource = producedResource(state, hexId, number, numbers, terrain);
+      if (resource === undefined) continue;
+      const current = claims.get(building.playerId) ?? EMPTY_RESOURCES;
+      claims.set(building.playerId, addResources(current, resourceAmount(resource, production)));
+    }
+  }
+  return state.players
+    .map((player) => ({ playerId: player.id, resources: claims.get(player.id) ?? EMPTY_RESOURCES }))
+    .filter(({ resources }) => RESOURCE_KEYS.some((resource) => resources[resource] > 0));
+};
+
+const resolveProduction = (state: GameState, number: number): ProductionResult => {
+  const claims = productionClaims(state, number);
+  const shortages: Resource[] = [];
+  const granted = new Map<PlayerId, ResourceCounts>();
+  for (const resource of RESOURCE_KEYS) {
+    const claimants = claims.filter(({ resources }) => resources[resource] > 0);
+    const total = claimants.reduce((sum, claim) => sum + claim.resources[resource], 0);
+    if (total <= state.bank[resource]) {
+      for (const claim of claimants) {
+        const current = granted.get(claim.playerId) ?? EMPTY_RESOURCES;
+        granted.set(
+          claim.playerId,
+          addResources(current, resourceAmount(resource, claim.resources[resource])),
+        );
+      }
+    } else if (claimants.length === 1) {
+      const claim = claimants[0]!;
+      const current = granted.get(claim.playerId) ?? EMPTY_RESOURCES;
+      granted.set(
+        claim.playerId,
+        addResources(current, resourceAmount(resource, state.bank[resource])),
+      );
+      shortages.push(resource);
+    } else {
+      shortages.push(resource);
+    }
+  }
+  return {
+    grants: state.players
+      .map(({ id }) => ({ playerId: id, resources: granted.get(id) ?? EMPTY_RESOURCES }))
+      .filter(({ resources }) => RESOURCE_KEYS.some((resource) => resources[resource] > 0)),
+    shortages,
+  };
+};
+
+const decideRollDice = (
+  state: GameState,
+  envelope: GameCommand,
+  _command: RollDiceCommand,
+): Effect.Effect<EventBatch, RuleViolation> => {
+  if (state.phase.tag !== "turn.roll") {
+    return failure("wrong-command", "Dice can only be rolled at the start of a turn.");
+  }
+  const first = nextInt(state.random.dice, 6);
+  const second = nextInt(first.state, 6);
+  const dice = [first.value + 1, second.value + 1] as const;
+  const production =
+    dice[0] + dice[1] === 7
+      ? { grants: [], shortages: [] }
+      : resolveProduction(state, dice[0] + dice[1]);
+  return Effect.succeed([
+    eventEnvelope(state, envelope, state.sequence + 1, {
+      type: "dice.rolled" as const,
+      playerId: envelope.playerId,
+      dice,
+      nextRandom: second.state,
+      grants: production.grants,
+      shortages: production.shortages,
+    }),
+  ]);
+};
+
+const isActionPhase = (state: GameState): boolean => state.phase.tag === "turn.action";
+
+const playerCanAfford = (state: GameState, playerId: PlayerId, cost: ResourceCounts): boolean => {
+  const player = playerById(state, playerId);
+  return player !== undefined && hasResources(player.resources, cost);
+};
+
+const playerRoadCount = (state: GameState, playerId: PlayerId): number =>
+  state.occupancy.roads.filter((road) => road.playerId === playerId).length;
+
+const playerBuildingCount = (
+  state: GameState,
+  playerId: PlayerId,
+  kind: "settlement" | "city",
+): number =>
+  state.occupancy.buildings.filter(
+    (building) => building.playerId === playerId && building.kind === kind,
+  ).length;
+
+const roadEndpointConnects = (state: GameState, playerId: PlayerId, vertexId: string): boolean => {
+  const building = state.occupancy.buildings.find((candidate) => candidate.vertexId === vertexId);
+  if (building?.playerId === playerId) return true;
+  if (building !== undefined) return false;
+  return state.occupancy.roads.some((road) => {
+    if (road.playerId !== playerId) return false;
+    const edge = state.topology.edges.find(({ id }) => id === road.edgeId);
+    return edge?.vertexIds.includes(vertexId as never) ?? false;
   });
-  return Effect.succeed([placed, completed]);
+};
+
+const canBuildRoadAt = (state: GameState, playerId: PlayerId, edgeId: string): boolean => {
+  const edge = state.topology.edges.find(({ id }) => id === edgeId);
+  return (
+    edge !== undefined &&
+    !state.occupancy.roads.some((road) => road.edgeId === edgeId) &&
+    edge.vertexIds.some((vertexId) => roadEndpointConnects(state, playerId, vertexId))
+  );
+};
+
+const canBuildSettlementAt = (state: GameState, playerId: PlayerId, vertexId: string): boolean => {
+  if (!isSettlementLocationLegal(state, vertexId)) return false;
+  const vertex = state.topology.vertices.find(({ id }) => id === vertexId);
+  return (
+    vertex?.edgeIds.some((edgeId) =>
+      state.occupancy.roads.some((road) => road.edgeId === edgeId && road.playerId === playerId),
+    ) ?? false
+  );
+};
+
+const actionEvent = <TEvent>(state: GameState, command: GameCommand, event: TEvent): EventBatch => [
+  eventEnvelope(state, command, state.sequence + 1, event) as GameEvent,
+];
+
+const requireActionPhase = (state: GameState): Effect.Effect<void, RuleViolation> =>
+  isActionPhase(state)
+    ? Effect.void
+    : failure("wrong-command", "This action is only available after a non-seven roll.");
+
+const decideBuildRoad = (
+  state: GameState,
+  envelope: GameCommand,
+  command: BuildRoadCommand,
+): Effect.Effect<EventBatch, RuleViolation> =>
+  Effect.gen(function* () {
+    yield* requireActionPhase(state);
+    if (!state.topology.edges.some(({ id }) => id === command.edgeId)) {
+      return yield* failure("unknown-location", "The road edge does not exist.");
+    }
+    if (state.occupancy.roads.some(({ edgeId }) => edgeId === command.edgeId)) {
+      return yield* failure("occupied-edge", "The road edge is occupied.");
+    }
+    if (playerRoadCount(state, envelope.playerId) >= 15) {
+      return yield* failure("piece-supply", "The player has no road piece available.");
+    }
+    if (!playerCanAfford(state, envelope.playerId, ROAD_COST)) {
+      return yield* failure("insufficient-resources", "The player cannot pay the road cost.");
+    }
+    if (!canBuildRoadAt(state, envelope.playerId, command.edgeId)) {
+      return yield* failure("disconnected-route", "The road must connect to the player's route.");
+    }
+    return actionEvent(state, envelope, {
+      type: "road.built" as const,
+      playerId: envelope.playerId,
+      edgeId: command.edgeId,
+    });
+  });
+
+const decideBuildSettlement = (
+  state: GameState,
+  envelope: GameCommand,
+  command: BuildSettlementCommand,
+): Effect.Effect<EventBatch, RuleViolation> =>
+  Effect.gen(function* () {
+    yield* requireActionPhase(state);
+    if (!state.topology.vertices.some(({ id }) => id === command.vertexId)) {
+      return yield* failure("unknown-location", "The settlement vertex does not exist.");
+    }
+    if (state.occupancy.buildings.some(({ vertexId }) => vertexId === command.vertexId)) {
+      return yield* failure("occupied-vertex", "The settlement vertex is occupied.");
+    }
+    if (playerBuildingCount(state, envelope.playerId, "settlement") >= 5) {
+      return yield* failure("piece-supply", "The player has no settlement piece available.");
+    }
+    if (!playerCanAfford(state, envelope.playerId, SETTLEMENT_COST)) {
+      return yield* failure("insufficient-resources", "The player cannot pay the settlement cost.");
+    }
+    if (!canBuildSettlementAt(state, envelope.playerId, command.vertexId)) {
+      return yield* failure(
+        "disconnected-route",
+        "The settlement must satisfy distance and route rules.",
+      );
+    }
+    return actionEvent(state, envelope, {
+      type: "settlement.built" as const,
+      playerId: envelope.playerId,
+      vertexId: command.vertexId,
+    });
+  });
+
+const decideBuildCity = (
+  state: GameState,
+  envelope: GameCommand,
+  command: BuildCityCommand,
+): Effect.Effect<EventBatch, RuleViolation> =>
+  Effect.gen(function* () {
+    yield* requireActionPhase(state);
+    const building = state.occupancy.buildings.find(
+      ({ vertexId }) => vertexId === command.vertexId,
+    );
+    if (building === undefined)
+      return yield* failure("unknown-location", "No settlement exists there.");
+    if (building.playerId !== envelope.playerId || building.kind !== "settlement") {
+      return yield* failure("wrong-player", "A player can upgrade only their own settlement.");
+    }
+    if (playerBuildingCount(state, envelope.playerId, "city") >= 4) {
+      return yield* failure("piece-supply", "The player has no city piece available.");
+    }
+    if (!playerCanAfford(state, envelope.playerId, CITY_COST)) {
+      return yield* failure("insufficient-resources", "The player cannot pay the city cost.");
+    }
+    return actionEvent(state, envelope, {
+      type: "city.built" as const,
+      playerId: envelope.playerId,
+      vertexId: command.vertexId,
+    });
+  });
+
+const decideBuyDevelopmentCard = (
+  state: GameState,
+  envelope: GameCommand,
+  _command: BuyDevelopmentCardCommand,
+): Effect.Effect<EventBatch, RuleViolation> =>
+  Effect.gen(function* () {
+    yield* requireActionPhase(state);
+    const card = state.developmentDeck[0];
+    if (card === undefined) {
+      return yield* failure("development-deck-empty", "The development deck is empty.");
+    }
+    if (!playerCanAfford(state, envelope.playerId, DEVELOPMENT_CARD_COST)) {
+      return yield* failure(
+        "insufficient-resources",
+        "The player cannot pay the development-card cost.",
+      );
+    }
+    return actionEvent(state, envelope, {
+      type: "development-card.bought" as const,
+      playerId: envelope.playerId,
+      card,
+      purchasedTurn: state.phase.tag === "turn.action" ? state.phase.turn : 1,
+    });
+  });
+
+const maritimeRate = (state: GameState, playerId: PlayerId, give: Resource): 2 | 3 | 4 => {
+  let rate: 2 | 3 | 4 = 4;
+  for (const harbor of state.layout.harbors) {
+    const edge = state.topology.edges.find(({ id }) => id === harbor.edgeId);
+    const ownsHarbor = edge?.vertexIds.some((vertexId) =>
+      state.occupancy.buildings.some(
+        (building) => building.vertexId === vertexId && building.playerId === playerId,
+      ),
+    );
+    if (!ownsHarbor) continue;
+    if (harbor.kind === give) return 2;
+    if (harbor.kind === "generic") rate = 3;
+  }
+  return rate;
+};
+
+const canMaritimeTrade = (
+  state: GameState,
+  playerId: PlayerId,
+  give: Resource,
+  receive: Resource,
+): boolean => {
+  const player = playerById(state, playerId);
+  return (
+    give !== receive &&
+    player !== undefined &&
+    player.resources[give] >= maritimeRate(state, playerId, give) &&
+    state.bank[receive] >= 1
+  );
+};
+
+const decideMaritimeTrade = (
+  state: GameState,
+  envelope: GameCommand,
+  command: MaritimeTradeCommand,
+): Effect.Effect<EventBatch, RuleViolation> =>
+  Effect.gen(function* () {
+    yield* requireActionPhase(state);
+    if (!canMaritimeTrade(state, envelope.playerId, command.give, command.receive)) {
+      return yield* failure("invalid-trade", "The maritime trade cannot be completed.");
+    }
+    return actionEvent(state, envelope, {
+      type: "maritime-trade.completed" as const,
+      playerId: envelope.playerId,
+      give: command.give,
+      receive: command.receive,
+      rate: maritimeRate(state, envelope.playerId, command.give),
+    });
+  });
+
+const decideEndTurn = (
+  state: GameState,
+  envelope: GameCommand,
+  _command: EndTurnCommand,
+): Effect.Effect<EventBatch, RuleViolation> =>
+  Effect.gen(function* () {
+    yield* requireActionPhase(state);
+    const phase = state.phase;
+    if (phase.tag !== "turn.action") {
+      return yield* failure("wrong-command", "The turn cannot end in this phase.");
+    }
+    return actionEvent(state, envelope, {
+      type: "turn.ended" as const,
+      playerId: envelope.playerId,
+      nextPlayerIndex: (phase.playerIndex + 1) % state.players.length,
+      nextTurn: phase.turn + 1,
+    });
+  });
+
+const decideSetupCommand = (
+  state: GameState,
+  command: GameCommand,
+): Effect.Effect<EventBatch, RuleViolation> | undefined => {
+  switch (command.command.type) {
+    case "place-initial-settlement":
+      return decideSettlement(state, command, command.command);
+    case "place-initial-road":
+      return decideInitialRoad(state, command, command.command);
+    default:
+      return undefined;
+  }
+};
+
+const decideNormalCommand = (
+  state: GameState,
+  command: GameCommand,
+): Effect.Effect<EventBatch, RuleViolation> => {
+  switch (command.command.type) {
+    case "roll-dice":
+      return decideRollDice(state, command, command.command);
+    case "build-road":
+      return decideBuildRoad(state, command, command.command);
+    case "build-settlement":
+      return decideBuildSettlement(state, command, command.command);
+    case "build-city":
+      return decideBuildCity(state, command, command.command);
+    case "buy-development-card":
+      return decideBuyDevelopmentCard(state, command, command.command);
+    case "maritime-trade":
+      return decideMaritimeTrade(state, command, command.command);
+    case "end-turn":
+      return decideEndTurn(state, command, command.command);
+    default:
+      return failure("wrong-command", "Initial placement is complete.");
+  }
 };
 
 export const decide = (
   state: GameState,
   input: GameCommand,
-): Effect.Effect<readonly [GameEvent, ...ReadonlyArray<GameEvent>], RuleViolation> =>
+): Effect.Effect<EventBatch, RuleViolation> =>
   Effect.gen(function* () {
     const command = (yield* decodeGameCommand(input).pipe(
       Effect.mapError(
@@ -378,9 +948,8 @@ export const decide = (
       ),
     )) as GameCommand;
     yield* checkCommonCommand(state, command);
-    return yield* command.command.type === "place-initial-settlement"
-      ? decideSettlement(state, command, command.command)
-      : decideRoad(state, command, command.command);
+    const setupDecision = decideSetupCommand(state, command);
+    return yield* setupDecision ?? decideNormalCommand(state, command);
   });
 
 export const handleCommand = (
@@ -392,25 +961,41 @@ export const handleCommand = (
     state: events.reduce((current, event) => applyEvent(current, event), state),
   }));
 
-const legalSettlementActions = (state: GameState, playerId: PlayerId): ReadonlyArray<LegalAction> =>
+const makeAction = (
+  state: GameState,
+  playerId: PlayerId,
+  id: string,
+  command: GameCommand["command"],
+): LegalAction => ({
+  id,
+  command: {
+    schema: "catanarchy.command.v1",
+    matchId: state.matchId,
+    commandId: `action:${state.sequence + 1}:${id}`,
+    playerId,
+    expectedSequence: state.sequence,
+    command,
+  },
+});
+
+const legalInitialSettlementActions = (
+  state: GameState,
+  playerId: PlayerId,
+): ReadonlyArray<LegalAction> =>
   state.topology.vertices
     .filter((vertex) => isSettlementLocationLegal(state, vertex.id))
-    .map((vertex) => ({
-      id: `settlement:${vertex.id}`,
-      command: {
-        schema: "catanarchy.command.v1",
-        matchId: state.matchId,
-        commandId: `action:${state.sequence + 1}:${vertex.id}`,
-        playerId,
-        expectedSequence: state.sequence,
-        command: { type: "place-initial-settlement", vertexId: vertex.id },
-      },
-    }));
+    .map((vertex) =>
+      makeAction(state, playerId, `settlement:${vertex.id}`, {
+        type: "place-initial-settlement",
+        vertexId: vertex.id,
+      }),
+    );
 
-const legalRoadActions = (state: GameState, playerId: PlayerId): ReadonlyArray<LegalAction> => {
-  if (state.phase.tag !== "setup.road") {
-    return [];
-  }
+const legalInitialRoadActions = (
+  state: GameState,
+  playerId: PlayerId,
+): ReadonlyArray<LegalAction> => {
+  if (state.phase.tag !== "setup.road") return [];
   const settlementId = state.phase.settlementId;
   return state.topology.edges
     .filter(
@@ -418,32 +1003,111 @@ const legalRoadActions = (state: GameState, playerId: PlayerId): ReadonlyArray<L
         edge.vertexIds.includes(settlementId) &&
         !state.occupancy.roads.some((road) => road.edgeId === edge.id),
     )
-    .map((edge) => ({
-      id: `road:${edge.id}`,
-      command: {
-        schema: "catanarchy.command.v1",
-        matchId: state.matchId,
-        commandId: `action:${state.sequence + 1}:${edge.id}`,
-        playerId,
-        expectedSequence: state.sequence,
-        command: { type: "place-initial-road", edgeId: edge.id },
-      },
-    }));
+    .map((edge) =>
+      makeAction(state, playerId, `road:${edge.id}`, {
+        type: "place-initial-road",
+        edgeId: edge.id,
+      }),
+    );
+};
+
+const legalPaidRoadActions = (state: GameState, playerId: PlayerId): ReadonlyArray<LegalAction> => {
+  if (playerRoadCount(state, playerId) >= 15) return [];
+  if (!playerCanAfford(state, playerId, ROAD_COST)) return [];
+  return state.topology.edges
+    .filter((edge) => canBuildRoadAt(state, playerId, edge.id))
+    .map((edge) =>
+      makeAction(state, playerId, `build-road:${edge.id}`, {
+        type: "build-road",
+        edgeId: edge.id,
+      }),
+    );
+};
+
+const legalPaidSettlementActions = (
+  state: GameState,
+  playerId: PlayerId,
+): ReadonlyArray<LegalAction> => {
+  if (playerBuildingCount(state, playerId, "settlement") >= 5) return [];
+  if (!playerCanAfford(state, playerId, SETTLEMENT_COST)) return [];
+  return state.topology.vertices
+    .filter((vertex) => canBuildSettlementAt(state, playerId, vertex.id))
+    .map((vertex) =>
+      makeAction(state, playerId, `build-settlement:${vertex.id}`, {
+        type: "build-settlement",
+        vertexId: vertex.id,
+      }),
+    );
+};
+
+const legalCityActions = (state: GameState, playerId: PlayerId): ReadonlyArray<LegalAction> => {
+  if (playerBuildingCount(state, playerId, "city") >= 4) return [];
+  if (!playerCanAfford(state, playerId, CITY_COST)) return [];
+  return state.occupancy.buildings
+    .filter((building) => building.playerId === playerId && building.kind === "settlement")
+    .map((building) =>
+      makeAction(state, playerId, `build-city:${building.vertexId}`, {
+        type: "build-city",
+        vertexId: building.vertexId,
+      }),
+    );
+};
+
+const legalDevelopmentCardActions = (
+  state: GameState,
+  playerId: PlayerId,
+): ReadonlyArray<LegalAction> => {
+  if (state.developmentDeck.length === 0) return [];
+  if (!playerCanAfford(state, playerId, DEVELOPMENT_CARD_COST)) return [];
+  return [makeAction(state, playerId, "buy-development-card", { type: "buy-development-card" })];
+};
+
+const legalBuildActions = (state: GameState, playerId: PlayerId): ReadonlyArray<LegalAction> => [
+  ...legalPaidRoadActions(state, playerId),
+  ...legalPaidSettlementActions(state, playerId),
+  ...legalCityActions(state, playerId),
+  ...legalDevelopmentCardActions(state, playerId),
+];
+
+const legalMaritimeActions = (state: GameState, playerId: PlayerId): ReadonlyArray<LegalAction> => {
+  const actions: LegalAction[] = [];
+  for (const give of RESOURCE_KEYS) {
+    for (const receive of RESOURCE_KEYS) {
+      if (canMaritimeTrade(state, playerId, give, receive)) {
+        actions.push(
+          makeAction(state, playerId, `maritime:${give}:${receive}`, {
+            type: "maritime-trade",
+            give,
+            receive,
+          }),
+        );
+      }
+    }
+  }
+  return actions;
 };
 
 export const legalActions = (state: GameState): ReadonlyArray<LegalAction> => {
   const playerId = currentPlayerId(state);
-  if (playerId === null) {
-    return [];
+  if (playerId === null) return [];
+  switch (state.phase.tag) {
+    case "setup.settlement":
+      return legalInitialSettlementActions(state, playerId);
+    case "setup.road":
+      return legalInitialRoadActions(state, playerId);
+    case "setup.completing":
+    case "turn.robber":
+      return [];
+    case "turn.roll":
+      return [makeAction(state, playerId, "roll", { type: "roll-dice" })];
+    case "turn.action":
+      return [
+        ...legalBuildActions(state, playerId),
+        ...legalMaritimeActions(state, playerId),
+        makeAction(state, playerId, "end-turn", { type: "end-turn" }),
+      ];
   }
-  if (state.phase.tag === "setup.settlement") {
-    return legalSettlementActions(state, playerId);
-  }
-  return state.phase.tag === "setup.road" ? legalRoadActions(state, playerId) : [];
 };
-
-const resourceTotal = (resources: ResourceCounts): number =>
-  resources.lumber + resources.brick + resources.wool + resources.grain + resources.ore;
 
 export const observe = (state: GameState, viewer: Viewer = { type: "public" }): GameObservation => {
   const ownPlayer =
@@ -457,18 +1121,23 @@ export const observe = (state: GameState, viewer: Viewer = { type: "public" }): 
     occupancy: state.occupancy,
     phase: state.phase,
     activePlayerId: currentPlayerId(state),
-    players: state.config.players.map((config) => {
-      const player = state.players.find(({ id }) => id === config.id)!;
-      const buildings = state.occupancy.buildings.filter(({ playerId }) => playerId === player.id);
+    players: state.config.players.map((configured) => {
+      const player = state.players.find(({ id }) => id === configured.id)!;
+      const buildings = state.occupancy.buildings.filter(
+        ({ playerId }) => playerId === configured.id,
+      );
       return {
-        id: player.id,
-        name: config.name,
-        color: config.color,
-        resourceCount: resourceTotal(player.resources),
+        id: configured.id,
+        name: configured.name,
+        color: configured.color,
+        resourceCount: RESOURCE_KEYS.reduce(
+          (total, resource) => total + player.resources[resource],
+          0,
+        ),
         developmentCardCount: player.developmentCards.length,
         settlements: buildings.filter(({ kind }) => kind === "settlement").length,
         cities: buildings.filter(({ kind }) => kind === "city").length,
-        roads: state.occupancy.roads.filter(({ playerId }) => playerId === player.id).length,
+        roads: state.occupancy.roads.filter(({ playerId }) => playerId === configured.id).length,
       };
     }),
     bank: state.bank,
@@ -490,7 +1159,7 @@ const canonicalize = (value: unknown): unknown => {
 const sameCanonicalValue = (left: unknown, right: unknown): boolean =>
   JSON.stringify(canonicalize(left)) === JSON.stringify(canonicalize(right));
 
-const commandFromEvent = (state: GameState, envelope: GameEvent): GameCommand | null => {
+const setupCommandFromEvent = (state: GameState, envelope: GameEvent): GameCommand | undefined => {
   const common = {
     schema: "catanarchy.command.v1" as const,
     matchId: envelope.matchId,
@@ -511,9 +1180,63 @@ const commandFromEvent = (state: GameState, envelope: GameEvent): GameCommand | 
         command: { type: "place-initial-road", edgeId: envelope.event.edgeId },
       };
     default:
-      return null;
+      return undefined;
   }
 };
+
+const normalCommandFromEvent = (state: GameState, envelope: GameEvent): GameCommand | undefined => {
+  const common = {
+    schema: "catanarchy.command.v1" as const,
+    matchId: envelope.matchId,
+    commandId: envelope.commandId,
+    expectedSequence: state.sequence,
+  };
+  switch (envelope.event.type) {
+    case "dice.rolled":
+      return { ...common, playerId: envelope.event.playerId, command: { type: "roll-dice" } };
+    case "road.built":
+      return {
+        ...common,
+        playerId: envelope.event.playerId,
+        command: { type: "build-road", edgeId: envelope.event.edgeId },
+      };
+    case "settlement.built":
+      return {
+        ...common,
+        playerId: envelope.event.playerId,
+        command: { type: "build-settlement", vertexId: envelope.event.vertexId },
+      };
+    case "city.built":
+      return {
+        ...common,
+        playerId: envelope.event.playerId,
+        command: { type: "build-city", vertexId: envelope.event.vertexId },
+      };
+    case "development-card.bought":
+      return {
+        ...common,
+        playerId: envelope.event.playerId,
+        command: { type: "buy-development-card" },
+      };
+    case "maritime-trade.completed":
+      return {
+        ...common,
+        playerId: envelope.event.playerId,
+        command: {
+          type: "maritime-trade",
+          give: envelope.event.give,
+          receive: envelope.event.receive,
+        },
+      };
+    case "turn.ended":
+      return { ...common, playerId: envelope.event.playerId, command: { type: "end-turn" } };
+    default:
+      return undefined;
+  }
+};
+
+const commandFromEvent = (state: GameState, envelope: GameEvent): GameCommand | null =>
+  setupCommandFromEvent(state, envelope) ?? normalCommandFromEvent(state, envelope) ?? null;
 
 const replayFailure = (message: string): ReplayViolation => new ReplayViolation({ message });
 

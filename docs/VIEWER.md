@@ -2,7 +2,7 @@
 
 ## Status
 
-The first web slice is implemented as a trusted local setup client. It starts seeded three-player and four-player games, renders the standard board, sends initial-placement commands to the native engine, shows public player summaries and the active player's resources, and moves through accepted-command history.
+The first web slice is implemented as a trusted local game client. It starts seeded three-player and four-player games, renders the standard board, submits setup and normal-turn commands to the native engine, shows public player summaries and the active player's resources, and moves through accepted-command history. It shows the explicit robber boundary but does not resolve a seven yet.
 
 Saved replay loading, timed playback, live streams, and negotiation views remain planned. Those remote and replay modes stay read-only and consume only viewer-safe data. The local setup client is a deliberate exception because the user runs the engine and browser in one trusted process.
 
@@ -23,7 +23,7 @@ The viewer also helps engine development. A wrong edge, harbor, road, or settlem
 
 The first release supports the regular three-player and four-player base-game board defined in the [engine design](ENGINE.md). It renders original geometric shapes and text. It does not use copied board artwork or game assets.
 
-The current slice includes command entry only for native initial placement. It excludes normal-turn commands, remote commands, matchmaking, accounts, ratings, map editing, and expansion layouts. It also excludes public access to referee state.
+The current slice includes native setup, dice rolls, paid building, development-card purchases, maritime trade, and turn-end commands. It excludes robber commands, development-card play, remote commands, matchmaking, accounts, ratings, map editing, and expansion layouts. It also excludes public access to referee state.
 
 ## Boundary
 
@@ -48,7 +48,7 @@ observation projector
 
 The engine decides what is public or private before remote serialization. The browser cannot request hidden cards merely by changing a React property or URL query.
 
-The current local setup client imports the native engine and keeps authoritative state in browser memory. It asks the engine for legal actions and submits selected commands. It does not reimplement placement rules. This mode is suitable only for trusted local hot-seat play and development. It must not become the transport for agent matches or remote spectators.
+The current local game client imports the native engine and keeps authoritative state in browser memory. It asks the engine for legal actions and submits selected commands. It does not reimplement game rules. This mode is suitable only for trusted local hot-seat play and development. It must not become the transport for agent matches or remote spectators.
 
 ## Repository layout
 
@@ -363,7 +363,7 @@ Completion requires a multi-round scripted negotiation replay to display only th
 
 ## Project milestone
 
-The local SVG setup client ships with engine Milestone 1. The complete read-only replay and live viewer remains its own milestone before Pi agents are added. Negotiation work will extend the same timeline instead of creating another UI.
+The local SVG game client now covers engine Milestones 1 and 2. The complete read-only replay and live viewer remains a later milestone. Negotiation work will extend the same timeline instead of creating another UI.
 
 ## Merge gate
 

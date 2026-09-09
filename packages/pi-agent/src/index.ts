@@ -286,13 +286,9 @@ const createSdkDecisionChannel = async (
 };
 
 const harborKindsAtVertex = (
-  action: LegalAction,
+  vertexId: string,
   observation: AgentDecisionRequest["observation"],
 ): ReadonlyArray<string> => {
-  if (action.command.command.type !== "place-initial-settlement") {
-    return [];
-  }
-  const vertexId = action.command.command.vertexId;
   const vertex = observation.topology.vertices.find(({ id }) => id === vertexId);
   if (vertex === undefined) {
     return [];
@@ -303,40 +299,50 @@ const harborKindsAtVertex = (
     .map(({ kind }) => kind);
 };
 
-const describeAction = (
+const describeVertexAction = (
   action: LegalAction,
+  vertexId: string,
   observation: AgentDecisionRequest["observation"],
 ): Readonly<Record<string, unknown>> => {
-  const command = action.command.command;
-  if (command.type === "place-initial-road") {
-    const edge = observation.topology.edges.find(({ id }) => id === command.edgeId);
-    return {
-      actionId: action.id,
-      type: command.type,
-      edgeId: command.edgeId,
-      endpoints: edge?.vertexIds ?? [],
-    };
-  }
-  const vertex = observation.topology.vertices.find(({ id }) => id === command.vertexId);
+  const vertex = observation.topology.vertices.find(({ id }) => id === vertexId);
   const terrain = new Map(observation.layout.terrain.map((item) => [item.hexId, item.terrain]));
   const numbers = new Map(observation.layout.numbers.map((item) => [item.hexId, item.number]));
   return {
     actionId: action.id,
-    type: command.type,
-    vertexId: command.vertexId,
+    type: action.command.command.type,
+    vertexId,
     adjacentHexes: (vertex?.adjacentHexIds ?? []).map((hexId) => ({
       hexId,
       terrain: terrain.get(hexId),
       number: numbers.get(hexId) ?? null,
     })),
-    harbors: harborKindsAtVertex(action, observation),
+    harbors: harborKindsAtVertex(vertexId, observation),
   };
+};
+
+const describeAction = (
+  action: LegalAction,
+  observation: AgentDecisionRequest["observation"],
+): Readonly<Record<string, unknown>> => {
+  const command = action.command.command;
+  if ("edgeId" in command) {
+    const edge = observation.topology.edges.find(({ id }) => id === command.edgeId);
+    return {
+      actionId: action.id,
+      ...command,
+      endpoints: edge === undefined ? [] : edge.vertexIds,
+    };
+  }
+  if ("vertexId" in command) {
+    return describeVertexAction(action, command.vertexId, observation);
+  }
+  return { actionId: action.id, ...command };
 };
 
 export const buildDecisionPrompt = (request: AgentDecisionRequest): string =>
   JSON.stringify(
     {
-      task: "Choose one legal initial-placement action and call choose_action.",
+      task: "Choose one legal Catan action and call choose_action.",
       matchId: request.matchId,
       sequence: request.sequence,
       playerId: request.playerId,

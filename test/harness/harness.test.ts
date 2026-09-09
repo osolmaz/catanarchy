@@ -1,6 +1,7 @@
 import {
   AgentDecisionError,
   createFirstLegalAgent,
+  runGameSteps,
   runInitialPlacement,
   type AgentDecisionRequest,
   type SeatAgent,
@@ -29,7 +30,43 @@ const firstAction = (request: AgentDecisionRequest) => {
   return action;
 };
 
-describe("initial-placement harness", () => {
+describe("agent harness", () => {
+  it("runs a bounded normal-turn step after setup", async () => {
+    const gameConfig: GameConfig = { ...config(4), seed: 0, matchId: "harness-steps" };
+    const result = await Effect.runPromise(
+      runGameSteps({
+        config: gameConfig,
+        maxDecisions: 17,
+        createAgent: async () => createFirstLegalAgent(),
+      }),
+    );
+
+    expect(result.decisions).toHaveLength(17);
+    expect(result.events.some(({ event }) => event.type === "dice.rolled")).toBe(true);
+    expect(result.state.phase.tag).toBe("turn.action");
+  });
+
+  it("stops safely when a phase has no legal action", async () => {
+    const result = await Effect.runPromise(
+      runGameSteps({
+        config: config(4),
+        maxDecisions: 20,
+        createAgent: async () => createFirstLegalAgent(),
+      }),
+    );
+
+    expect(result.decisions).toHaveLength(17);
+    expect(result.state.phase.tag).toBe("turn.robber");
+  });
+
+  it("rejects an invalid game-step limit before creating agents", async () => {
+    const createAgent = vi.fn<() => Promise<SeatAgent>>(async () => createFirstLegalAgent());
+    await expect(
+      Effect.runPromise(runGameSteps({ config: config(3), maxDecisions: 0, createAgent })),
+    ).rejects.toThrow("maxDecisions must be a positive integer");
+    expect(createAgent).not.toHaveBeenCalled();
+  });
+
   it.each([3, 4])("completes setup with one persistent agent per %i seats", async (count) => {
     const createdPlayers: string[] = [];
     const calls = new Map<string, number>();

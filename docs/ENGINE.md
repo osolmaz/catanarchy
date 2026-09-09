@@ -2,9 +2,9 @@
 
 ## Status
 
-The standard board and initial-placement engine are implemented. The engine generates the regular topology and a seeded layout, creates the development deck, applies initial settlements and roads in forward and reverse player order, grants starting resources, lists legal actions, projects observations, and replays accepted events.
+The standard board, setup, production, and main action phase are implemented. The engine rolls deterministic dice, resolves production and bank shortages, applies paid building and maritime trade, sells development cards, advances turns, lists legal actions, projects observations, and replays accepted events. A seven enters `turn.robber`, which is the explicit Milestone 3 boundary.
 
-The test suite checks topology, 1,000 generated layouts, deterministic random streams, setup rules for three and four players, replay, invariants, failures, legal actions, and private-state boundaries. Normal turns begin in Milestone 2 of the [implementation plan](PLAN.md). Colonist-specific evidence remains in the [Colonist compatibility profile](COLONIST.md).
+The test suite checks topology, 1,000 generated layouts, deterministic random streams, setup rules, normal-turn rules, replay, invariants, failures, legal actions, and private-state boundaries. Colonist-specific evidence remains in the [Colonist compatibility profile](COLONIST.md).
 
 ## Scope
 
@@ -13,6 +13,88 @@ The first engine supports the regular three-player and four-player base-game boa
 A standard topology can have different layouts. The layout contains terrain and number tokens. It also contains harbors and the robber location. Roads and buildings belong to the changing game position. This separation lets native games generate a regular random layout while an adapter supplies a layout observed from Colonist.
 
 The first native layout policy is the official variable setup. A reviewed fixed layout can exist as a test fixture, but the engine does not need a general setup-policy plug-in system during this milestone.
+
+## Milestone 2 contract
+
+Milestone 2 adds production and the main action phase. It keeps the same `v1` state, command, event, and observation identifiers. This is an in-place contract extension, not a parallel protocol version.
+
+### Turn phases
+
+After setup, an absolute turn counter starts at 1 and increases after every `end-turn` command. The active player index advances around the configured player list.
+
+- `turn.roll` accepts only `roll-dice`.
+- A non-seven roll enters `turn.action` after production resolves.
+- `turn.action` permits builds, development-card purchases, maritime trades, and `end-turn` in any order.
+- A seven enters `turn.robber`. This phase is an explicit Milestone 3 boundary and has no legal action in Milestone 2.
+
+The engine never rerolls a seven or silently skips robber resolution. Scripted runs stop honestly at `turn.robber` until Milestone 3 is implemented.
+
+### Dice and production
+
+`roll-dice` draws two independent values from 1 through 6 from the labeled dice random stream. The accepted `dice.rolled` event records both dice, the next random state, each player grant, and each resource type blocked by a bank shortage. Replay does not draw random values.
+
+A settlement claims one card from each adjacent producing hex with the rolled number. A city claims two. The robber blocks its hex. Claims are grouped by resource before transfer.
+
+For each resource type:
+
+- The bank fulfills every claim when it has enough cards.
+- If the bank is short and more than one player has a claim, no player receives that resource.
+- If the bank is short and only one player has a claim, that player receives all remaining cards of that resource, up to the claim.
+
+All resource transfers preserve the 19-card supply for each resource.
+
+### Costs and piece limits
+
+The action phase uses these fixed costs:
+
+| Purchase         | Lumber | Brick | Wool | Grain | Ore |
+| ---------------- | -----: | ----: | ---: | ----: | --: |
+| Road             |      1 |     1 |    0 |     0 |   0 |
+| Settlement       |      1 |     1 |    1 |     1 |   0 |
+| City             |      0 |     0 |    0 |     2 |   3 |
+| Development card |      0 |     0 |    1 |     1 |   1 |
+
+A player cannot exceed 15 roads, 5 settlements, or 4 cities in play. A city returns its replaced settlement to the player's supply. A development-card purchase draws the current top card and records its absolute purchase turn with the private card.
+
+### Placement
+
+A paid road uses an empty edge connected to the player's road or building. An opponent building blocks connection through its vertex. A paid settlement uses an empty vertex, obeys the distance rule, and connects to one of the player's roads. A city replaces one of the player's settlements.
+
+The engine checks connection, occupancy, resources, and piece supply before it emits an event. A rejected purchase changes no state, event sequence, deck, or random stream.
+
+### Maritime trade
+
+A maritime trade gives cards of one resource and receives one different resource from the bank. The best owned rate applies to the given resource:
+
+- 2:1 with a matching resource harbor
+- 3:1 with a generic harbor
+- 4:1 otherwise
+
+A player owns a harbor when one of their settlements or cities touches either endpoint of its coastal edge. The player must hold the full payment and the bank must hold the requested card. The event records the exact rate and both resource types.
+
+### Commands, events, and actions
+
+Milestone 2 adds these command payloads:
+
+- `roll-dice`
+- `build-road`
+- `build-settlement`
+- `build-city`
+- `buy-development-card`
+- `maritime-trade`
+- `end-turn`
+
+It adds matching replayable events: `dice.rolled`, `road.built`, `settlement.built`, `city.built`, `development-card.bought`, `maritime-trade.completed`, and `turn.ended`.
+
+Legal actions are exhaustive. Roll and end-turn actions are singular. Build actions enumerate every legal board location. Maritime actions enumerate every legal ordered give-and-receive resource pair at the player's best rate. A development-card action exists only when the deck and payment are available.
+
+### Information boundary
+
+Public observations expose the dice result through the phase and retain public piece and card counts. A player observation exposes only that player's resource identities. Development-card identities and purchase turns remain private authoritative state. Pi receives the same seat observation and legal actions as a scripted agent.
+
+### Milestone 2 tests
+
+Tests cover deterministic dice, production, robber blocking, both shortage branches, every cost, bank conservation, piece limits, road blocking, settlement distance and connection, city replacement, deck exhaustion, harbor rates, turn order, stale commands, replay batches, exhaustive legal actions, observation privacy, and agent request isolation.
 
 ## Design rules
 
@@ -288,7 +370,7 @@ interface GameState {
   readonly bank: ResourceCounts;
   readonly players: ReadonlyArray<PlayerState>;
   readonly developmentDeck: ReadonlyArray<DevelopmentCard>;
-  readonly phase: SetupPhase;
+  readonly phase: GamePhase;
   readonly random: RandomCursors;
 }
 ```
@@ -306,10 +388,15 @@ interface ResourceCounts {
   readonly ore: number;
 }
 
+interface OwnedDevelopmentCard {
+  readonly card: DevelopmentCard;
+  readonly purchasedTurn: number;
+}
+
 interface PlayerState {
   readonly id: PlayerId;
   readonly resources: ResourceCounts;
-  readonly developmentCards: ReadonlyArray<DevelopmentCard>;
+  readonly developmentCards: ReadonlyArray<OwnedDevelopmentCard>;
   readonly playedKnights: number;
 }
 
@@ -471,16 +558,19 @@ Expected values must not come from the production helper under test. Topology te
 
 ### Test files
 
-Milestone 1 uses these focused suites:
+Milestones 1 and 2 use these focused suites:
 
 ```text
 test/engine/topology.test.ts
 test/engine/layout.test.ts
 test/engine/game.test.ts
+test/engine/normal-turns.test.ts
 test/engine/errors.test.ts
 test/engine/random.test.ts
 test/engine/invariants.test.ts
 test/engine/protocol.test.ts
+test/harness/harness.test.ts
+test/pi-agent/pi-agent.test.ts
 test/web/app.test.tsx
 ```
 
