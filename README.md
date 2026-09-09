@@ -6,7 +6,7 @@ The current simulator supports the regular three-player and four-player board an
 
 ## Start the web app
 
-Install Node.js 22 or later. Then run:
+Install Node.js 22.12 or later. Then run:
 
 ```sh
 npm install
