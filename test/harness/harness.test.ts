@@ -223,6 +223,39 @@ describe("initial-placement harness", () => {
     expect(result.decisions[1]).toMatchObject({ outcome: "fallback" });
   });
 
+  it("quarantines an agent when cancellation does not settle", async () => {
+    const cancel = vi.fn<SeatAgent["cancel"]>(async () => new Promise<void>(() => {}));
+    const result = await Effect.runPromise(
+      runInitialPlacement({
+        config: config(3),
+        decisionTimeoutMs: 1,
+        maxAttempts: 2,
+        createAgent: async (player) =>
+          player.id === "red"
+            ? {
+                async decide() {
+                  return new Promise<never>(() => {});
+                },
+                cancel,
+                async dispose() {},
+              }
+            : createFirstLegalAgent(),
+      }),
+    );
+
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(result.decisions[0]).toMatchObject({
+      outcome: "failed",
+      failure: "cancellation-timeout",
+    });
+    expect(
+      result.decisions.filter(
+        ({ playerId, outcome }) => playerId === "red" && outcome === "fallback",
+      ),
+    ).toHaveLength(4);
+    expect(result.state.phase.tag).toBe("turn.roll");
+  });
+
   it("disposes agents that were created before factory failure", async () => {
     const dispose = vi.fn<SeatAgent["dispose"]>(async () => {});
     let count = 0;

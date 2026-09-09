@@ -48,7 +48,11 @@ export interface SeatAgent {
 
 export type SeatAgentFactory = (player: PlayerConfig) => Promise<SeatAgent>;
 
-export type DecisionFailure = "agent-error" | "deadline" | "invalid-action";
+export type DecisionFailure =
+  | "agent-error"
+  | "cancellation-timeout"
+  | "deadline"
+  | "invalid-action";
 
 export interface DecisionTrace {
   readonly matchId: string;
@@ -87,8 +91,36 @@ export class AgentDecisionError extends Data.TaggedError("AgentDecisionError")<{
   readonly usage?: AgentUsage;
 }> {}
 
+const CANCELLATION_GRACE_MS = 1_000;
+const DISPOSAL_GRACE_MS = 1_000;
+
+const settlesWithin = async (operation: Promise<void>, timeoutMs: number): Promise<boolean> => {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<false>((resolve) => {
+    timer = setTimeout(() => resolve(false), timeoutMs);
+  });
+  try {
+    return await Promise.race([
+      operation.then(
+        () => true as const,
+        () => true as const,
+      ),
+      timeout,
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+};
+
 const disposeAgents = async (agents: ReadonlyMap<string, SeatAgent>): Promise<void> => {
-  await Promise.allSettled([...agents.values()].map(async (agent) => agent.dispose()));
+  await Promise.all(
+    [...agents.values()].map(async (agent) =>
+      settlesWithin(
+        Promise.resolve().then(async () => agent.dispose()),
+        DISPOSAL_GRACE_MS,
+      ),
+    ),
+  );
 };
 
 const createAgents = async (
@@ -113,6 +145,8 @@ const positiveInteger = (value: number, name: string): void => {
   }
 };
 
+class CancellationTimeout extends Error {}
+
 const timeoutDecision = async (
   agent: SeatAgent,
   request: Omit<AgentDecisionRequest, "signal">,
@@ -131,7 +165,11 @@ const timeoutDecision = async (
     return await Promise.race([agent.decide({ ...request, signal: controller.signal }), deadline]);
   } catch (error) {
     if (controller.signal.aborted) {
-      await agent.cancel();
+      const cancelled = await settlesWithin(
+        Promise.resolve().then(async () => agent.cancel()),
+        CANCELLATION_GRACE_MS,
+      );
+      if (!cancelled) throw new CancellationTimeout("Agent cancellation did not settle.");
     }
     throw error;
   } finally {
@@ -141,10 +179,12 @@ const timeoutDecision = async (
   }
 };
 
-const failureCategory = (error: unknown): DecisionFailure =>
-  error instanceof HarnessError && error.message === "decision-deadline"
+const failureCategory = (error: unknown): DecisionFailure => {
+  if (error instanceof CancellationTimeout) return "cancellation-timeout";
+  return error instanceof HarnessError && error.message === "decision-deadline"
     ? "deadline"
     : "agent-error";
+};
 
 const baseTrace = (
   agent: SeatAgent,
@@ -213,12 +253,14 @@ const chooseAction = async (
   agent: SeatAgent,
   request: Omit<AgentDecisionRequest, "signal">,
   canonicalActions: ReadonlyArray<LegalAction>,
+  unavailableAgents: WeakSet<SeatAgent>,
   timeoutMs: number,
   maxAttempts: number,
 ): Promise<ChosenAction> => {
   const traces: DecisionTrace[] = [];
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    if (unavailableAgents.has(agent)) break;
     const startedAt = performance.now();
     try {
       const decision = await timeoutDecision(agent, request, timeoutMs);
@@ -230,16 +272,18 @@ const chooseAction = async (
       }
       traces.push(invalidActionTrace(agent, request, decision, attempt, elapsedMs));
     } catch (error) {
+      const failure = failureCategory(error);
       traces.push(
         failedAttemptTrace(
           agent,
           request,
           attempt,
           performance.now() - startedAt,
-          failureCategory(error),
+          failure,
           error instanceof AgentDecisionError ? error.usage : undefined,
         ),
       );
+      if (failure === "cancellation-timeout") unavailableAgents.add(agent);
     }
   }
 
@@ -267,6 +311,7 @@ const runWithAgents = async (
   let state = created.state;
   const events: GameEvent[] = [...created.events];
   const decisions: DecisionTrace[] = [];
+  const unavailableAgents = new WeakSet<SeatAgent>();
 
   while (state.phase.tag !== "turn.roll") {
     const activePlayer = options.config.players[state.phase.playerIndex];
@@ -291,6 +336,7 @@ const runWithAgents = async (
         legalActions: structuredClone(actions),
       },
       actions,
+      unavailableAgents,
       timeoutMs,
       maxAttempts,
     );
