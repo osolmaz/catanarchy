@@ -14,6 +14,7 @@ export type RuleViolationCode =
   | "stale-command"
   | "unknown-location"
   | "wrong-command"
+  | "wrong-match"
   | "wrong-player";
 
 export class RuleViolation extends Data.TaggedError("RuleViolation")<{

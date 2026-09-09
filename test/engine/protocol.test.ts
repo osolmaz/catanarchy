@@ -1,4 +1,5 @@
 import {
+  decodeGameCommand,
   decodeGameConfig,
   GameConfigSchema,
   PLAYER_COLORS,
@@ -28,6 +29,26 @@ describe("protocol boundaries", () => {
   it("rejects malformed configuration data", () => {
     const result = Effect.runSync(Effect.either(decodeGameConfig({ seed: "42" })));
     expect(Either.isLeft(result)).toBe(true);
+  });
+
+  it("decodes a versioned, match-scoped command envelope", () => {
+    const value = {
+      schema: "catanarchy.command.v1",
+      matchId: "protocol",
+      commandId: "command-1",
+      playerId: "red",
+      expectedSequence: 0,
+      command: { type: "place-initial-settlement", vertexId: "v:0:0" },
+    };
+
+    expect(Effect.runSync(decodeGameCommand(value))).toEqual(value);
+    expect(
+      Either.isLeft(
+        Effect.runSync(
+          Effect.either(decodeGameCommand({ ...value, schema: "catanarchy.command.v0" })),
+        ),
+      ),
+    ).toBe(true);
   });
 
   it("exports stable vocabulary", () => {

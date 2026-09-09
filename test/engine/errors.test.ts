@@ -1,6 +1,7 @@
 import { createGame, handleCommand, legalActions, replay } from "@catanarchy/engine";
 import type {
   GameCommand,
+  GameCommandPayload,
   GameConfig,
   GameEvent,
   GameState,
@@ -29,6 +30,20 @@ const applyFirstAction = (state: GameState): GameState => {
   if (action === undefined) throw new Error("Expected a legal action.");
   return Effect.runSync(handleCommand(state, action.command)).state;
 };
+
+const commandEnvelope = (
+  state: GameState,
+  playerId: string,
+  commandId: string,
+  command: GameCommandPayload,
+): GameCommand => ({
+  schema: "catanarchy.command.v1",
+  matchId: state.matchId,
+  commandId,
+  playerId,
+  expectedSequence: state.sequence,
+  command,
+});
 
 describe("configuration failures", () => {
   it.each([
@@ -62,11 +77,15 @@ describe("configuration failures", () => {
 });
 
 describe("command failures", () => {
-  it("rejects stale, wrong-player, and malformed commands", () => {
+  it("rejects stale, wrong-match, wrong-player, and malformed commands", () => {
     const state = Effect.runSync(createGame(config())).state;
     const action = legalActions(state)[0]!;
-    const malformed = { ...action.command, type: "place-anywhere" } as unknown as GameCommand;
+    const malformed = {
+      ...action.command,
+      command: { type: "place-anywhere" },
+    } as unknown as GameCommand;
 
+    expect(failureCode(state, { ...action.command, matchId: "another-match" })).toBe("wrong-match");
     expect(failureCode(state, { ...action.command, expectedSequence: 99 })).toBe("stale-command");
     expect(failureCode(state, { ...action.command, playerId: "blue" })).toBe("wrong-player");
     expect(failureCode(state, malformed)).toBe("invalid-command");
@@ -75,22 +94,22 @@ describe("command failures", () => {
   it("rejects an unknown settlement and a road in the wrong phase", () => {
     const state = Effect.runSync(createGame(config())).state;
     expect(
-      failureCode(state, {
-        type: "place-initial-settlement",
-        commandId: "unknown-vertex",
-        playerId: "red",
-        expectedSequence: 0,
-        vertexId: "v:99:99",
-      }),
+      failureCode(
+        state,
+        commandEnvelope(state, "red", "unknown-vertex", {
+          type: "place-initial-settlement",
+          vertexId: "v:99:99",
+        }),
+      ),
     ).toBe("unknown-location");
     expect(
-      failureCode(state, {
-        type: "place-initial-road",
-        commandId: "early-road",
-        playerId: "red",
-        expectedSequence: 0,
-        edgeId: state.topology.edges[0]!.id,
-      }),
+      failureCode(
+        state,
+        commandEnvelope(state, "red", "early-road", {
+          type: "place-initial-road",
+          edgeId: state.topology.edges[0]!.id,
+        }),
+      ),
     ).toBe("wrong-command");
   });
 
@@ -102,18 +121,25 @@ describe("command failures", () => {
         redRoadPhase.phase.tag === "setup.road" &&
         !edge.vertexIds.includes(redRoadPhase.phase.settlementId),
     )!;
-    const base = {
-      type: "place-initial-road" as const,
-      playerId: "red",
-      expectedSequence: redRoadPhase.sequence,
-    };
 
     expect(
-      failureCode(redRoadPhase, { ...base, commandId: "unknown", edgeId: "e:v:90:90|v:91:91" }),
+      failureCode(
+        redRoadPhase,
+        commandEnvelope(redRoadPhase, "red", "unknown", {
+          type: "place-initial-road",
+          edgeId: "e:v:90:90|v:91:91",
+        }),
+      ),
     ).toBe("unknown-location");
-    expect(failureCode(redRoadPhase, { ...base, commandId: "remote", edgeId: remoteEdge.id })).toBe(
-      "road-not-adjacent",
-    );
+    expect(
+      failureCode(
+        redRoadPhase,
+        commandEnvelope(redRoadPhase, "red", "remote", {
+          type: "place-initial-road",
+          edgeId: remoteEdge.id,
+        }),
+      ),
+    ).toBe("road-not-adjacent");
 
     const redRoadAction = legalActions(redRoadPhase)[0]!;
     const blueSettlementPhase = Effect.runSync(
@@ -123,17 +149,15 @@ describe("command failures", () => {
     const blueRoadPhase = Effect.runSync(
       handleCommand(blueSettlementPhase, blueSettlementAction.command),
     ).state;
+    const road = redRoadAction.command.command;
     expect(
-      failureCode(blueRoadPhase, {
-        type: "place-initial-road",
-        commandId: "occupied",
-        playerId: "blue",
-        expectedSequence: blueRoadPhase.sequence,
-        edgeId:
-          redRoadAction.command.type === "place-initial-road"
-            ? redRoadAction.command.edgeId
-            : remoteEdge.id,
-      }),
+      failureCode(
+        blueRoadPhase,
+        commandEnvelope(blueRoadPhase, "blue", "occupied", {
+          type: "place-initial-road",
+          edgeId: road.type === "place-initial-road" ? road.edgeId : remoteEdge.id,
+        }),
+      ),
     ).toBe("occupied-edge");
   });
 
@@ -143,29 +167,28 @@ describe("command failures", () => {
     const redRoadPhase = Effect.runSync(handleCommand(initial, redSettlementAction.command)).state;
     const redRoad = legalActions(redRoadPhase)[0]!;
     const blueState = Effect.runSync(handleCommand(redRoadPhase, redRoad.command)).state;
-    if (redSettlementAction.command.type !== "place-initial-settlement")
-      throw new Error("Expected settlement.");
-    const redVertexId = redSettlementAction.command.vertexId;
+    const settlement = redSettlementAction.command.command;
+    if (settlement.type !== "place-initial-settlement") throw new Error("Expected settlement.");
+    const redVertexId = settlement.vertexId;
     const redVertex = blueState.topology.vertices.find(({ id }) => id === redVertexId)!;
-    const base = {
-      type: "place-initial-settlement" as const,
-      playerId: "blue",
-      expectedSequence: blueState.sequence,
-    };
 
     expect(
-      failureCode(blueState, {
-        ...base,
-        commandId: "occupied",
-        vertexId: redVertexId,
-      }),
+      failureCode(
+        blueState,
+        commandEnvelope(blueState, "blue", "occupied", {
+          type: "place-initial-settlement",
+          vertexId: redVertexId,
+        }),
+      ),
     ).toBe("occupied-vertex");
     expect(
-      failureCode(blueState, {
-        ...base,
-        commandId: "adjacent",
-        vertexId: redVertex.adjacentVertexIds[0]!,
-      }),
+      failureCode(
+        blueState,
+        commandEnvelope(blueState, "blue", "adjacent", {
+          type: "place-initial-settlement",
+          vertexId: redVertex.adjacentVertexIds[0]!,
+        }),
+      ),
     ).toBe("settlement-too-close");
   });
 });
@@ -175,16 +198,20 @@ describe("replay failures", () => {
     expect(Either.isLeft(Effect.runSync(Effect.either(replay([]))))).toBe(true);
   });
 
-  it("rejects a sequence gap and a second creation event", () => {
+  it("rejects a sequence gap, a wrong match, and a second creation event", () => {
     const created = Effect.runSync(createGame(config()));
     const state = applyFirstAction(created.state);
     const settlement = legalActions(created.state)[0]!;
     const event = Effect.runSync(handleCommand(created.state, settlement.command)).events[0]!;
     const gap = { ...event, sequence: 3 } as GameEvent;
+    const wrongMatch = { ...event, matchId: "another-match" } as GameEvent;
 
     expect(Either.isLeft(Effect.runSync(Effect.either(replay([created.events[0], gap]))))).toBe(
       true,
     );
+    expect(
+      Either.isLeft(Effect.runSync(Effect.either(replay([created.events[0], wrongMatch])))),
+    ).toBe(true);
     expect(
       Either.isLeft(Effect.runSync(Effect.either(replay([created.events[0], created.events[0]])))),
     ).toBe(true);
