@@ -102,6 +102,14 @@ export interface ResourceCounts {
   readonly ore: number;
 }
 
+export const ResourceCountsSchema = Schema.Struct({
+  lumber: Schema.Number,
+  brick: Schema.Number,
+  wool: Schema.Number,
+  grain: Schema.Number,
+  ore: Schema.Number,
+});
+
 export type DevelopmentCard =
   | "knight"
   | "road-building"
@@ -219,6 +227,52 @@ export type GameEvent =
   | EventEnvelope<InitialResourcesGrantedEvent>
   | EventEnvelope<RoadPlacedEvent>
   | EventEnvelope<InitialPlacementCompletedEvent>;
+
+const EventEnvelopeSchemaFields = {
+  schema: Schema.Literal("catanarchy.game-event.v1"),
+  matchId: Schema.String.pipe(Schema.minLength(1)),
+  sequence: Schema.Number,
+  commandId: Schema.String.pipe(Schema.minLength(1)),
+};
+
+export const GameEventEnvelopeSchema = Schema.Union(
+  Schema.Struct({
+    ...EventEnvelopeSchemaFields,
+    event: Schema.Struct({
+      type: Schema.Literal("game.created"),
+      state: Schema.Struct({ config: GameConfigSchema }),
+    }),
+  }),
+  Schema.Struct({
+    ...EventEnvelopeSchemaFields,
+    event: Schema.Struct({
+      type: Schema.Literal("settlement.placed"),
+      playerId: Schema.String,
+      vertexId: Schema.String,
+    }),
+  }),
+  Schema.Struct({
+    ...EventEnvelopeSchemaFields,
+    event: Schema.Struct({
+      type: Schema.Literal("initial-resources.granted"),
+      playerId: Schema.String,
+      resources: ResourceCountsSchema,
+    }),
+  }),
+  Schema.Struct({
+    ...EventEnvelopeSchemaFields,
+    event: Schema.Struct({
+      type: Schema.Literal("road.placed"),
+      playerId: Schema.String,
+      edgeId: Schema.String,
+    }),
+  }),
+  Schema.Struct({
+    ...EventEnvelopeSchemaFields,
+    event: Schema.Struct({ type: Schema.Literal("initial-placement.completed") }),
+  }),
+);
+export const decodeGameEventEnvelope = Schema.decodeUnknown(GameEventEnvelopeSchema);
 
 export interface PlaceInitialSettlementCommand {
   readonly type: "place-initial-settlement";

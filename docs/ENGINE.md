@@ -405,7 +405,7 @@ interface EventEnvelope<TEvent> {
 }
 ```
 
-Authoritative events do not contain wall-clock time. Operational traces can record receipt and completion times outside the deterministic log.
+Effect Schema decodes an event envelope and its tagged payload before replay reads it. Authoritative events do not contain wall-clock time. Operational traces can record receipt and completion times outside the deterministic log.
 
 Initial event types are:
 
