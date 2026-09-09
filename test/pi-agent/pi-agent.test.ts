@@ -10,6 +10,7 @@ import {
   extractAssistantText,
   ModelRuntime,
   parseModelReference,
+  resolveSelection,
   selectActionFromText,
   type PiDecisionChannel,
   type PiModelReference,
@@ -59,9 +60,12 @@ describe("Pi action selection", () => {
       details: { accepted: true },
       terminate: true,
     });
-    expect(gate.take()).toEqual({
-      actionId: "settlement:v:0:0",
-      reason: "Strong numbers.",
+    expect(resolveSelection(gate, "", ["settlement:v:0:0"])).toEqual({
+      selection: {
+        actionId: "settlement:v:0:0",
+        reason: "Strong numbers.",
+      },
+      selectionMode: "tool",
     });
   });
 
@@ -84,12 +88,12 @@ describe("Pi action selection", () => {
       details: { accepted: false },
     });
     expect(gate.choose("road:e:1")).toMatchObject({ isError: true, terminate: true });
-    expect(gate.take()).toBeUndefined();
+    expect(resolveSelection(gate, "I choose road:e:1.", ["road:e:1"]).selection).toBeUndefined();
 
     gate.begin(["road:e:1"]);
     expect(gate.choose("road:e:1")).toMatchObject({ terminate: true });
     expect(gate.choose("road:e:1")).toMatchObject({ isError: true, terminate: true });
-    expect(gate.take()).toBeUndefined();
+    expect(resolveSelection(gate, "I choose road:e:1.", ["road:e:1"]).selection).toBeUndefined();
   });
 
   it("extracts text from the latest assistant message", () => {
@@ -120,6 +124,12 @@ describe("Pi action selection", () => {
   it("accepts one unambiguous action ID from text-only providers", () => {
     expect(selectActionFromText("I choose settlement:v:1:-3.", ["settlement:v:1:-3"])).toEqual({
       actionId: "settlement:v:1:-3",
+    });
+    const gate = new ActionSelectionGate();
+    gate.begin(["settlement:v:1:-3"]);
+    expect(resolveSelection(gate, "I choose settlement:v:1:-3.", ["settlement:v:1:-3"])).toEqual({
+      selection: { actionId: "settlement:v:1:-3" },
+      selectionMode: "text",
     });
     expect(selectActionFromText("No exact ID.", ["settlement:v:1:-3"])).toBeUndefined();
     expect(selectActionFromText("Either road:a or road:b.", ["road:a", "road:b"])).toBeUndefined();

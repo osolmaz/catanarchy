@@ -94,6 +94,10 @@ export class ActionSelectionGate {
     };
   }
 
+  isPoisoned(): boolean {
+    return this.failed;
+  }
+
   take(): Selection | undefined {
     const selection = this.failed ? undefined : this.selection;
     this.selection = undefined;
@@ -118,6 +122,20 @@ export const selectActionFromText = (
 ): Selection | undefined => {
   const matches = legalActionIds.filter((actionId) => text.includes(actionId));
   return matches.length === 1 && matches[0] !== undefined ? { actionId: matches[0] } : undefined;
+};
+
+export const resolveSelection = (
+  gate: ActionSelectionGate,
+  responseText: string,
+  legalActionIds: ReadonlyArray<string>,
+): { readonly selection: Selection | undefined; readonly selectionMode: "tool" | "text" } => {
+  const poisoned = gate.isPoisoned();
+  const toolSelection = gate.take();
+  const textSelection = poisoned ? undefined : selectActionFromText(responseText, legalActionIds);
+  return {
+    selection: toolSelection ?? textSelection,
+    selectionMode: toolSelection === undefined ? "text" : "tool",
+  };
 };
 
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
@@ -199,10 +217,9 @@ class SdkDecisionChannel implements PiDecisionChannel {
       signal.removeEventListener("abort", abort);
     }
     const usage = usageDifference(before, this.#session.getSessionStats());
-    const toolSelection = this.#gate.take();
     const responseText = extractAssistantText(this.#session.messages);
-    const textSelection = selectActionFromText(responseText, legalActionIds);
-    const selection = toolSelection ?? textSelection;
+    const resolved = resolveSelection(this.#gate, responseText, legalActionIds);
+    const selection = resolved.selection;
     if (selection === undefined) {
       const preview = responseText.replaceAll(/\s+/g, " ").trim().slice(0, 300);
       throw new AgentDecisionError({
@@ -215,7 +232,7 @@ class SdkDecisionChannel implements PiDecisionChannel {
     }
     return {
       ...selection,
-      selectionMode: toolSelection === undefined ? "text" : "tool",
+      selectionMode: resolved.selectionMode,
       usage,
     };
   }
