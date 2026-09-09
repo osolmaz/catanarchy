@@ -21,18 +21,23 @@ import { Effect } from "effect";
 const argument = (name: string): string | undefined =>
   process.argv.find((value) => value.startsWith(`--${name}=`))?.slice(name.length + 3);
 
-const integerArgument = (name: string, defaultValue: number): number => {
+const integerArgument = (
+  name: string,
+  defaultValue: number,
+  minimum: number,
+  maximum = Number.MAX_SAFE_INTEGER,
+): number => {
   const value = Number(argument(name) ?? defaultValue);
-  if (!Number.isSafeInteger(value) || value < 1) {
-    throw new Error(`--${name} must be a positive integer.`);
+  if (!Number.isSafeInteger(value) || value < minimum || value > maximum) {
+    throw new Error(`--${name} must be an integer from ${minimum} through ${maximum}.`);
   }
   return value;
 };
 
-const seed = integerArgument("seed", 42);
-const timeoutMs = integerArgument("timeout-ms", 90_000);
-const maxAttempts = integerArgument("max-attempts", 1);
-const maxOutputTokens = integerArgument("max-output-tokens", 4_096);
+const seed = integerArgument("seed", 42, 0, 0xffff_ffff);
+const timeoutMs = integerArgument("timeout-ms", 90_000, 1);
+const maxAttempts = integerArgument("max-attempts", 1, 1);
+const maxOutputTokens = integerArgument("max-output-tokens", 4_096, 1);
 const outputPath = argument("output");
 const modelReferences = (
   argument("models") ?? "openai/gpt-5.6-luna,huggingface/deepseek-ai/DeepSeek-V4-Flash"
