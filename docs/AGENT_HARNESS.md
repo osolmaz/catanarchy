@@ -71,7 +71,7 @@ The tool input is:
 }
 ```
 
-The tool validates the ID against the current decision. A valid call terminates the Pi turn, which avoids an unnecessary second model response. An invalid call returns a tool error so that the model can correct it before the outer deadline.
+The tool validates the ID against the current decision. Every call terminates the Pi turn, which limits one harness attempt to one provider generation. A valid call returns the selected action. An invalid or duplicate call returns a tool error, and the harness controls the next bounded attempt or deterministic fallback.
 
 ## Traces
 

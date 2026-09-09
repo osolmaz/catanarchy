@@ -78,9 +78,13 @@ describe("Pi action selection", () => {
     const gate = new ActionSelectionGate();
     gate.begin(["road:e:1"]);
 
-    expect(gate.choose("road:e:2")).toMatchObject({ isError: true, details: { accepted: false } });
+    expect(gate.choose("road:e:2")).toMatchObject({
+      isError: true,
+      terminate: true,
+      details: { accepted: false },
+    });
     expect(gate.choose("road:e:1")).toMatchObject({ terminate: true });
-    expect(gate.choose("road:e:1")).toMatchObject({ isError: true });
+    expect(gate.choose("road:e:1")).toMatchObject({ isError: true, terminate: true });
   });
 
   it("extracts text from the latest assistant message", () => {
