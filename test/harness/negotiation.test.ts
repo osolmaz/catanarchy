@@ -119,6 +119,54 @@ describe("negotiation protocol", () => {
     });
   });
 
+  it("rejects references that would expose a directed offer to a wider audience", async () => {
+    const state = actionState();
+    let session = await open(state);
+    ({ session } = await apply(state, session, 1, "red", {
+      type: "make-offer",
+      targetPlayerId: "blue",
+      scope: { type: "direct", playerId: "blue" },
+      give: { ...EMPTY, lumber: 1 },
+      receive: { ...EMPTY, brick: 1 },
+    }));
+    const offerId = session.offers[0]!.id;
+
+    const publicCounter = await Effect.runPromise(
+      Effect.either(
+        applyNegotiationAction(state, session, 1, "blue", {
+          type: "counter-offer",
+          offerId,
+          scope: { type: "public" },
+          give: { ...EMPTY, brick: 1 },
+          receive: { ...EMPTY, lumber: 1 },
+        }),
+      ),
+    );
+    expect(Either.isLeft(publicCounter) && publicCounter.left.code).toBe("invalid-offer");
+
+    for (const action of [
+      {
+        type: "record-promise" as const,
+        beneficiaryPlayerId: "blue",
+        scope: { type: "public" as const },
+        text: "This public promise must not identify a private offer.",
+        relatedOfferId: offerId,
+      },
+      {
+        type: "record-promise" as const,
+        beneficiaryPlayerId: "white",
+        scope: { type: "direct" as const, playerId: "white" },
+        text: "This unrelated seat must not learn about the private offer.",
+        relatedOfferId: offerId,
+      },
+    ]) {
+      const promise = await Effect.runPromise(
+        Effect.either(applyNegotiationAction(state, session, 1, "red", action)),
+      );
+      expect(Either.isLeft(promise) && promise.left.code).toBe("invalid-promise");
+    }
+  });
+
   it("projects public and directed records without leaking private text or bundles", async () => {
     const state = actionState();
     let session = await open(state);
