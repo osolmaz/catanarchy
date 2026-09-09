@@ -107,7 +107,7 @@ Four seats receive models in round-robin order. The runner rejects unknown model
 
 Live model tests are opt-in and are not part of `npm run check`. A normal repository check uses fake agents and makes no network request.
 
-The first live validation is limited to one initial-placement match, 16 decisions, one attempt for each decision, 4,096 output tokens for each request, and no automatic paid retry. The output allowance gives reasoning models enough room to reach the required action. The run uses low model reasoning. Before the run, the operator must inspect model availability and pricing metadata. If exact prices are not available, the operator must keep the run below the project's $5 fallback ceiling through the fixed request count and conservative token limits. The test must stop if authentication, routing, or cost evidence differs from the approved configuration.
+The first live validation is limited to one initial-placement match, 16 decisions, one attempt for each decision, 4,096 output tokens for each request, and no automatic paid retry. The output allowance gives reasoning models enough room to reach the required action. The run uses low model reasoning. Before the run, the operator must inspect model availability and pricing metadata. The high estimate uses the highest listed pricing tier and charges the full input bound once as uncached input, once as cache reads, and once as cache writes. If exact prices are not available, the operator must keep the run below the project's $5 fallback ceiling through the fixed request count and conservative token limits. The test must stop if authentication, routing, or cost evidence differs from the approved configuration.
 
 ## Test plan
 
