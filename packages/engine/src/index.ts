@@ -1,3 +1,12 @@
+export {
+  longestRoadLength,
+  resolveLargestArmy,
+  resolveLongestRoad,
+  totalVictoryPoints,
+  victoryPointCardCount,
+  visibleVictoryPoints,
+} from "./awards.js";
+export type { AwardResolution } from "./awards.js";
 export { ReplayViolation, RuleViolation } from "./errors.js";
 export type { RuleViolationCode } from "./errors.js";
 export {

@@ -150,6 +150,18 @@ export interface PlayerState {
   readonly playedKnights: number;
 }
 
+export interface AwardState {
+  readonly longestRoadPlayerId: PlayerId | null;
+  readonly largestArmyPlayerId: PlayerId | null;
+}
+
+export interface GameResult {
+  readonly winnerId: PlayerId;
+  readonly turn: number;
+  readonly victoryPoints: number;
+  readonly revealedVictoryPointCards: number;
+}
+
 export type TurnContinuation =
   | { readonly tag: "turn.roll" }
   | { readonly tag: "turn.action"; readonly dice: readonly [number, number] }
@@ -213,6 +225,11 @@ export type GamePhase =
       readonly remaining: 1 | 2;
       readonly continuation: TurnContinuation;
       readonly developmentCardPlayed: true;
+    }
+  | {
+      readonly tag: "game.finished";
+      readonly playerIndex: number;
+      readonly turn: number;
     };
 
 export interface GameState {
@@ -227,6 +244,8 @@ export interface GameState {
   readonly players: ReadonlyArray<PlayerState>;
   readonly developmentDeck: ReadonlyArray<DevelopmentCard>;
   readonly developmentDiscard: ReadonlyArray<DevelopmentDiscardCard>;
+  readonly awards: AwardState;
+  readonly result: GameResult | null;
   readonly phase: GamePhase;
   readonly random: {
     readonly board: RandomState;
@@ -381,6 +400,29 @@ export interface MonopolyPlayedEvent {
   readonly transfers: ReadonlyArray<MonopolyTransfer>;
 }
 
+export interface LongestRoadChangedEvent {
+  readonly type: "longest-road.changed";
+  readonly previousPlayerId: PlayerId | null;
+  readonly playerId: PlayerId | null;
+  readonly length: number;
+}
+
+export interface LargestArmyChangedEvent {
+  readonly type: "largest-army.changed";
+  readonly previousPlayerId: PlayerId | null;
+  readonly playerId: PlayerId | null;
+  readonly size: number;
+}
+
+export interface GameWonEvent {
+  readonly type: "game.won";
+  readonly playerId: PlayerId;
+  readonly playerIndex: number;
+  readonly turn: number;
+  readonly victoryPoints: number;
+  readonly revealedVictoryPointCards: number;
+}
+
 export interface EventEnvelope<TEvent> {
   readonly schema: "catanarchy.game-event.v1";
   readonly matchId: string;
@@ -408,7 +450,10 @@ export type GameEvent =
   | EventEnvelope<RoadBuildingPlayedEvent>
   | EventEnvelope<FreeRoadPlacedEvent>
   | EventEnvelope<YearOfPlentyPlayedEvent>
-  | EventEnvelope<MonopolyPlayedEvent>;
+  | EventEnvelope<MonopolyPlayedEvent>
+  | EventEnvelope<LongestRoadChangedEvent>
+  | EventEnvelope<LargestArmyChangedEvent>
+  | EventEnvelope<GameWonEvent>;
 
 const EventEnvelopeSchemaFields = {
   schema: Schema.Literal("catanarchy.game-event.v1"),
@@ -574,6 +619,35 @@ export const GameEventEnvelopeSchema = Schema.Union(
       playerId: Schema.String,
       resource: ResourceSchema,
       transfers: Schema.Array(Schema.Struct({ playerId: Schema.String, amount: Schema.Number })),
+    }),
+  }),
+  Schema.Struct({
+    ...EventEnvelopeSchemaFields,
+    event: Schema.Struct({
+      type: Schema.Literal("longest-road.changed"),
+      previousPlayerId: Schema.NullOr(Schema.String),
+      playerId: Schema.NullOr(Schema.String),
+      length: Schema.Number,
+    }),
+  }),
+  Schema.Struct({
+    ...EventEnvelopeSchemaFields,
+    event: Schema.Struct({
+      type: Schema.Literal("largest-army.changed"),
+      previousPlayerId: Schema.NullOr(Schema.String),
+      playerId: Schema.NullOr(Schema.String),
+      size: Schema.Number,
+    }),
+  }),
+  Schema.Struct({
+    ...EventEnvelopeSchemaFields,
+    event: Schema.Struct({
+      type: Schema.Literal("game.won"),
+      playerId: Schema.String,
+      playerIndex: Schema.Number,
+      turn: Schema.Number,
+      victoryPoints: Schema.Number,
+      revealedVictoryPointCards: Schema.Number,
     }),
   }),
 );
@@ -799,6 +873,11 @@ export interface PlayerSummary {
   readonly settlements: number;
   readonly cities: number;
   readonly roads: number;
+  readonly longestRoadLength: number;
+  readonly playedKnights: number;
+  readonly hasLongestRoad: boolean;
+  readonly hasLargestArmy: boolean;
+  readonly visibleVictoryPoints: number;
 }
 
 export interface GameObservation {
@@ -812,8 +891,11 @@ export interface GameObservation {
   readonly activePlayerId: PlayerId | null;
   readonly players: ReadonlyArray<PlayerSummary>;
   readonly bank: ResourceCounts;
+  readonly awards: AwardState;
+  readonly result: GameResult | null;
   readonly ownResources: ResourceCounts | null;
   readonly ownDevelopmentCards: ReadonlyArray<OwnedDevelopmentCard> | null;
+  readonly ownVictoryPoints: number | null;
 }
 
 export type Viewer =

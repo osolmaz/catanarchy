@@ -141,6 +141,8 @@ describe("Pi action selection", () => {
     expect(prompt).not.toContain("developmentDeck");
     expect(prompt).not.toContain("random");
     expect(prompt).toContain('"ownDevelopmentCards": []');
+    expect(prompt).toContain('"ownVictoryPoints": 0');
+    expect(prompt).toContain('"longestRoadPlayerId": null');
     expect(prompt).toContain('"playerId": "red"');
     expect(prompt).toContain('"actionId": "settlement:');
     expect(prompt).toContain('"adjacentHexes": [');

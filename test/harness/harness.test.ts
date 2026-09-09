@@ -1,3 +1,4 @@
+import { replay } from "@catanarchy/engine";
 import {
   AgentDecisionError,
   createFirstLegalAgent,
@@ -6,7 +7,13 @@ import {
   type AgentDecisionRequest,
   type SeatAgent,
 } from "@catanarchy/harness";
-import type { Building, GameConfig, LegalAction, PlayerColor } from "@catanarchy/protocol";
+import type {
+  Building,
+  GameConfig,
+  LegalAction,
+  PlayerColor,
+  Resource,
+} from "@catanarchy/protocol";
 import { Effect } from "effect";
 import { describe, expect, it, vi } from "vitest";
 
@@ -28,6 +35,82 @@ const firstAction = (request: AgentDecisionRequest) => {
   const action = request.legalActions[0];
   if (action === undefined) throw new Error("Expected a legal action.");
   return action;
+};
+
+const actionOfType = (
+  request: AgentDecisionRequest,
+  type: LegalAction["command"]["command"]["type"],
+): LegalAction | undefined =>
+  request.legalActions.find(({ command }) => command.command.type === type);
+
+const setupSettlementScore = (request: AgentDecisionRequest, action: LegalAction): number => {
+  const payload = action.command.command;
+  if (payload.type !== "place-initial-settlement") return -1;
+  const vertex = request.observation.topology.vertices.find(({ id }) => id === payload.vertexId)!;
+  const numbers = new Map(
+    request.observation.layout.numbers.map(({ hexId, number }) => [hexId, number]),
+  );
+  return vertex.adjacentHexIds.reduce((score, hexId) => {
+    const number = numbers.get(hexId);
+    return score + (number === undefined ? 0 : 6 - Math.abs(7 - number));
+  }, 0);
+};
+
+const savesForSettlement = (request: AgentDecisionRequest): boolean => {
+  const resources = request.observation.ownResources!;
+  return (
+    resources.lumber >= 2 && resources.brick >= 2 && resources.wool >= 1 && resources.grain >= 1
+  );
+};
+
+const neededResources = (request: AgentDecisionRequest): ReadonlyArray<Resource> => {
+  const resources = request.observation.ownResources!;
+  const needs: Resource[] = [];
+  if (resources.grain < 2) needs.push("grain");
+  if (resources.ore < 3) needs.push("ore");
+  if (resources.wool < 1) needs.push("wool");
+  if (resources.lumber < 1) needs.push("lumber");
+  if (resources.brick < 1) needs.push("brick");
+  return needs;
+};
+
+const firstNeededTrade = (request: AgentDecisionRequest): LegalAction | undefined => {
+  for (const receive of neededResources(request)) {
+    const trade = request.legalActions.find(
+      ({ command }) =>
+        command.command.type === "maritime-trade" && command.command.receive === receive,
+    );
+    if (trade !== undefined) return trade;
+  }
+  return undefined;
+};
+
+const actionPhaseChoice = (request: AgentDecisionRequest): LegalAction => {
+  const city = actionOfType(request, "build-city");
+  if (city !== undefined) return city;
+  const settlement = actionOfType(request, "build-settlement");
+  if (settlement !== undefined) return settlement;
+  const road = actionOfType(request, "build-road");
+  if (road !== undefined && savesForSettlement(request)) return road;
+  const developmentCard = actionOfType(request, "buy-development-card");
+  if (developmentCard !== undefined) return developmentCard;
+  return firstNeededTrade(request) ?? actionOfType(request, "end-turn")!;
+};
+
+const scoringAction = (request: AgentDecisionRequest): LegalAction => {
+  if (request.observation.phase.tag === "setup.settlement") {
+    return request.legalActions.toSorted(
+      (left, right) => setupSettlementScore(request, right) - setupSettlementScore(request, left),
+    )[0]!;
+  }
+  if (request.observation.phase.tag === "turn.roll") {
+    return actionOfType(request, "roll-dice")!;
+  }
+  if (request.observation.phase.tag === "turn.action") return actionPhaseChoice(request);
+  return (
+    request.legalActions.find(({ command }) => !command.command.type.startsWith("play-")) ??
+    firstAction(request)
+  );
 };
 
 describe("agent harness", () => {
@@ -57,6 +140,23 @@ describe("agent harness", () => {
 
     expect(result.decisions).toHaveLength(20);
     expect(result.events.some(({ event }) => event.type === "robber.moved")).toBe(true);
+  });
+
+  it("completes and replays a full deterministic native game", async () => {
+    const result = await Effect.runPromise(
+      runGameSteps({
+        config: { ...config(4), seed: 42, matchId: "harness-complete-game" },
+        maxDecisions: 2_000,
+        createAgent: async () =>
+          inertAgent(async (request) => ({ actionId: scoringAction(request).id })),
+      }),
+    );
+
+    expect(result.decisions.length).toBeLessThan(2_000);
+    expect(result.state.phase.tag).toBe("game.finished");
+    expect(result.state.result).toMatchObject({ winnerId: "white", victoryPoints: 10 });
+    expect(result.events.at(-1)?.event.type).toBe("game.won");
+    expect(Effect.runSync(replay(result.events))).toEqual(result.state);
   });
 
   it("keeps private discard choices out of decision traces", async () => {
@@ -111,6 +211,7 @@ describe("agent harness", () => {
               expect(request.playerId).toBe(player.id);
               expect(request.observation.ownResources).not.toBeNull();
               expect(request.observation.ownDevelopmentCards).not.toBeNull();
+              expect(request.observation.ownVictoryPoints).not.toBeNull();
               expect("developmentDeck" in request.observation).toBe(false);
               return { actionId: firstAction(request).id };
             },

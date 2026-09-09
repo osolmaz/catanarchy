@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The agent harness lets scripted agents and Pi model agents use the same game protocol. It can run a fixed number of decisions through setup, normal turns, rolled-seven discards, robber moves, and development-card effects. It does not claim to play a complete Catan game until the engine implements awards and victory. Negotiation will use the same agent boundary in a later milestone.
+The agent harness lets scripted agents and Pi model agents use the same game protocol. It can run a bounded number of decisions through a complete native game, including awards and victory. Negotiation will use the same agent boundary in a later milestone.
 
 ## Module boundaries
 
@@ -124,6 +124,8 @@ Deterministic tests cover these cases:
 - round-robin model assignment
 - three-player and four-player setup completion
 - bounded normal-turn, discard, robber, and development-card decisions
+- a complete deterministic game with exact event replay
+- terminal games with no further agent request
 - stable event and trace order
 - Pi tool termination and usage extraction through a fake Pi session boundary
 

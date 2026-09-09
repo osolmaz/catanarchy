@@ -66,11 +66,16 @@ const turnPhaseText = (phase: TurnPhase, playerName: string): string => {
       return `${playerName}: move the robber (${phase.source})`;
     case "turn.free-road":
       return `${playerName}: place ${phase.remaining} free road${phase.remaining === 1 ? "" : "s"}`;
+    case "game.finished":
+      return `${playerName}: game complete`;
   }
 };
 
 const phaseText = (state: GameState): string => {
   const playerName = state.config.players[state.phase.playerIndex]?.name ?? "Player";
+  if (state.result !== null) {
+    return `${playerName} won with ${state.result.victoryPoints} victory points`;
+  }
   return state.phase.tag.startsWith("setup.")
     ? setupPhaseText(state.phase as SetupPhase, playerName)
     : turnPhaseText(state.phase as TurnPhase, playerName);
@@ -201,8 +206,7 @@ export const App = () => {
           <p className="eyebrow">Catanarchy simulator</p>
           <h1>Play a deterministic game</h1>
           <p className="subtitle">
-            Place pieces, roll for production, build, use maritime trade, and inspect the event
-            history.
+            Place pieces, roll for production, build, earn awards, and inspect the event history.
           </p>
         </div>
         <form
@@ -306,9 +310,13 @@ export const App = () => {
                   <div>
                     <strong>{player.name}</strong>
                     <small>
-                      {player.settlements} settlements · {player.cities} cities · {player.roads}{" "}
-                      roads · {player.resourceCount} resources · {player.developmentCardCount}{" "}
-                      development cards
+                      {player.visibleVictoryPoints} visible VP · {player.settlements} settlements ·{" "}
+                      {player.cities} cities · {player.roads} roads · route{" "}
+                      {player.longestRoadLength} · {player.playedKnights} knights ·{" "}
+                      {player.resourceCount} resources · {player.developmentCardCount} development
+                      cards
+                      {player.hasLongestRoad ? " · Longest Road" : ""}
+                      {player.hasLargestArmy ? " · Largest Army" : ""}
                     </small>
                   </div>
                 </article>
@@ -316,6 +324,8 @@ export const App = () => {
             </div>
             <h3>Active hand</h3>
             <p className="resource-line">{resourceText(observation.ownResources)}</p>
+            <h3>Total victory points</h3>
+            <p className="resource-line">{observation.ownVictoryPoints ?? "Hidden"}</p>
             <h3>Development cards</h3>
             <p className="resource-line">
               {observation.ownDevelopmentCards === null ||

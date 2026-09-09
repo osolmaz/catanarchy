@@ -6,7 +6,7 @@ Catanarchy will provide a deterministic Catan simulator and a multi-agent negoti
 
 The first rules target is the current three-player and four-player CATAN base game. Expansions and house rules remain outside the first release.
 
-The current implementation covers the standard board, complete initial placement, production, paid building, maritime trade, rolled-seven discards, robber theft, action development cards, a trusted local web client, and the Pi agent harness. Awards, victory, negotiation, and adapters remain planned work.
+The current implementation covers the regular board and native base-game rules from setup through victory, a trusted local web client, and the Pi agent harness. Domestic trade, negotiation, remote viewing, and adapters remain planned work.
 
 ## Product boundaries
 
@@ -234,13 +234,15 @@ Conformance tests cover the robber and development-card rules in the Milestone 3
 
 ### Milestone 4: awards and victory
 
-- [ ] Implement exact longest-route search for branches and cycles.
-- [ ] Implement interruption and tie behavior.
-- [ ] Implement Largest Army transfer.
-- [ ] Calculate public and hidden victory points.
-- [ ] End a match only when the active player meets the target.
+The [Milestone 4 engine contract](ENGINE.md#milestone-4-contract) defines exact road search, award ties, visible and hidden scoring, derived events, terminal state, privacy, and tests before implementation.
 
-Completion requires generated graph cases plus full-game tests with deterministic scripted agents.
+- [x] Implement exact longest-route search for branches and cycles.
+- [x] Implement interruption and tie behavior.
+- [x] Implement Largest Army transfer.
+- [x] Calculate public and hidden victory points.
+- [x] End a match only when the active player meets the target.
+
+Generated graph cases and a full deterministic harness game test verify completion.
 
 ### Milestone 5: web viewer
 

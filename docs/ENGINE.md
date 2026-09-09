@@ -2,9 +2,9 @@
 
 ## Status
 
-The standard board, setup, production, main action phase, rolled-seven discards, robber theft, and action development cards are implemented. The engine uses deterministic random streams, finite supplies, typed effect phases, exhaustive legal actions, seat-scoped observations, and replayable events. Victory Point cards stay hidden for the awards and victory milestone.
+The regular base-game engine is complete through victory. It supports setup, production, building, maritime trade, discards, robber theft, development cards, Longest Road, Largest Army, visible and hidden scoring, and a terminal winner state. The engine uses deterministic random streams, finite supplies, typed effect phases, exhaustive legal actions, seat-scoped observations, and replayable events.
 
-The test suite checks topology, 1,000 generated layouts, deterministic random streams, setup and normal-turn rules, robber and development-card effects, replay, invariants, failures, legal actions, and private-state boundaries. Colonist-specific evidence remains in the [Colonist compatibility profile](COLONIST.md).
+The test suite checks topology, 1,000 generated layouts, deterministic random streams, setup and normal-turn rules, robber and development-card effects, generated road graphs, awards, scoring, complete-game replay, invariants, failures, legal actions, and private-state boundaries. Colonist-specific evidence remains in the [Colonist compatibility profile](COLONIST.md).
 
 ## Scope
 
@@ -166,6 +166,46 @@ A player observation adds that player's development-card identities and purchase
 ### Milestone 3 tests
 
 Tests cover discard thresholds, odd totals, queue order, card-by-card choices, robber destination and victim rules, empty victims, weighted deterministic theft, random-cursor use, nested Knight movement, all action-card timing rules and effects, finite bank and road supply, replay, legal-action soundness, invariants, viewer controls, and seat isolation.
+
+## Milestone 4 contract
+
+Milestone 4 adds the two base-game awards, complete victory-point accounting, and a terminal game state. It follows the [2025 CATAN rulebook](https://www.catan.com/sites/default/files/2025-03/CN3081%20CATAN%E2%80%93The%20Game%20Rulebook%20secure%20%281%29.pdf) and the [official base-game FAQ](https://www.catan.com/faq/basegame). The official 2025 edition calls the road award “Longest Route.” The protocol uses `longest-road` because this engine currently has roads only and Colonist uses that familiar base-game name.
+
+### Longest Road
+
+A player's road length is the longest edge-simple trail in that player's road graph. A road edge can contribute at most once to one candidate trail. A trail can pass through the player's own settlement or city. It stops when it enters an intersection occupied by an opponent's settlement or city, but the road that enters that intersection still counts.
+
+The exact search assigns one bit to each of the player's roads and explores every unused incident road from each possible starting edge. Its memoization key contains the current vertex and used-road bit mask. This handles lines, forks, cycles, a branch attached to a cycle, and routes cut by an opponent building without geometric heuristics.
+
+The award requires a length of at least 5. The current holder keeps it while tied for the greatest qualifying length. Otherwise, one unique player with the greatest qualifying length receives it. If several non-holders tie for the greatest qualifying length after the holder loses it, no player holds the award until the tie is broken.
+
+### Largest Army
+
+A played Knight remains counted face up for its owner. The first player with 3 played Knights receives Largest Army. The current holder keeps it while tied for the greatest qualifying army. Another player receives it only after their played-Knight count becomes strictly greater.
+
+### Scores and hidden cards
+
+A settlement is worth 1 victory point, a city is worth 2, and each held award is worth 2. Each Victory Point development card is worth 1 hidden point.
+
+Player summaries expose visible points, road length, played Knights, and award ownership. A seat-authorized observation also exposes that seat's total points, including hidden Victory Point cards. Other players' hidden cards remain represented only by their development-card count.
+
+When the active player reaches at least 10 points, all of that player's Victory Point cards are revealed and the game ends. This check runs after each accepted command and after an `end-turn` transition, so a player who gained points outside their own turn wins only when their own turn starts and they still have the required score. Victory Point cards bought on the winning turn count immediately and do not consume the one-action-card allowance.
+
+### Derived events and terminal state
+
+Accepted command batches can append these replayable events:
+
+- `longest-road.changed`
+- `largest-army.changed`
+- `game.won`
+
+The command's normal event is applied first. Award changes are then calculated from the resulting position and recorded before the victory check. Award ownership stays in authoritative state because tie resolution depends on the previous holder. Road lengths and scores are derived from the board, cards, and award ownership.
+
+A `game.won` event records the winner, turn, final score, and number of revealed Victory Point cards. It sets `result` and enters `game.finished`. A finished game has no active player and no legal actions. Replay recalculates every derived event from the command that caused it; it does not trust an award or winner claim in the input log.
+
+### Milestone 4 tests
+
+Focused graph fixtures cover lines, forks, cycles, cycle branches, edge reuse prevention, and opponent-building interruptions. State tests cover award thresholds, retention, transfer, tied vacancies, visible and hidden scores, same-turn Victory Point purchases, inactive-player delays, event ordering, terminal legal actions, replay, observations, viewer output, and invariant failures. A bounded deterministic harness run must also complete a native game without manual state changes.
 
 ## Design rules
 
