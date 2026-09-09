@@ -82,6 +82,11 @@ export class HarnessError extends Data.TaggedError("HarnessError")<{
   readonly message: string;
 }> {}
 
+export class AgentDecisionError extends Data.TaggedError("AgentDecisionError")<{
+  readonly message: string;
+  readonly usage?: AgentUsage;
+}> {}
+
 const disposeAgents = async (agents: ReadonlyMap<string, SeatAgent>): Promise<void> => {
   await Promise.allSettled([...agents.values()].map(async (agent) => agent.dispose()));
 };
@@ -174,6 +179,19 @@ const selectedTrace = (
   ...(decision.selectionMode === undefined ? {} : { selectionMode: decision.selectionMode }),
 });
 
+const failedAttemptTrace = (
+  agent: SeatAgent,
+  request: Omit<AgentDecisionRequest, "signal">,
+  attempt: number,
+  elapsedMs: number,
+  failure: DecisionFailure,
+  usage?: AgentUsage,
+): DecisionTrace => ({
+  ...baseTrace(agent, request, attempt, "failed", elapsedMs),
+  ...(usage === undefined ? {} : { usage }),
+  failure,
+});
+
 const invalidActionTrace = (
   agent: SeatAgent,
   request: Omit<AgentDecisionRequest, "signal">,
@@ -211,10 +229,16 @@ const chooseAction = async (
       }
       traces.push(invalidActionTrace(agent, request, decision, attempt, elapsedMs));
     } catch (error) {
-      traces.push({
-        ...baseTrace(agent, request, attempt, "failed", performance.now() - startedAt),
-        failure: failureCategory(error),
-      });
+      traces.push(
+        failedAttemptTrace(
+          agent,
+          request,
+          attempt,
+          performance.now() - startedAt,
+          failureCategory(error),
+          error instanceof AgentDecisionError ? error.usage : undefined,
+        ),
+      );
     }
   }
 

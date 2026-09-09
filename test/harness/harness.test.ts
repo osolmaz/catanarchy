@@ -1,4 +1,5 @@
 import {
+  AgentDecisionError,
   createFirstLegalAgent,
   runInitialPlacement,
   type AgentDecisionRequest,
@@ -116,6 +117,32 @@ describe("initial-placement harness", () => {
     ]);
     expect(result.decisions[0]?.failure).toBe("invalid-action");
     expect(result.decisions[1]?.actionId).toMatch(/^settlement:/);
+  });
+
+  it("records usage from a completed model decision that has no valid selection", async () => {
+    const usage = {
+      input: 100,
+      output: 50,
+      cacheRead: 10,
+      cacheWrite: 0,
+      total: 160,
+      cost: 0.01,
+    };
+    const result = await Effect.runPromise(
+      runInitialPlacement({
+        config: config(3),
+        createAgent: async () =>
+          inertAgent(async () => {
+            throw new AgentDecisionError({ message: "No selection.", usage });
+          }),
+      }),
+    );
+
+    expect(result.decisions[0]).toMatchObject({
+      outcome: "failed",
+      failure: "agent-error",
+      usage,
+    });
   });
 
   it("retries a failed decision only up to the configured limit", async () => {
