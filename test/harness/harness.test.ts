@@ -223,8 +223,10 @@ describe("initial-placement harness", () => {
     expect(result.decisions[1]).toMatchObject({ outcome: "fallback" });
   });
 
-  it("quarantines an agent when its cancelled decision does not settle", async () => {
-    const cancel = vi.fn<SeatAgent["cancel"]>(async () => {});
+  it("quarantines an agent when cancellation rejects and its decision does not settle", async () => {
+    const cancel = vi.fn<SeatAgent["cancel"]>(async () => {
+      throw new Error("cancel failed");
+    });
     const result = await Effect.runPromise(
       runInitialPlacement({
         config: config(3),
@@ -296,7 +298,17 @@ describe("initial-placement harness", () => {
           createAgent: async () => createFirstLegalAgent(),
         }),
       ),
-    ).rejects.toThrow("decisionTimeoutMs must be a positive integer.");
+    ).rejects.toThrow("decisionTimeoutMs must be a positive integer");
+
+    await expect(
+      Effect.runPromise(
+        runInitialPlacement({
+          config: config(3),
+          decisionTimeoutMs: 0x8000_0000,
+          createAgent: async () => createFirstLegalAgent(),
+        }),
+      ),
+    ).rejects.toThrow("decisionTimeoutMs must be a positive integer");
 
     await expect(
       Effect.runPromise(
@@ -306,7 +318,7 @@ describe("initial-placement harness", () => {
           createAgent: async () => createFirstLegalAgent(),
         }),
       ),
-    ).rejects.toThrow("maxAttempts must be a positive integer.");
+    ).rejects.toThrow("maxAttempts must be a positive integer");
   });
 
   it("rejects a scripted decision with no legal actions", async () => {

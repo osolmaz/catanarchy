@@ -29,7 +29,7 @@ The harness creates one agent instance for each player and keeps it for the matc
 
 ## Failure behavior
 
-Each decision has a deadline and a bounded attempt count. An invalid action ID, a model failure, or a deadline expiry consumes one attempt. The harness cancels an expired attempt before it starts another attempt. Cancellation and the original decision get a one-second grace period to settle. If either remains pending, the harness quarantines that seat agent and uses deterministic fallbacks for its remaining decisions. Agent disposal also has a one-second bound.
+Each decision has a deadline and a bounded attempt count. An invalid action ID, a model failure, or a deadline expiry consumes one attempt. The harness cancels an expired attempt before it starts another attempt. Cancellation and the original decision get a one-second grace period to settle. If cancellation fails or either operation remains pending, the harness quarantines that seat agent and uses deterministic fallbacks for its remaining decisions. Agent disposal also has a one-second bound.
 
 After all attempts fail, the harness selects the first legal action. The engine's legal-action order and the match seed make this fallback deterministic. The trace identifies the fallback and its cause. A decision with no legal actions is a harness error because it means that the engine and scheduler disagree.
 

@@ -93,20 +93,19 @@ export class AgentDecisionError extends Data.TaggedError("AgentDecisionError")<{
 
 const CANCELLATION_GRACE_MS = 1_000;
 const DISPOSAL_GRACE_MS = 1_000;
+const MAX_TIMER_DELAY_MS = 0x7fff_ffff;
 
-const settlesWithin = async (operation: Promise<void>, timeoutMs: number): Promise<boolean> => {
+const resultWithin = async <T>(
+  operation: Promise<T>,
+  timeoutMs: number,
+  timeoutValue: T,
+): Promise<T> => {
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<false>((resolve) => {
-    timer = setTimeout(() => resolve(false), timeoutMs);
+  const timeout = new Promise<T>((resolve) => {
+    timer = setTimeout(() => resolve(timeoutValue), timeoutMs);
   });
   try {
-    return await Promise.race([
-      operation.then(
-        () => true as const,
-        () => true as const,
-      ),
-      timeout,
-    ]);
+    return await Promise.race([operation, timeout]);
   } finally {
     if (timer !== undefined) clearTimeout(timer);
   }
@@ -115,9 +114,15 @@ const settlesWithin = async (operation: Promise<void>, timeoutMs: number): Promi
 const disposeAgents = async (agents: ReadonlyMap<string, SeatAgent>): Promise<void> => {
   await Promise.all(
     [...agents.values()].map(async (agent) =>
-      settlesWithin(
-        Promise.resolve().then(async () => agent.dispose()),
+      resultWithin(
+        Promise.resolve()
+          .then(async () => agent.dispose())
+          .then(
+            () => true,
+            () => true,
+          ),
         DISPOSAL_GRACE_MS,
+        false,
       ),
     ),
   );
@@ -139,9 +144,11 @@ const createAgents = async (
   }
 };
 
-const positiveInteger = (value: number, name: string): void => {
-  if (!Number.isSafeInteger(value) || value < 1) {
-    throw new HarnessError({ message: `${name} must be a positive integer.` });
+const positiveInteger = (value: number, name: string, maximum = Number.MAX_SAFE_INTEGER): void => {
+  if (!Number.isSafeInteger(value) || value < 1 || value > maximum) {
+    throw new HarnessError({
+      message: `${name} must be a positive integer no greater than ${maximum}.`,
+    });
   }
 };
 
@@ -169,13 +176,18 @@ const timeoutDecision = async (
   } catch (error) {
     if (controller.signal.aborted) {
       const cancellation = Promise.all([
-        Promise.resolve().then(async () => agent.cancel()),
+        Promise.resolve()
+          .then(async () => agent.cancel())
+          .then(
+            () => true,
+            () => false,
+          ),
         decision.then(
-          () => undefined,
-          () => undefined,
+          () => true,
+          () => true,
         ),
-      ]).then(() => undefined);
-      const cancelled = await settlesWithin(cancellation, CANCELLATION_GRACE_MS);
+      ]).then(([cancelled]) => cancelled);
+      const cancelled = await resultWithin(cancellation, CANCELLATION_GRACE_MS, false);
       if (!cancelled) throw new CancellationTimeout("Agent cancellation did not settle.");
     }
     throw error;
@@ -311,7 +323,7 @@ const runWithAgents = async (
 ): Promise<InitialPlacementResult> => {
   const timeoutMs = options.decisionTimeoutMs ?? 90_000;
   const maxAttempts = options.maxAttempts ?? 1;
-  positiveInteger(timeoutMs, "decisionTimeoutMs");
+  positiveInteger(timeoutMs, "decisionTimeoutMs", MAX_TIMER_DELAY_MS);
   positiveInteger(maxAttempts, "maxAttempts");
 
   const created = await Effect.runPromise(createGame(options.config));
