@@ -222,11 +222,11 @@ export const App = () => {
             <ol className="events">
               {game.events.map((event) => (
                 <li
-                  key={`${event.sequence}:${event.type}`}
+                  key={`${event.sequence}:${event.event.type}`}
                   className={event.sequence <= state.sequence ? "visible" : "future"}
                 >
                   <code>{event.sequence}</code>
-                  <span>{event.type}</span>
+                  <span>{event.event.type}</span>
                 </li>
               ))}
             </ol>

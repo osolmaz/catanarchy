@@ -179,83 +179,90 @@ export interface RandomState {
 }
 
 export interface GameCreatedEvent {
-  readonly sequence: 0;
   readonly type: "game.created";
-  readonly commandId: CommandId;
   readonly state: GameState;
 }
 
 export interface SettlementPlacedEvent {
-  readonly sequence: number;
   readonly type: "settlement.placed";
-  readonly commandId: CommandId;
   readonly playerId: PlayerId;
   readonly vertexId: VertexId;
 }
 
 export interface InitialResourcesGrantedEvent {
-  readonly sequence: number;
   readonly type: "initial-resources.granted";
-  readonly commandId: CommandId;
   readonly playerId: PlayerId;
   readonly resources: ResourceCounts;
 }
 
 export interface RoadPlacedEvent {
-  readonly sequence: number;
   readonly type: "road.placed";
-  readonly commandId: CommandId;
   readonly playerId: PlayerId;
   readonly edgeId: EdgeId;
 }
 
 export interface InitialPlacementCompletedEvent {
-  readonly sequence: number;
   readonly type: "initial-placement.completed";
+}
+
+export interface EventEnvelope<TEvent> {
+  readonly schema: "catanarchy.game-event.v1";
+  readonly matchId: string;
+  readonly sequence: number;
   readonly commandId: CommandId;
+  readonly event: TEvent;
 }
 
 export type GameEvent =
-  | GameCreatedEvent
-  | SettlementPlacedEvent
-  | InitialResourcesGrantedEvent
-  | RoadPlacedEvent
-  | InitialPlacementCompletedEvent;
+  | EventEnvelope<GameCreatedEvent>
+  | EventEnvelope<SettlementPlacedEvent>
+  | EventEnvelope<InitialResourcesGrantedEvent>
+  | EventEnvelope<RoadPlacedEvent>
+  | EventEnvelope<InitialPlacementCompletedEvent>;
 
-interface CommandBase {
-  readonly commandId: CommandId;
-  readonly playerId: PlayerId;
-  readonly expectedSequence: number;
-}
-
-export interface PlaceInitialSettlementCommand extends CommandBase {
+export interface PlaceInitialSettlementCommand {
   readonly type: "place-initial-settlement";
   readonly vertexId: VertexId;
 }
 
-export interface PlaceInitialRoadCommand extends CommandBase {
+export interface PlaceInitialRoadCommand {
   readonly type: "place-initial-road";
   readonly edgeId: EdgeId;
 }
 
-export type GameCommand = PlaceInitialSettlementCommand | PlaceInitialRoadCommand;
+export type GameCommandPayload = PlaceInitialSettlementCommand | PlaceInitialRoadCommand;
 
-const CommandBaseSchemaFields = {
-  commandId: Schema.String,
-  playerId: Schema.String,
+export interface GameCommand {
+  readonly schema: "catanarchy.command.v1";
+  readonly matchId: string;
+  readonly commandId: CommandId;
+  readonly playerId: PlayerId;
+  readonly expectedSequence: number;
+  readonly command: GameCommandPayload;
+}
+
+const CommandEnvelopeSchemaFields = {
+  schema: Schema.Literal("catanarchy.command.v1"),
+  matchId: Schema.String.pipe(Schema.minLength(1)),
+  commandId: Schema.String.pipe(Schema.minLength(1)),
+  playerId: Schema.String.pipe(Schema.minLength(1)),
   expectedSequence: Schema.Number,
 };
 
 export const GameCommandSchema = Schema.Union(
   Schema.Struct({
-    ...CommandBaseSchemaFields,
-    type: Schema.Literal("place-initial-settlement"),
-    vertexId: Schema.String,
+    ...CommandEnvelopeSchemaFields,
+    command: Schema.Struct({
+      type: Schema.Literal("place-initial-settlement"),
+      vertexId: Schema.String,
+    }),
   }),
   Schema.Struct({
-    ...CommandBaseSchemaFields,
-    type: Schema.Literal("place-initial-road"),
-    edgeId: Schema.String,
+    ...CommandEnvelopeSchemaFields,
+    command: Schema.Struct({
+      type: Schema.Literal("place-initial-road"),
+      edgeId: Schema.String,
+    }),
   }),
 );
 export const decodeGameCommand = Schema.decodeUnknown(GameCommandSchema);

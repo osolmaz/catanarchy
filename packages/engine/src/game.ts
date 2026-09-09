@@ -1,5 +1,6 @@
 import type {
   CommandResult,
+  EventEnvelope,
   GameCommand,
   GameConfig,
   GameCreatedEvent,
@@ -99,11 +100,12 @@ export const createGame = (input: GameConfig): Effect.Effect<CommandResult, Rule
         developmentDeck: materials.developmentDeckRandom,
       },
     };
-    const event: GameCreatedEvent = {
+    const event: EventEnvelope<GameCreatedEvent> = {
+      schema: "catanarchy.game-event.v1",
+      matchId: config.matchId,
       sequence: 0,
-      type: "game.created",
       commandId: `create:${config.matchId}`,
-      state,
+      event: { type: "game.created", state },
     };
     return { state, events: [event] };
   });
@@ -150,13 +152,17 @@ const nextPhaseAfterRoad = (state: GameState): SetupPhase => {
     : { tag: "setup.settlement", direction, playerIndex: playerIndex - 1 };
 };
 
-const applySettlement = (state: GameState, event: SettlementPlacedEvent): GameState => {
+const applySettlement = (
+  state: GameState,
+  sequence: number,
+  event: SettlementPlacedEvent,
+): GameState => {
   if (state.phase.tag !== "setup.settlement") {
     return state;
   }
   return {
     ...state,
-    sequence: event.sequence,
+    sequence,
     occupancy: {
       ...state.occupancy,
       buildings: [
@@ -175,17 +181,18 @@ const applySettlement = (state: GameState, event: SettlementPlacedEvent): GameSt
 
 const applyInitialResources = (
   state: GameState,
+  sequence: number,
   event: InitialResourcesGrantedEvent,
 ): GameState => ({
   ...state,
-  sequence: event.sequence,
+  sequence,
   bank: subtractResources(state.bank, event.resources),
   players: updatePlayerResources(state.players, event.playerId, event.resources),
 });
 
-const applyRoad = (state: GameState, event: RoadPlacedEvent): GameState => ({
+const applyRoad = (state: GameState, sequence: number, event: RoadPlacedEvent): GameState => ({
   ...state,
-  sequence: event.sequence,
+  sequence,
   occupancy: {
     ...state.occupancy,
     roads: [...state.occupancy.roads, { edgeId: event.edgeId, playerId: event.playerId }],
@@ -193,25 +200,29 @@ const applyRoad = (state: GameState, event: RoadPlacedEvent): GameState => ({
   phase: nextPhaseAfterRoad(state),
 });
 
-const applyCompleted = (state: GameState, event: InitialPlacementCompletedEvent): GameState => ({
+const applyCompleted = (
+  state: GameState,
+  sequence: number,
+  _event: InitialPlacementCompletedEvent,
+): GameState => ({
   ...state,
-  sequence: event.sequence,
+  sequence,
   phase: { tag: "turn.roll", playerIndex: 0, turn: 1 },
 });
 
-export const applyEvent = (
-  state: GameState,
-  event: Exclude<GameEvent, GameCreatedEvent>,
-): GameState => {
+export const applyEvent = (state: GameState, envelope: GameEvent): GameState => {
+  const { event, sequence } = envelope;
   switch (event.type) {
+    case "game.created":
+      return state;
     case "settlement.placed":
-      return applySettlement(state, event);
+      return applySettlement(state, sequence, event);
     case "initial-resources.granted":
-      return applyInitialResources(state, event);
+      return applyInitialResources(state, sequence, event);
     case "road.placed":
-      return applyRoad(state, event);
+      return applyRoad(state, sequence, event);
     case "initial-placement.completed":
-      return applyCompleted(state, event);
+      return applyCompleted(state, sequence, event);
   }
 };
 
@@ -224,6 +235,9 @@ const checkCommonCommand = (
   state: GameState,
   command: GameCommand,
 ): Effect.Effect<void, RuleViolation> => {
+  if (command.matchId !== state.matchId) {
+    return failure("wrong-match", "The command belongs to a different match.");
+  }
   if (command.expectedSequence !== state.sequence) {
     return failure("stale-command", "The command does not use the current event sequence.");
   }
@@ -259,32 +273,43 @@ const startingResources = (state: GameState, vertexId: string): ResourceCounts =
   return resources;
 };
 
+const eventEnvelope = <TEvent>(
+  state: GameState,
+  command: GameCommand,
+  sequence: number,
+  event: TEvent,
+): EventEnvelope<TEvent> => ({
+  schema: "catanarchy.game-event.v1",
+  matchId: state.matchId,
+  sequence,
+  commandId: command.commandId,
+  event,
+});
+
 const settlementEvents = (
   state: GameState,
+  envelope: GameCommand,
   command: PlaceInitialSettlementCommand,
 ): readonly [GameEvent, ...ReadonlyArray<GameEvent>] => {
-  const placed: SettlementPlacedEvent = {
-    sequence: state.sequence + 1,
-    type: "settlement.placed",
-    commandId: command.commandId,
-    playerId: command.playerId,
+  const placed = eventEnvelope(state, envelope, state.sequence + 1, {
+    type: "settlement.placed" as const,
+    playerId: envelope.playerId,
     vertexId: command.vertexId,
-  };
+  });
   if (state.phase.tag !== "setup.settlement" || state.phase.direction === "forward") {
     return [placed];
   }
-  const granted: InitialResourcesGrantedEvent = {
-    sequence: state.sequence + 2,
-    type: "initial-resources.granted",
-    commandId: command.commandId,
-    playerId: command.playerId,
+  const granted = eventEnvelope(state, envelope, state.sequence + 2, {
+    type: "initial-resources.granted" as const,
+    playerId: envelope.playerId,
     resources: startingResources(state, command.vertexId),
-  };
+  });
   return [placed, granted];
 };
 
 const decideSettlement = (
   state: GameState,
+  envelope: GameCommand,
   command: PlaceInitialSettlementCommand,
 ): Effect.Effect<readonly [GameEvent, ...ReadonlyArray<GameEvent>], RuleViolation> => {
   if (state.phase.tag !== "setup.settlement") {
@@ -300,11 +325,12 @@ const decideSettlement = (
   if (!isSettlementLocationLegal(state, command.vertexId)) {
     return failure("settlement-too-close", "A settlement is too close to another settlement.");
   }
-  return Effect.succeed(settlementEvents(state, command));
+  return Effect.succeed(settlementEvents(state, envelope, command));
 };
 
 const decideRoad = (
   state: GameState,
+  envelope: GameCommand,
   command: PlaceInitialRoadCommand,
 ): Effect.Effect<readonly [GameEvent, ...ReadonlyArray<GameEvent>], RuleViolation> => {
   if (state.phase.tag !== "setup.road") {
@@ -320,21 +346,17 @@ const decideRoad = (
   if (!edge.vertexIds.includes(state.phase.settlementId)) {
     return failure("road-not-adjacent", "The initial road must touch the settlement just placed.");
   }
-  const placed: RoadPlacedEvent = {
-    sequence: state.sequence + 1,
-    type: "road.placed",
-    commandId: command.commandId,
-    playerId: command.playerId,
+  const placed = eventEnvelope(state, envelope, state.sequence + 1, {
+    type: "road.placed" as const,
+    playerId: envelope.playerId,
     edgeId: command.edgeId,
-  };
+  });
   if (state.phase.direction !== "reverse" || state.phase.playerIndex !== 0) {
     return Effect.succeed([placed]);
   }
-  const completed: InitialPlacementCompletedEvent = {
-    sequence: state.sequence + 2,
-    type: "initial-placement.completed",
-    commandId: command.commandId,
-  };
+  const completed = eventEnvelope(state, envelope, state.sequence + 2, {
+    type: "initial-placement.completed" as const,
+  });
   return Effect.succeed([placed, completed]);
 };
 
@@ -353,9 +375,9 @@ export const decide = (
       ),
     )) as GameCommand;
     yield* checkCommonCommand(state, command);
-    return yield* command.type === "place-initial-settlement"
-      ? decideSettlement(state, command)
-      : decideRoad(state, command);
+    return yield* command.command.type === "place-initial-settlement"
+      ? decideSettlement(state, command, command.command)
+      : decideRoad(state, command, command.command);
   });
 
 export const handleCommand = (
@@ -364,10 +386,7 @@ export const handleCommand = (
 ): Effect.Effect<CommandResult, RuleViolation> =>
   Effect.map(decide(state, command), (events) => ({
     events,
-    state: events.reduce(
-      (current, event) => applyEvent(current, event as Exclude<GameEvent, GameCreatedEvent>),
-      state,
-    ),
+    state: events.reduce((current, event) => applyEvent(current, event), state),
   }));
 
 const legalSettlementActions = (state: GameState, playerId: PlayerId): ReadonlyArray<LegalAction> =>
@@ -376,11 +395,12 @@ const legalSettlementActions = (state: GameState, playerId: PlayerId): ReadonlyA
     .map((vertex) => ({
       id: `settlement:${vertex.id}`,
       command: {
-        type: "place-initial-settlement",
+        schema: "catanarchy.command.v1",
+        matchId: state.matchId,
         commandId: `action:${state.sequence + 1}:${vertex.id}`,
         playerId,
         expectedSequence: state.sequence,
-        vertexId: vertex.id,
+        command: { type: "place-initial-settlement", vertexId: vertex.id },
       },
     }));
 
@@ -398,11 +418,12 @@ const legalRoadActions = (state: GameState, playerId: PlayerId): ReadonlyArray<L
     .map((edge) => ({
       id: `road:${edge.id}`,
       command: {
-        type: "place-initial-road",
+        schema: "catanarchy.command.v1",
+        matchId: state.matchId,
         commandId: `action:${state.sequence + 1}:${edge.id}`,
         playerId,
         expectedSequence: state.sequence,
-        edgeId: edge.id,
+        command: { type: "place-initial-road", edgeId: edge.id },
       },
     }));
 };
@@ -452,20 +473,34 @@ export const observe = (state: GameState, viewer: Viewer = { type: "public" }): 
   };
 };
 
+const isInitialEvent = (event: GameEvent | undefined): event is EventEnvelope<GameCreatedEvent> =>
+  event?.schema === "catanarchy.game-event.v1" &&
+  event.sequence === 0 &&
+  event.event.type === "game.created";
+
+const hasValidNextMetadata = (event: GameEvent, state: GameState): boolean =>
+  event.schema === "catanarchy.game-event.v1" &&
+  event.matchId === state.matchId &&
+  event.sequence === state.sequence + 1 &&
+  event.event.type !== "game.created";
+
 export const replay = (
   events: ReadonlyArray<GameEvent>,
 ): Effect.Effect<GameState, ReplayViolation> => {
   const first = events[0];
-  if (first?.type !== "game.created" || first.sequence !== 0) {
+  if (!isInitialEvent(first)) {
     return Effect.fail(
       new ReplayViolation({ message: "A replay must start with game.created at sequence zero." }),
     );
   }
-  let state = first.state;
+  let state = first.event.state;
+  if (state.sequence !== 0 || first.matchId !== state.matchId) {
+    return Effect.fail(new ReplayViolation({ message: "The initial event has invalid metadata." }));
+  }
   for (const event of events.slice(1)) {
-    if (event.sequence !== state.sequence + 1 || event.type === "game.created") {
+    if (!hasValidNextMetadata(event, state)) {
       return Effect.fail(
-        new ReplayViolation({ message: "Replay event sequences must be contiguous." }),
+        new ReplayViolation({ message: "Replay event metadata must be valid and contiguous." }),
       );
     }
     state = applyEvent(state, event);

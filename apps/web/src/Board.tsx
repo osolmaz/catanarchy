@@ -62,10 +62,10 @@ export const Board = ({ observation, legalActions, onAction, interactive }: Boar
   const legalByVertex = new Map<VertexId, LegalAction>();
   const legalByEdge = new Map<EdgeId, LegalAction>();
   for (const action of legalActions) {
-    if (action.command.type === "place-initial-settlement") {
-      legalByVertex.set(action.command.vertexId, action);
+    if (action.command.command.type === "place-initial-settlement") {
+      legalByVertex.set(action.command.command.vertexId, action);
     } else {
-      legalByEdge.set(action.command.edgeId, action);
+      legalByEdge.set(action.command.command.edgeId, action);
     }
   }
 

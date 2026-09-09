@@ -387,9 +387,9 @@ interface CommandEnvelope<TCommand> {
 }
 ```
 
-Milestone 1 adds `place-initial-settlement` and `place-initial-road`. IDs use Effect Schema brands at TypeScript boundaries and validated strings in serialized data.
+Milestone 1 adds `place-initial-settlement` and `place-initial-road`. Effect Schema decodes the version, match identity, actor, sequence, and tagged payload before command dispatch.
 
-The match runtime serializes commands for one match. `expectedSequence` rejects stale work. The event store keeps a command-ID index so a retry can return its original result without applying the command twice.
+`matchId` rejects cross-match routing mistakes, and `expectedSequence` rejects stale work. A future durable event store will keep a command-ID index so a retry can return its original result without applying the command twice.
 
 ### Events
 
@@ -414,7 +414,6 @@ Initial event types are:
 - `initial-resources.granted`
 - `road.placed`
 - `initial-placement.completed`
-- `turn.started`
 
 `game.created` is the first event at sequence zero. Its payload contains the validated configuration, complete layout, hidden development-deck order, initial placement phase, and random cursors after initialization. This one complete event prevents a replay from exposing a partly initialized state. Replay applies its recorded outcomes and does not shuffle again.
 
@@ -427,18 +426,17 @@ The engine exposes small functions with clear roles. An accepted command returns
 ```ts
 type EventBatch = readonly [GameEvent, ...ReadonlyArray<GameEvent>];
 
-initialize(config): Effect<HandleResult, RuleViolation>
-start(event: GameCreatedEvent): GameState
+createGame(config): Effect<CommandResult, RuleViolation>
 decide(state, command): Effect<EventBatch, RuleViolation>
-evolve(state, event: GameEventAfterCreation): GameState
-handle(state, command): Effect<HandleResult, RuleViolation>
+applyEvent(state, event): GameState
+handleCommand(state, command): Effect<CommandResult, RuleViolation>
 replay(events): Effect<GameState, ReplayViolation>
-legalActions(state, playerId): ReadonlyArray<LegalAction>
-observe(state, viewer): Observation
-checkInvariants(state): ReadonlyArray<InvariantViolation>
+legalActions(state): ReadonlyArray<LegalAction>
+observe(state, viewer): GameObservation
+checkInvariants(state): ReadonlyArray<string>
 ```
 
-`initialize` validates the configuration, draws the initial random values, emits `game.created`, and calls `start` to produce the first complete state. `decide` checks a command and returns domain events. `evolve` applies one later accepted event without input or randomness. `handle` calls `decide` and `evolve` in order. `replay` requires `game.created` first, calls `start` once, then validates and applies the remaining contiguous events. `checkInvariants` is available to tests and optional debug builds.
+`createGame` validates the configuration, draws the initial random values, and emits `game.created` with the first complete state. `decide` decodes and checks one command, including its match ID, then returns domain events. `applyEvent` applies one accepted event without input or randomness. `handleCommand` calls `decide` and `applyEvent` in order. `replay` requires `game.created` first, then checks event version, match ID, and contiguous sequence before applying each remaining event. `checkInvariants` is available to tests and optional debug builds.
 
 ## Randomness
 

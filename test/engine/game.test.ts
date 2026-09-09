@@ -80,14 +80,20 @@ describe("initial placement", () => {
   it("uses forward and reverse player order", () => {
     const created = Effect.runSync(createGame(config()));
     const completed = completeSetup(created.state);
-    const settlements = completed.events.filter((event) => event.type === "settlement.placed");
-    const roads = completed.events.filter((event) => event.type === "road.placed");
+    const settlements = completed.events.filter(
+      (envelope) => envelope.event.type === "settlement.placed",
+    );
+    const roads = completed.events.filter((envelope) => envelope.event.type === "road.placed");
     const expected = ["red", "blue", "white", "orange", "orange", "white", "blue", "red"];
 
-    expect(settlements.map(({ playerId }) => playerId)).toEqual(expected);
-    expect(roads.map(({ playerId }) => playerId)).toEqual(expected);
     expect(
-      completed.events.filter((event) => event.type === "initial-resources.granted"),
+      settlements.map(({ event }) => (event.type === "settlement.placed" ? event.playerId : null)),
+    ).toEqual(expected);
+    expect(
+      roads.map(({ event }) => (event.type === "road.placed" ? event.playerId : null)),
+    ).toEqual(expected);
+    expect(
+      completed.events.filter((envelope) => envelope.event.type === "initial-resources.granted"),
     ).toHaveLength(4);
   });
 
@@ -101,6 +107,20 @@ describe("initial placement", () => {
 
     expect(sum(completed.state.bank) + playerResources).toBe(95);
     expect(playerResources).toBeGreaterThan(0);
+  });
+
+  it("wraps every event with versioned match and command metadata", () => {
+    const created = Effect.runSync(createGame(config()));
+    const completed = completeSetup(created.state);
+    const events = [...created.events, ...completed.events];
+
+    expect(
+      events.every(
+        (event) =>
+          event.schema === "catanarchy.game-event.v1" && event.matchId === created.state.matchId,
+      ),
+    ).toBe(true);
+    expect(events.every(({ commandId }) => commandId.length > 0)).toBe(true);
   });
 
   it("replays every accepted event to identical state", () => {
@@ -163,7 +183,8 @@ describe("initial placement", () => {
     expect(
       actions.every(
         ({ command }) =>
-          command.type === "place-initial-road" && vertex.edgeIds.includes(command.edgeId),
+          command.command.type === "place-initial-road" &&
+          vertex.edgeIds.includes(command.command.edgeId),
       ),
     ).toBe(true);
   });
