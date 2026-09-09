@@ -4,6 +4,11 @@ Catanarchy is a multi-agent Catan simulator and negotiation harness built on Pi.
 
 The repository currently contains the TypeScript simulator foundation. It validates game configuration for three or four players. It also creates a deterministic initial-placement state and records ordered events with a seeded random source.
 
+## Design
+
+- [Implementation plan](docs/PLAN.md)
+- [Colonist compatibility profile](docs/COLONIST.md)
+
 ## Run the simulator
 
 Install Node.js 22 or later, then run:

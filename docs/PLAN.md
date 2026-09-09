@@ -20,11 +20,13 @@ The engine will have no Pi, browser, network, database, or model dependency. Thi
 
 ## Source material
 
-Rules work will use these sources in order:
+Native-engine rules work will use these sources in order:
 
 1. [CATAN base-game rulebook](https://www.catan.com/sites/default/files/2025-03/CN3081%20CATAN%E2%80%93The%20Game%20Rulebook%20secure%20%281%29.pdf)
 2. [Official base-game FAQ](https://www.catan.com/faq/basegame)
 3. Focused conformance cases for rule interactions and ambiguous edge cases
+
+The [Colonist compatibility profile](COLONIST.md) records Colonist's published rules, platform behavior, dated clarifications, and open verification work. Colonist-specific behavior belongs in that profile rather than the native base-game rules.
 
 Several engines were inspected for design lessons. Catanatron shows the value of exhaustive legal-action lists and batch simulation. JSettlers2 separates authoritative server state from partial client state. The TypeScript `catan-game` project separates actions, validation, state, and events. Catanarchy will implement its own code and contracts.
 
