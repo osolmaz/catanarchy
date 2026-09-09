@@ -219,6 +219,13 @@ h1 {
   fill: #b12927;
 }
 
+.probability-pips {
+  fill: #34372f;
+  font-size: 5px;
+  font-weight: 900;
+  letter-spacing: 0.5px;
+}
+
 .robber {
   fill: #242a27;
   stroke: #f6ebcf;

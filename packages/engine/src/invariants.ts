@@ -1,15 +1,9 @@
 import type { GameState, ResourceCounts } from "@catanarchy/protocol";
 
-const resourceTotal = (resources: ResourceCounts): number =>
-  resources.lumber + resources.brick + resources.wool + resources.grain + resources.ore;
+const RESOURCE_KEYS = ["lumber", "brick", "wool", "grain", "ore"] as const;
 
-const resourceValues = (resources: ResourceCounts): ReadonlyArray<number> => [
-  resources.lumber,
-  resources.brick,
-  resources.wool,
-  resources.grain,
-  resources.ore,
-];
+const resourceValues = (resources: ResourceCounts): ReadonlyArray<number> =>
+  RESOURCE_KEYS.map((resource) => resources[resource]);
 
 const duplicateValues = (values: ReadonlyArray<string>): boolean =>
   new Set(values).size !== values.length;
@@ -44,13 +38,15 @@ const supplyViolations = (state: GameState): ReadonlyArray<string> => {
   const values = allResources.flatMap(resourceValues);
   if (values.some((value) => !Number.isSafeInteger(value) || value < 0))
     violations.push("invalid-resource-count");
-  if (allResources.reduce((total, resources) => total + resourceTotal(resources), 0) !== 95) {
-    violations.push("resource-conservation");
-  }
+  const hasInvalidSupply = RESOURCE_KEYS.some(
+    (resource) => allResources.reduce((total, resources) => total + resources[resource], 0) !== 19,
+  );
+  if (hasInvalidSupply) violations.push("resource-conservation");
   for (const player of state.players) {
-    if (state.occupancy.buildings.filter(({ playerId }) => playerId === player.id).length > 5) {
-      violations.push(`building-supply:${player.id}`);
-    }
+    const buildings = state.occupancy.buildings.filter(({ playerId }) => playerId === player.id);
+    const settlements = buildings.filter(({ kind }) => kind === "settlement").length;
+    const cities = buildings.filter(({ kind }) => kind === "city").length;
+    if (settlements > 5 || cities > 4) violations.push(`building-supply:${player.id}`);
     if (state.occupancy.roads.filter(({ playerId }) => playerId === player.id).length > 15) {
       violations.push(`road-supply:${player.id}`);
     }
