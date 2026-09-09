@@ -161,14 +161,21 @@ const timeoutDecision = async (
     }, timeoutMs);
   });
 
+  const decision = Promise.resolve().then(async () =>
+    agent.decide({ ...request, signal: controller.signal }),
+  );
   try {
-    return await Promise.race([agent.decide({ ...request, signal: controller.signal }), deadline]);
+    return await Promise.race([decision, deadline]);
   } catch (error) {
     if (controller.signal.aborted) {
-      const cancelled = await settlesWithin(
+      const cancellation = Promise.all([
         Promise.resolve().then(async () => agent.cancel()),
-        CANCELLATION_GRACE_MS,
-      );
+        decision.then(
+          () => undefined,
+          () => undefined,
+        ),
+      ]).then(() => undefined);
+      const cancelled = await settlesWithin(cancellation, CANCELLATION_GRACE_MS);
       if (!cancelled) throw new CancellationTimeout("Agent cancellation did not settle.");
     }
     throw error;
