@@ -139,6 +139,8 @@ A match policy will limit message count and negotiation rounds. It will also lim
 
 ## Pi agent runtime
 
+The [agent harness design](AGENT_HARNESS.md) defines the module boundaries, decision contract, failure behavior, Pi SDK surface, traces, command line, live-test limit, and deterministic test plan.
+
 Each seat will run in a separate Pi `AgentSession`. A session receives only its current observation and legal actions. It also receives permitted messages with active offers. Private memory and the decision deadline stay scoped to that session.
 
 The Pi integration will replace the coding system prompt and expose only game tools. Initial tools will inspect the current observation and send a message. Other tools will submit or answer an offer, choose a legal action, then finish a decision. File and shell tools will stay disabled during matches.
@@ -266,15 +268,19 @@ Completion requires four scripted agents to conduct multi-round bargaining and f
 
 ### Milestone 7: Pi agents
 
-- [ ] Define the seat-scoped Pi system prompt.
-- [ ] Register game tools through the Pi SDK.
-- [ ] Create one isolated session per seat.
-- [ ] Route observations and messages without hidden-state leakage.
-- [ ] Add decision deadlines with cancellation and retry.
-- [ ] Add deterministic fallback behavior.
-- [ ] Capture model and token data with latency, tool, and outcome traces.
+The first slice connects Pi agents to the engine's implemented initial-placement phase. It establishes the final seat isolation, tool, deadline, fallback, and trace boundaries before normal turns and negotiation exist.
 
-Completion requires a mixed match with Pi agents and scripted agents using the same protocol. The web viewer must be able to follow the match without access to Pi session state.
+- [x] Define the seat-scoped Pi system prompt.
+- [x] Register the terminating `choose_action` tool through the Pi SDK.
+- [x] Create one isolated in-memory session per seat.
+- [x] Route observations without hidden-state leakage.
+- [x] Add decision deadlines with cancellation and bounded retry.
+- [x] Add deterministic fallback behavior.
+- [x] Capture model and token data with latency, tool, and outcome traces.
+- [x] Run an opt-in mixed-model initial-placement smoke test.
+- [ ] Route negotiation messages and offers after Milestone 6 defines them.
+
+The first slice is complete when Pi and scripted agents can share an initial-placement match and the deterministic suite proves the session and information boundaries. The complete milestone still requires a mixed full game. The web viewer must be able to follow that match without access to Pi session state.
 
 ### Milestone 8: batch simulation and training data
 
