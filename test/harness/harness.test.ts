@@ -46,7 +46,7 @@ describe("agent harness", () => {
     expect(result.state.phase.tag).toBe("turn.action");
   });
 
-  it("stops safely when a phase has no legal action", async () => {
+  it("continues through robber movement after a seven", async () => {
     const result = await Effect.runPromise(
       runGameSteps({
         config: config(4),
@@ -55,8 +55,8 @@ describe("agent harness", () => {
       }),
     );
 
-    expect(result.decisions).toHaveLength(17);
-    expect(result.state.phase.tag).toBe("turn.robber");
+    expect(result.decisions).toHaveLength(20);
+    expect(result.events.some(({ event }) => event.type === "robber.moved")).toBe(true);
   });
 
   it("rejects an invalid game-step limit before creating agents", async () => {
@@ -82,6 +82,7 @@ describe("agent harness", () => {
               calls.set(player.id, (calls.get(player.id) ?? 0) + 1);
               expect(request.playerId).toBe(player.id);
               expect(request.observation.ownResources).not.toBeNull();
+              expect(request.observation.ownDevelopmentCards).not.toBeNull();
               expect("developmentDeck" in request.observation).toBe(false);
               return { actionId: firstAction(request).id };
             },

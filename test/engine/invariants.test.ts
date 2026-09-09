@@ -137,6 +137,41 @@ describe("state invariants", () => {
     );
   });
 
+  it("checks development-card effect counters and discard queues", () => {
+    const state = initialState();
+    const broken: GameState = {
+      ...state,
+      players: state.players.map((player) =>
+        player.id === "red" ? { ...player, playedKnights: -1 } : player,
+      ),
+      phase: {
+        tag: "turn.discard",
+        playerIndex: 0,
+        rollerIndex: 99,
+        turn: 0,
+        dice: [3, 4],
+        remaining: 2,
+        queue: [
+          { playerIndex: 0, remaining: 1 },
+          { playerIndex: 99, remaining: 0 },
+        ],
+        developmentCardPlayed: false,
+      },
+    };
+
+    expect(checkInvariants(broken)).toEqual(
+      expect.arrayContaining([
+        "played-knights:red",
+        "turn-number",
+        "discard-roller",
+        "discard-player",
+        "discard-remaining",
+        "duplicate-discard-player",
+        "discard-exceeds-hand",
+      ]),
+    );
+  });
+
   it("reports a setup road without its player anchor", () => {
     const state = initialState();
     const broken: GameState = {

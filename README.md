@@ -2,7 +2,7 @@
 
 Catanarchy is a deterministic Catan simulator for agent research. The long-term goal is to let agents play, talk, negotiate, and make structured trades through one protocol. Native games and external adapters will use the same commands and observations.
 
-The current simulator supports the regular three-player and four-player board, initial placement, production, paid building, development-card purchases, maritime trade, and normal turn order. The local web app can submit these actions and inspect accepted-command history. A Pi agent harness can run scripted or model-driven decisions with isolated sessions and game-only tools. Robber resolution, development-card play, negotiation, and adapters come later.
+The current simulator supports the regular three-player and four-player board, initial placement, production, paid building, maritime trade, rolled-seven discards, robber theft, and action development cards. The local web app can submit these actions and inspect accepted-command history. A Pi agent harness can run scripted or model-driven decisions with isolated sessions and game-only tools. Awards, victory, domestic trade, negotiation, and adapters come later.
 
 ## Start the web app
 
@@ -35,7 +35,7 @@ OPENAI_API_KEY=... HF_TOKEN=... npm run play:pi -- \
   --seed=42
 ```
 
-Four seats receive the models in round-robin order. The command runs 16 setup decisions by default. Add `--decisions=17` to include the first dice roll or use a larger bound to continue normal turns. The run stops if it reaches the unresolved robber phase. It limits requests and output tokens, prints a cost estimate before the first request, and uses the first legal action if a model fails. Add `--output=path.json` to save the full result outside the repository.
+Four seats receive the models in round-robin order. The command runs 16 setup decisions by default. Add `--decisions=17` to include the first dice roll or use a larger bound to continue through normal turns, robber resolution, and development-card effects. It limits requests and output tokens, prints a cost estimate before the first request, and uses the first legal action if a model fails. Add `--output=path.json` to save the full result outside the repository.
 
 Use `npm run probe:pi -- --model=provider/model-id` for one live model decision. Live model commands are opt-in and are not part of the normal quality gate.
 

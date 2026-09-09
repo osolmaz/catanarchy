@@ -3,6 +3,7 @@ import type {
   CommandResult,
   GameConfig,
   GameEvent,
+  GamePhase,
   GameState,
   LegalAction,
   PlayerColor,
@@ -39,37 +40,55 @@ const resourceText = (resources: GameState["bank"] | null): string =>
     ? "Hidden"
     : `Lumber ${resources.lumber} · Brick ${resources.brick} · Wool ${resources.wool} · Grain ${resources.grain} · Ore ${resources.ore}`;
 
-const phaseText = (state: GameState): string => {
-  const player = state.config.players[state.phase.playerIndex];
-  const playerName = player === undefined ? "Player" : player.name;
-  switch (state.phase.tag) {
+type SetupPhase = Extract<GamePhase, { readonly tag: `setup.${string}` }>;
+type TurnPhase = Exclude<GamePhase, SetupPhase>;
+
+const setupPhaseText = (phase: SetupPhase, playerName: string): string => {
+  switch (phase.tag) {
     case "setup.settlement":
-      return `${playerName}: place a settlement (${state.phase.direction} round)`;
+      return `${playerName}: place a settlement (${phase.direction} round)`;
     case "setup.road":
-      return `${playerName}: place an adjacent road (${state.phase.direction} round)`;
+      return `${playerName}: place an adjacent road (${phase.direction} round)`;
     case "setup.completing":
       return "Completing initial placement";
-    case "turn.roll":
-      return `${playerName}: roll the dice (turn ${state.phase.turn})`;
-    case "turn.action":
-      return `${playerName}: trade, build, or end turn after ${state.phase.dice.join(" + ")}`;
-    case "turn.robber":
-      return `${playerName}: resolve a rolled seven (planned for Milestone 3)`;
   }
 };
 
-const isBoardAction = (action: LegalAction): boolean => {
-  const type = action.command.command.type;
-  return (
-    type === "place-initial-settlement" ||
-    type === "place-initial-road" ||
-    type === "build-settlement" ||
-    type === "build-road" ||
-    type === "build-city"
-  );
+const turnPhaseText = (phase: TurnPhase, playerName: string): string => {
+  switch (phase.tag) {
+    case "turn.roll":
+      return `${playerName}: roll the dice (turn ${phase.turn})`;
+    case "turn.action":
+      return `${playerName}: trade, build, play a card, or end turn after ${phase.dice.join(" + ")}`;
+    case "turn.discard":
+      return `${playerName}: discard ${phase.remaining} resource cards`;
+    case "turn.robber":
+      return `${playerName}: move the robber (${phase.source})`;
+    case "turn.free-road":
+      return `${playerName}: place ${phase.remaining} free road${phase.remaining === 1 ? "" : "s"}`;
+  }
 };
 
-const actionLabel = (action: LegalAction): string => {
+const phaseText = (state: GameState): string => {
+  const playerName = state.config.players[state.phase.playerIndex]?.name ?? "Player";
+  return state.phase.tag.startsWith("setup.")
+    ? setupPhaseText(state.phase as SetupPhase, playerName)
+    : turnPhaseText(state.phase as TurnPhase, playerName);
+};
+
+const BOARD_ACTIONS = new Set([
+  "place-initial-settlement",
+  "place-initial-road",
+  "build-settlement",
+  "build-road",
+  "place-free-road",
+  "build-city",
+]);
+
+const isBoardAction = (action: LegalAction): boolean =>
+  BOARD_ACTIONS.has(action.command.command.type);
+
+const normalActionLabel = (action: LegalAction): string | undefined => {
   const command = action.command.command;
   switch (command.type) {
     case "roll-dice":
@@ -81,8 +100,59 @@ const actionLabel = (action: LegalAction): string => {
     case "end-turn":
       return "End turn";
     default:
-      return action.id;
+      return undefined;
   }
+};
+
+const effectActionLabel = (action: LegalAction): string | undefined => {
+  const command = action.command.command;
+  switch (command.type) {
+    case "discard-resource":
+      return `Discard ${command.resource}`;
+    case "move-robber": {
+      const victim = command.victimPlayerId === null ? "" : ` and rob ${command.victimPlayerId}`;
+      return `Move robber to ${command.hexId}${victim}`;
+    }
+    case "play-knight":
+      return "Play Knight";
+    case "play-road-building":
+      return "Play Road Building";
+    case "play-year-of-plenty":
+      return `Play Year of Plenty: ${command.resources.join(" + ")}`;
+    case "play-monopoly":
+      return `Play Monopoly: ${command.resource}`;
+    default:
+      return undefined;
+  }
+};
+
+const actionLabel = (action: LegalAction): string =>
+  normalActionLabel(action) ?? effectActionLabel(action) ?? action.id;
+
+const activePlayerObservation = (state: GameState) => {
+  const player = state.config.players[state.phase.playerIndex];
+  return observe(
+    state,
+    player === undefined ? { type: "public" } : { type: "player", playerId: player.id },
+  );
+};
+
+interface ActionControlsProps {
+  readonly actions: ReadonlyArray<LegalAction>;
+  readonly onAction: (action: LegalAction) => void;
+}
+
+const ActionControls = ({ actions, onAction }: ActionControlsProps) => {
+  const buttons = actions
+    .filter((action) => !isBoardAction(action))
+    .map((action) => (
+      <button key={action.id} type="button" onClick={() => onAction(action)}>
+        {actionLabel(action)}
+      </button>
+    ));
+  if (actions.length === 0) return <p>No action is available.</p>;
+  if (actions.every(isBoardAction)) return <p>Select a highlighted board location.</p>;
+  return buttons;
 };
 
 export const App = () => {
@@ -94,17 +164,7 @@ export const App = () => {
   const latestIndex = game.states.length - 1;
   const state = game.states[frameIndex] ?? game.states[latestIndex]!;
   const isLive = frameIndex === latestIndex;
-  const activePlayer = state.config.players[state.phase.playerIndex];
-  const observation = useMemo(
-    () =>
-      observe(
-        state,
-        activePlayer === undefined
-          ? { type: "public" }
-          : { type: "player", playerId: activePlayer.id },
-      ),
-    [activePlayer, state],
-  );
+  const observation = useMemo(() => activePlayerObservation(state), [state]);
   const actions = isLive ? legalActions(state) : [];
 
   const onNewGame = () => {
@@ -230,17 +290,7 @@ export const App = () => {
           <section className="panel">
             <h2>Actions</h2>
             <div className="turn-actions">
-              {actions
-                .filter((action) => !isBoardAction(action))
-                .map((action) => (
-                  <button key={action.id} type="button" onClick={() => onAction(action)}>
-                    {actionLabel(action)}
-                  </button>
-                ))}
-              {actions.length === 0 ? <p>No action is available.</p> : null}
-              {actions.length > 0 && actions.every(isBoardAction) ? (
-                <p>Select a highlighted board location.</p>
-              ) : null}
+              <ActionControls actions={actions} onAction={onAction} />
             </div>
           </section>
 
@@ -266,6 +316,13 @@ export const App = () => {
             </div>
             <h3>Active hand</h3>
             <p className="resource-line">{resourceText(observation.ownResources)}</p>
+            <h3>Development cards</h3>
+            <p className="resource-line">
+              {observation.ownDevelopmentCards === null ||
+              observation.ownDevelopmentCards.length === 0
+                ? "None"
+                : observation.ownDevelopmentCards.map(({ card }) => card).join(" · ")}
+            </p>
           </section>
 
           <section className="panel">

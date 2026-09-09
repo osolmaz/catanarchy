@@ -2,7 +2,7 @@
 
 ## Status
 
-The first web slice is implemented as a trusted local game client. It starts seeded three-player and four-player games, renders the standard board, submits setup and normal-turn commands to the native engine, shows public player summaries and the active player's resources, and moves through accepted-command history. It shows the explicit robber boundary but does not resolve a seven yet.
+The first web slice is implemented as a trusted local game client. It starts seeded three-player and four-player games, renders the standard board, submits setup and normal-turn commands to the native engine, shows public player summaries and the active player's resources and development cards, and moves through accepted-command history. It supports rolled-seven discards, robber choices, and action development cards.
 
 Saved replay loading, timed playback, live streams, and negotiation views remain planned. Those remote and replay modes stay read-only and consume only viewer-safe data. The local setup client is a deliberate exception because the user runs the engine and browser in one trusted process.
 
@@ -23,7 +23,7 @@ The viewer also helps engine development. A wrong edge, harbor, road, or settlem
 
 The first release supports the regular three-player and four-player base-game board defined in the [engine design](ENGINE.md). It renders original geometric shapes and text. It does not use copied board artwork or game assets.
 
-The current slice includes native setup, dice rolls, paid building, development-card purchases, maritime trade, and turn-end commands. It excludes robber commands, development-card play, remote commands, matchmaking, accounts, ratings, map editing, and expansion layouts. It also excludes public access to referee state.
+The current slice includes native setup, dice rolls, paid building, development-card purchases and play, maritime trade, rolled-seven discards, robber choices, and turn-end commands. It excludes awards, victory, domestic trade, remote commands, matchmaking, accounts, ratings, map editing, and expansion layouts. It also excludes public access to referee state.
 
 ## Boundary
 

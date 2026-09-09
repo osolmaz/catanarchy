@@ -119,6 +119,7 @@ export const DEVELOPMENT_CARDS = [
   "victory-point",
 ] as const;
 export type DevelopmentCard = (typeof DEVELOPMENT_CARDS)[number];
+export type DevelopmentDiscardCard = Exclude<DevelopmentCard, "knight" | "victory-point">;
 export const DevelopmentCardSchema = Schema.Literal(...DEVELOPMENT_CARDS);
 
 export interface OwnedDevelopmentCard {
@@ -149,6 +150,15 @@ export interface PlayerState {
   readonly playedKnights: number;
 }
 
+export type TurnContinuation =
+  | { readonly tag: "turn.roll" }
+  | { readonly tag: "turn.action"; readonly dice: readonly [number, number] }
+  | {
+      readonly tag: "turn.robber";
+      readonly source: "roll" | "knight";
+      readonly continuation: TurnContinuation;
+    };
+
 export type GamePhase =
   | {
       readonly tag: "setup.settlement";
@@ -169,18 +179,40 @@ export type GamePhase =
       readonly tag: "turn.roll";
       readonly playerIndex: number;
       readonly turn: number;
+      readonly developmentCardPlayed: boolean;
     }
   | {
       readonly tag: "turn.action";
       readonly playerIndex: number;
       readonly turn: number;
       readonly dice: readonly [number, number];
+      readonly developmentCardPlayed: boolean;
+    }
+  | {
+      readonly tag: "turn.discard";
+      readonly playerIndex: number;
+      readonly rollerIndex: number;
+      readonly turn: number;
+      readonly dice: readonly [number, number];
+      readonly remaining: number;
+      readonly queue: ReadonlyArray<{ readonly playerIndex: number; readonly remaining: number }>;
+      readonly developmentCardPlayed: boolean;
     }
   | {
       readonly tag: "turn.robber";
       readonly playerIndex: number;
       readonly turn: number;
-      readonly dice: readonly [number, number];
+      readonly source: "roll" | "knight";
+      readonly continuation: TurnContinuation;
+      readonly developmentCardPlayed: boolean;
+    }
+  | {
+      readonly tag: "turn.free-road";
+      readonly playerIndex: number;
+      readonly turn: number;
+      readonly remaining: 1 | 2;
+      readonly continuation: TurnContinuation;
+      readonly developmentCardPlayed: true;
     };
 
 export interface GameState {
@@ -194,6 +226,7 @@ export interface GameState {
   readonly bank: ResourceCounts;
   readonly players: ReadonlyArray<PlayerState>;
   readonly developmentDeck: ReadonlyArray<DevelopmentCard>;
+  readonly developmentDiscard: ReadonlyArray<DevelopmentDiscardCard>;
   readonly phase: GamePhase;
   readonly random: {
     readonly board: RandomState;
@@ -296,6 +329,58 @@ export interface TurnEndedEvent {
   readonly nextTurn: number;
 }
 
+export interface ResourceDiscardedEvent {
+  readonly type: "resource.discarded";
+  readonly playerId: PlayerId;
+  readonly resource: Resource;
+}
+
+export interface RobberMovedEvent {
+  readonly type: "robber.moved";
+  readonly playerId: PlayerId;
+  readonly fromHexId: HexId;
+  readonly toHexId: HexId;
+  readonly victimPlayerId: PlayerId | null;
+  readonly stolenResource: Resource | null;
+  readonly nextRandom: RandomState;
+}
+
+export interface KnightPlayedEvent {
+  readonly type: "knight.played";
+  readonly playerId: PlayerId;
+}
+
+export interface RoadBuildingPlayedEvent {
+  readonly type: "road-building.played";
+  readonly playerId: PlayerId;
+  readonly roadsToPlace: 0 | 1 | 2;
+}
+
+export interface FreeRoadPlacedEvent {
+  readonly type: "free-road.placed";
+  readonly playerId: PlayerId;
+  readonly edgeId: EdgeId;
+}
+
+export interface YearOfPlentyPlayedEvent {
+  readonly type: "year-of-plenty.played";
+  readonly playerId: PlayerId;
+  readonly requested: readonly [Resource, Resource];
+  readonly granted: ResourceCounts;
+}
+
+export interface MonopolyTransfer {
+  readonly playerId: PlayerId;
+  readonly amount: number;
+}
+
+export interface MonopolyPlayedEvent {
+  readonly type: "monopoly.played";
+  readonly playerId: PlayerId;
+  readonly resource: Resource;
+  readonly transfers: ReadonlyArray<MonopolyTransfer>;
+}
+
 export interface EventEnvelope<TEvent> {
   readonly schema: "catanarchy.game-event.v1";
   readonly matchId: string;
@@ -316,7 +401,14 @@ export type GameEvent =
   | EventEnvelope<CityBuiltEvent>
   | EventEnvelope<DevelopmentCardBoughtEvent>
   | EventEnvelope<MaritimeTradeCompletedEvent>
-  | EventEnvelope<TurnEndedEvent>;
+  | EventEnvelope<TurnEndedEvent>
+  | EventEnvelope<ResourceDiscardedEvent>
+  | EventEnvelope<RobberMovedEvent>
+  | EventEnvelope<KnightPlayedEvent>
+  | EventEnvelope<RoadBuildingPlayedEvent>
+  | EventEnvelope<FreeRoadPlacedEvent>
+  | EventEnvelope<YearOfPlentyPlayedEvent>
+  | EventEnvelope<MonopolyPlayedEvent>;
 
 const EventEnvelopeSchemaFields = {
   schema: Schema.Literal("catanarchy.game-event.v1"),
@@ -426,6 +518,64 @@ export const GameEventEnvelopeSchema = Schema.Union(
       nextTurn: Schema.Number,
     }),
   }),
+  Schema.Struct({
+    ...EventEnvelopeSchemaFields,
+    event: Schema.Struct({
+      type: Schema.Literal("resource.discarded"),
+      playerId: Schema.String,
+      resource: ResourceSchema,
+    }),
+  }),
+  Schema.Struct({
+    ...EventEnvelopeSchemaFields,
+    event: Schema.Struct({
+      type: Schema.Literal("robber.moved"),
+      playerId: Schema.String,
+      fromHexId: Schema.String,
+      toHexId: Schema.String,
+      victimPlayerId: Schema.NullOr(Schema.String),
+      stolenResource: Schema.NullOr(ResourceSchema),
+      nextRandom: RandomStateSchema,
+    }),
+  }),
+  Schema.Struct({
+    ...EventEnvelopeSchemaFields,
+    event: Schema.Struct({ type: Schema.Literal("knight.played"), playerId: Schema.String }),
+  }),
+  Schema.Struct({
+    ...EventEnvelopeSchemaFields,
+    event: Schema.Struct({
+      type: Schema.Literal("road-building.played"),
+      playerId: Schema.String,
+      roadsToPlace: Schema.Literal(0, 1, 2),
+    }),
+  }),
+  Schema.Struct({
+    ...EventEnvelopeSchemaFields,
+    event: Schema.Struct({
+      type: Schema.Literal("free-road.placed"),
+      playerId: Schema.String,
+      edgeId: Schema.String,
+    }),
+  }),
+  Schema.Struct({
+    ...EventEnvelopeSchemaFields,
+    event: Schema.Struct({
+      type: Schema.Literal("year-of-plenty.played"),
+      playerId: Schema.String,
+      requested: Schema.Tuple(ResourceSchema, ResourceSchema),
+      granted: ResourceCountsSchema,
+    }),
+  }),
+  Schema.Struct({
+    ...EventEnvelopeSchemaFields,
+    event: Schema.Struct({
+      type: Schema.Literal("monopoly.played"),
+      playerId: Schema.String,
+      resource: ResourceSchema,
+      transfers: Schema.Array(Schema.Struct({ playerId: Schema.String, amount: Schema.Number })),
+    }),
+  }),
 );
 export const decodeGameEventEnvelope = Schema.decodeUnknown(GameEventEnvelopeSchema);
 
@@ -472,6 +622,40 @@ export interface EndTurnCommand {
   readonly type: "end-turn";
 }
 
+export interface DiscardResourceCommand {
+  readonly type: "discard-resource";
+  readonly resource: Resource;
+}
+
+export interface MoveRobberCommand {
+  readonly type: "move-robber";
+  readonly hexId: HexId;
+  readonly victimPlayerId: PlayerId | null;
+}
+
+export interface PlayKnightCommand {
+  readonly type: "play-knight";
+}
+
+export interface PlayRoadBuildingCommand {
+  readonly type: "play-road-building";
+}
+
+export interface PlaceFreeRoadCommand {
+  readonly type: "place-free-road";
+  readonly edgeId: EdgeId;
+}
+
+export interface PlayYearOfPlentyCommand {
+  readonly type: "play-year-of-plenty";
+  readonly resources: readonly [Resource, Resource];
+}
+
+export interface PlayMonopolyCommand {
+  readonly type: "play-monopoly";
+  readonly resource: Resource;
+}
+
 export type GameCommandPayload =
   | PlaceInitialSettlementCommand
   | PlaceInitialRoadCommand
@@ -481,7 +665,14 @@ export type GameCommandPayload =
   | BuildCityCommand
   | BuyDevelopmentCardCommand
   | MaritimeTradeCommand
-  | EndTurnCommand;
+  | EndTurnCommand
+  | DiscardResourceCommand
+  | MoveRobberCommand
+  | PlayKnightCommand
+  | PlayRoadBuildingCommand
+  | PlaceFreeRoadCommand
+  | PlayYearOfPlentyCommand
+  | PlayMonopolyCommand;
 
 export interface GameCommand {
   readonly schema: "catanarchy.command.v1";
@@ -550,6 +741,47 @@ export const GameCommandSchema = Schema.Union(
     ...CommandEnvelopeSchemaFields,
     command: Schema.Struct({ type: Schema.Literal("end-turn") }),
   }),
+  Schema.Struct({
+    ...CommandEnvelopeSchemaFields,
+    command: Schema.Struct({
+      type: Schema.Literal("discard-resource"),
+      resource: ResourceSchema,
+    }),
+  }),
+  Schema.Struct({
+    ...CommandEnvelopeSchemaFields,
+    command: Schema.Struct({
+      type: Schema.Literal("move-robber"),
+      hexId: Schema.String,
+      victimPlayerId: Schema.NullOr(Schema.String),
+    }),
+  }),
+  Schema.Struct({
+    ...CommandEnvelopeSchemaFields,
+    command: Schema.Struct({ type: Schema.Literal("play-knight") }),
+  }),
+  Schema.Struct({
+    ...CommandEnvelopeSchemaFields,
+    command: Schema.Struct({ type: Schema.Literal("play-road-building") }),
+  }),
+  Schema.Struct({
+    ...CommandEnvelopeSchemaFields,
+    command: Schema.Struct({ type: Schema.Literal("place-free-road"), edgeId: Schema.String }),
+  }),
+  Schema.Struct({
+    ...CommandEnvelopeSchemaFields,
+    command: Schema.Struct({
+      type: Schema.Literal("play-year-of-plenty"),
+      resources: Schema.Tuple(ResourceSchema, ResourceSchema),
+    }),
+  }),
+  Schema.Struct({
+    ...CommandEnvelopeSchemaFields,
+    command: Schema.Struct({
+      type: Schema.Literal("play-monopoly"),
+      resource: ResourceSchema,
+    }),
+  }),
 );
 export const decodeGameCommand = Schema.decodeUnknown(GameCommandSchema);
 
@@ -581,6 +813,7 @@ export interface GameObservation {
   readonly players: ReadonlyArray<PlayerSummary>;
   readonly bank: ResourceCounts;
   readonly ownResources: ResourceCounts | null;
+  readonly ownDevelopmentCards: ReadonlyArray<OwnedDevelopmentCard> | null;
 }
 
 export type Viewer =

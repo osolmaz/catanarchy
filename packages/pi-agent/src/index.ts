@@ -350,6 +350,7 @@ export const buildDecisionPrompt = (request: AgentDecisionRequest): string =>
       activePlayerId: request.observation.activePlayerId,
       players: request.observation.players,
       ownResources: request.observation.ownResources,
+      ownDevelopmentCards: request.observation.ownDevelopmentCards,
       occupiedBuildings: request.observation.occupancy.buildings,
       occupiedRoads: request.observation.occupancy.roads,
       legalActions: request.legalActions.map((action) =>

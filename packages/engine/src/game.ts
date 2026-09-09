@@ -7,6 +7,7 @@ import type {
   CommandResult,
   DevelopmentCardBoughtEvent,
   DiceRolledEvent,
+  DiscardResourceCommand,
   EndTurnCommand,
   EventEnvelope,
   GameCommand,
@@ -16,25 +17,40 @@ import type {
   GameObservation,
   GamePhase,
   GameState,
+  HexId,
   InitialResourcesGrantedEvent,
+  KnightPlayedEvent,
   LegalAction,
   MaritimeTradeCommand,
   MaritimeTradeCompletedEvent,
+  PlaceFreeRoadCommand,
   PlaceInitialRoadCommand,
   PlaceInitialSettlementCommand,
+  PlayKnightCommand,
+  PlayMonopolyCommand,
+  PlayRoadBuildingCommand,
+  PlayYearOfPlentyCommand,
   PlayerId,
   PlayerState,
   Resource,
   ResourceCounts,
+  ResourceDiscardedEvent,
   ResourceGrant,
+  RoadBuildingPlayedEvent,
   RoadBuiltEvent,
   RoadPlacedEvent,
+  RobberMovedEvent,
   RollDiceCommand,
   SettlementBuiltEvent,
   SettlementPlacedEvent,
   Terrain,
+  TurnContinuation,
   TurnEndedEvent,
   Viewer,
+  YearOfPlentyPlayedEvent,
+  MonopolyPlayedEvent,
+  FreeRoadPlacedEvent,
+  MoveRobberCommand,
 } from "@catanarchy/protocol";
 import { decodeGameCommand, decodeGameConfig, decodeGameEventEnvelope } from "@catanarchy/protocol";
 import { Effect } from "effect";
@@ -122,6 +138,7 @@ export const createGame = (input: GameConfig): Effect.Effect<CommandResult, Rule
       bank: FULL_BANK,
       players: createPlayers(config),
       developmentDeck: materials.developmentDeck,
+      developmentDiscard: [],
       phase: { tag: "setup.settlement", direction: "forward", playerIndex: 0 },
       random: {
         board: materials.boardRandom,
@@ -163,6 +180,9 @@ const resourceAmount = (resource: Resource, amount: number): ResourceCounts => (
 
 const hasResources = (available: ResourceCounts, needed: ResourceCounts): boolean =>
   RESOURCE_KEYS.every((resource) => available[resource] >= needed[resource]);
+
+const resourceTotal = (resources: ResourceCounts): number =>
+  RESOURCE_KEYS.reduce((total, resource) => total + resources[resource], 0);
 
 const playerById = (state: GameState, playerId: PlayerId): PlayerState | undefined =>
   state.players.find(({ id }) => id === playerId);
@@ -256,36 +276,74 @@ const applyRoad = (state: GameState, sequence: number, event: RoadPlacedEvent): 
 const applyCompleted = (state: GameState, sequence: number): GameState => ({
   ...state,
   sequence,
-  phase: { tag: "turn.roll", playerIndex: 0, turn: 1 },
+  phase: { tag: "turn.roll", playerIndex: 0, turn: 1, developmentCardPlayed: false },
 });
 
 const totalGrants = (grants: ReadonlyArray<ResourceGrant>): ResourceCounts =>
   grants.reduce((total, grant) => addResources(total, grant.resources), EMPTY_RESOURCES);
 
-const applyDiceRolled = (state: GameState, sequence: number, event: DiceRolledEvent): GameState => {
-  const diceTotal = event.dice[0] + event.dice[1];
+const discardQueue = (
+  state: GameState,
+): ReadonlyArray<{ readonly playerIndex: number; readonly remaining: number }> =>
+  state.players.flatMap((player, playerIndex) => {
+    const cards = resourceTotal(player.resources);
+    return cards > 7 ? [{ playerIndex, remaining: Math.floor(cards / 2) }] : [];
+  });
+
+const phaseAfterSeven = (
+  state: GameState,
+  dice: readonly [number, number],
+  turn: number,
+  developmentCardPlayed: boolean,
+): GamePhase => {
+  const queue = discardQueue(state);
+  const first = queue[0];
+  if (first !== undefined) {
+    return {
+      tag: "turn.discard",
+      playerIndex: first.playerIndex,
+      rollerIndex: state.phase.playerIndex,
+      turn,
+      dice,
+      remaining: first.remaining,
+      queue: queue.slice(1),
+      developmentCardPlayed,
+    };
+  }
   return {
+    tag: "turn.robber",
+    playerIndex: state.phase.playerIndex,
+    turn,
+    source: "roll",
+    continuation: { tag: "turn.action", dice },
+    developmentCardPlayed,
+  };
+};
+
+const applyDiceRolled = (state: GameState, sequence: number, event: DiceRolledEvent): GameState => {
+  if (state.phase.tag !== "turn.roll") return state;
+  const players = event.grants.reduce(
+    (current, grant) => updatePlayerResources(current, grant.playerId, grant.resources),
+    state.players,
+  );
+  const reduced: GameState = {
     ...state,
     sequence,
     random: { ...state.random, dice: event.nextRandom },
     bank: subtractResources(state.bank, totalGrants(event.grants)),
-    players: event.grants.reduce(
-      (players, grant) => updatePlayerResources(players, grant.playerId, grant.resources),
-      state.players,
-    ),
+    players,
+  };
+  return {
+    ...reduced,
     phase:
-      diceTotal === 7
-        ? {
-            tag: "turn.robber",
-            playerIndex: state.phase.playerIndex,
-            turn: state.phase.tag === "turn.roll" ? state.phase.turn : 1,
-            dice: event.dice,
-          }
+      event.dice[0] + event.dice[1] === 7
+        ? phaseAfterSeven(reduced, event.dice, state.phase.turn, state.phase.developmentCardPlayed)
         : {
             tag: "turn.action",
             playerIndex: state.phase.playerIndex,
-            turn: state.phase.tag === "turn.roll" ? state.phase.turn : 1,
+            turn: state.phase.turn,
             dice: event.dice,
+            developmentCardPlayed: state.phase.developmentCardPlayed,
           },
   };
 };
@@ -376,8 +434,272 @@ const applyTurnEnded = (state: GameState, sequence: number, event: TurnEndedEven
     tag: "turn.roll",
     playerIndex: event.nextPlayerIndex,
     turn: event.nextTurn,
+    developmentCardPlayed: false,
   },
 });
+
+const continuationFromPhase = (phase: GamePhase): TurnContinuation => {
+  switch (phase.tag) {
+    case "turn.roll":
+      return { tag: "turn.roll" };
+    case "turn.action":
+      return { tag: "turn.action", dice: phase.dice };
+    case "turn.robber":
+      return { tag: "turn.robber", source: phase.source, continuation: phase.continuation };
+    default:
+      throw new Error("The current phase cannot be suspended.");
+  }
+};
+
+const resumePhase = (
+  playerIndex: number,
+  turn: number,
+  developmentCardPlayed: boolean,
+  continuation: TurnContinuation,
+): GamePhase => {
+  switch (continuation.tag) {
+    case "turn.roll":
+      return { tag: "turn.roll", playerIndex, turn, developmentCardPlayed };
+    case "turn.action":
+      return {
+        tag: "turn.action",
+        playerIndex,
+        turn,
+        dice: continuation.dice,
+        developmentCardPlayed,
+      };
+    case "turn.robber":
+      return {
+        tag: "turn.robber",
+        playerIndex,
+        turn,
+        source: continuation.source,
+        continuation: continuation.continuation,
+        developmentCardPlayed,
+      };
+  }
+};
+
+const removeDevelopmentCard = (
+  players: ReadonlyArray<PlayerState>,
+  playerId: PlayerId,
+  card: PlayerState["developmentCards"][number]["card"],
+  playedKnight: boolean,
+): ReadonlyArray<PlayerState> =>
+  updatePlayer(players, playerId, (player) => {
+    const index = player.developmentCards.findIndex((owned) => owned.card === card);
+    return {
+      ...player,
+      developmentCards: player.developmentCards.filter((_owned, cardIndex) => cardIndex !== index),
+      playedKnights: player.playedKnights + (playedKnight ? 1 : 0),
+    };
+  });
+
+const phaseWithDevelopmentCardPlayed = (phase: GamePhase): GamePhase => {
+  switch (phase.tag) {
+    case "turn.roll":
+    case "turn.action":
+    case "turn.robber":
+      return { ...phase, developmentCardPlayed: true };
+    default:
+      return phase;
+  }
+};
+
+const applyResourceDiscarded = (
+  state: GameState,
+  sequence: number,
+  event: ResourceDiscardedEvent,
+): GameState => {
+  if (state.phase.tag !== "turn.discard") return state;
+  const returned = resourceAmount(event.resource, 1);
+  const reduced = {
+    ...state,
+    sequence,
+    bank: addResources(state.bank, returned),
+    players: spendPlayerResources(state.players, event.playerId, returned),
+  };
+  if (state.phase.remaining > 1) {
+    return { ...reduced, phase: { ...state.phase, remaining: state.phase.remaining - 1 } };
+  }
+  const next = state.phase.queue[0];
+  if (next !== undefined) {
+    return {
+      ...reduced,
+      phase: {
+        ...state.phase,
+        playerIndex: next.playerIndex,
+        remaining: next.remaining,
+        queue: state.phase.queue.slice(1),
+      },
+    };
+  }
+  return {
+    ...reduced,
+    phase: {
+      tag: "turn.robber",
+      playerIndex: state.phase.rollerIndex,
+      turn: state.phase.turn,
+      source: "roll",
+      continuation: { tag: "turn.action", dice: state.phase.dice },
+      developmentCardPlayed: state.phase.developmentCardPlayed,
+    },
+  };
+};
+
+const transferStolenResource = (
+  players: ReadonlyArray<PlayerState>,
+  thiefId: PlayerId,
+  victimId: PlayerId | null,
+  resource: Resource | null,
+): ReadonlyArray<PlayerState> => {
+  if (victimId === null || resource === null) return players;
+  const card = resourceAmount(resource, 1);
+  const withoutVictim = spendPlayerResources(players, victimId, card);
+  return updatePlayerResources(withoutVictim, thiefId, card);
+};
+
+const applyRobberMoved = (
+  state: GameState,
+  sequence: number,
+  event: RobberMovedEvent,
+): GameState => {
+  if (state.phase.tag !== "turn.robber") return state;
+  return {
+    ...state,
+    sequence,
+    layout: { ...state.layout, robberHexId: event.toHexId },
+    players: transferStolenResource(
+      state.players,
+      event.playerId,
+      event.victimPlayerId,
+      event.stolenResource,
+    ),
+    random: { ...state.random, resourceSteal: event.nextRandom },
+    phase: resumePhase(
+      state.phase.playerIndex,
+      state.phase.turn,
+      state.phase.developmentCardPlayed,
+      state.phase.continuation,
+    ),
+  };
+};
+
+const applyKnightPlayed = (
+  state: GameState,
+  sequence: number,
+  event: KnightPlayedEvent,
+): GameState => ({
+  ...state,
+  sequence,
+  players: removeDevelopmentCard(state.players, event.playerId, "knight", true),
+  phase: {
+    tag: "turn.robber",
+    playerIndex: state.phase.playerIndex,
+    turn: "turn" in state.phase ? state.phase.turn : 1,
+    source: "knight",
+    continuation: continuationFromPhase(state.phase),
+    developmentCardPlayed: true,
+  },
+});
+
+const applyRoadBuildingPlayed = (
+  state: GameState,
+  sequence: number,
+  event: RoadBuildingPlayedEvent,
+): GameState => {
+  const continuation = continuationFromPhase(state.phase);
+  const turn = "turn" in state.phase ? state.phase.turn : 1;
+  return {
+    ...state,
+    sequence,
+    players: removeDevelopmentCard(state.players, event.playerId, "road-building", false),
+    developmentDiscard: [...state.developmentDiscard, "road-building"],
+    phase:
+      event.roadsToPlace === 0
+        ? resumePhase(state.phase.playerIndex, turn, true, continuation)
+        : {
+            tag: "turn.free-road",
+            playerIndex: state.phase.playerIndex,
+            turn,
+            remaining: event.roadsToPlace,
+            continuation,
+            developmentCardPlayed: true,
+          },
+  };
+};
+
+const hasFreeRoadPlacement = (state: GameState, playerId: PlayerId): boolean =>
+  playerRoadCount(state, playerId) < 15 &&
+  state.topology.edges.some((edge) => canBuildRoadAt(state, playerId, edge.id));
+
+const applyFreeRoadPlaced = (
+  state: GameState,
+  sequence: number,
+  event: FreeRoadPlacedEvent,
+): GameState => {
+  if (state.phase.tag !== "turn.free-road") return state;
+  const reduced: GameState = {
+    ...state,
+    sequence,
+    occupancy: {
+      ...state.occupancy,
+      roads: [...state.occupancy.roads, { edgeId: event.edgeId, playerId: event.playerId }],
+    },
+  };
+  return {
+    ...reduced,
+    phase:
+      state.phase.remaining > 1 && hasFreeRoadPlacement(reduced, event.playerId)
+        ? { ...state.phase, remaining: 1 }
+        : resumePhase(state.phase.playerIndex, state.phase.turn, true, state.phase.continuation),
+  };
+};
+
+const applyYearOfPlentyPlayed = (
+  state: GameState,
+  sequence: number,
+  event: YearOfPlentyPlayedEvent,
+): GameState => ({
+  ...state,
+  sequence,
+  bank: subtractResources(state.bank, event.granted),
+  players: updatePlayerResources(
+    removeDevelopmentCard(state.players, event.playerId, "year-of-plenty", false),
+    event.playerId,
+    event.granted,
+  ),
+  developmentDiscard: [...state.developmentDiscard, "year-of-plenty"],
+  phase: phaseWithDevelopmentCardPlayed(state.phase),
+});
+
+const applyMonopolyPlayed = (
+  state: GameState,
+  sequence: number,
+  event: MonopolyPlayedEvent,
+): GameState => {
+  const total = event.transfers.reduce((sum, transfer) => sum + transfer.amount, 0);
+  const withoutOpponents = event.transfers.reduce(
+    (players, transfer) =>
+      spendPlayerResources(
+        players,
+        transfer.playerId,
+        resourceAmount(event.resource, transfer.amount),
+      ),
+    removeDevelopmentCard(state.players, event.playerId, "monopoly", false),
+  );
+  return {
+    ...state,
+    sequence,
+    players: updatePlayerResources(
+      withoutOpponents,
+      event.playerId,
+      resourceAmount(event.resource, total),
+    ),
+    developmentDiscard: [...state.developmentDiscard, "monopoly"],
+    phase: phaseWithDevelopmentCardPlayed(state.phase),
+  };
+};
 
 const applySetupEvent = (state: GameState, envelope: GameEvent): GameState | undefined => {
   const { event, sequence } = envelope;
@@ -419,8 +741,33 @@ const applyNormalEvent = (state: GameState, envelope: GameEvent): GameState | un
   }
 };
 
+const applyEffectEvent = (state: GameState, envelope: GameEvent): GameState | undefined => {
+  const { event, sequence } = envelope;
+  switch (event.type) {
+    case "resource.discarded":
+      return applyResourceDiscarded(state, sequence, event);
+    case "robber.moved":
+      return applyRobberMoved(state, sequence, event);
+    case "knight.played":
+      return applyKnightPlayed(state, sequence, event);
+    case "road-building.played":
+      return applyRoadBuildingPlayed(state, sequence, event);
+    case "free-road.placed":
+      return applyFreeRoadPlaced(state, sequence, event);
+    case "year-of-plenty.played":
+      return applyYearOfPlentyPlayed(state, sequence, event);
+    case "monopoly.played":
+      return applyMonopolyPlayed(state, sequence, event);
+    default:
+      return undefined;
+  }
+};
+
 export const applyEvent = (state: GameState, envelope: GameEvent): GameState =>
-  applySetupEvent(state, envelope) ?? applyNormalEvent(state, envelope) ?? state;
+  applySetupEvent(state, envelope) ??
+  applyNormalEvent(state, envelope) ??
+  applyEffectEvent(state, envelope) ??
+  state;
 
 const currentPlayerId = (state: GameState): PlayerId | null =>
   state.config.players[state.phase.playerIndex]?.id ?? null;
@@ -895,6 +1242,267 @@ const decideEndTurn = (
     });
   });
 
+const decideDiscardResource = (
+  state: GameState,
+  envelope: GameCommand,
+  command: DiscardResourceCommand,
+): Effect.Effect<EventBatch, RuleViolation> => {
+  if (state.phase.tag !== "turn.discard") {
+    return failure("wrong-command", "No resource discard is pending.");
+  }
+  const player = playerById(state, envelope.playerId);
+  if (player === undefined || player.resources[command.resource] < 1) {
+    return failure("invalid-discard", "The player does not hold that resource card.");
+  }
+  return Effect.succeed(
+    actionEvent(state, envelope, {
+      type: "resource.discarded" as const,
+      playerId: envelope.playerId,
+      resource: command.resource,
+    }),
+  );
+};
+
+const robberVictims = (
+  state: GameState,
+  hexId: HexId,
+  playerId: PlayerId,
+): ReadonlyArray<PlayerId> => {
+  const hex = state.topology.hexes.find(({ id }) => id === hexId);
+  if (hex === undefined) return [];
+  const vertexIds = new Set(hex.vertexIds);
+  return state.players
+    .filter(
+      (player) =>
+        player.id !== playerId &&
+        state.occupancy.buildings.some(
+          (building) => building.playerId === player.id && vertexIds.has(building.vertexId),
+        ),
+    )
+    .map(({ id }) => id);
+};
+
+const randomlySelectedResource = (
+  resources: ResourceCounts,
+  random: GameState["random"]["resourceSteal"],
+): { readonly resource: Resource | null; readonly nextRandom: typeof random } => {
+  const total = resourceTotal(resources);
+  if (total === 0) return { resource: null, nextRandom: random };
+  const selected = nextInt(random, total);
+  let offset = selected.value;
+  for (const resource of RESOURCE_KEYS) {
+    if (offset < resources[resource]) return { resource, nextRandom: selected.state };
+    offset -= resources[resource];
+  }
+  throw new Error("The selected resource index is invalid.");
+};
+
+const validRobberVictim = (
+  victims: ReadonlyArray<PlayerId>,
+  victimPlayerId: PlayerId | null,
+): boolean =>
+  victims.length === 0
+    ? victimPlayerId === null
+    : victimPlayerId !== null && victims.includes(victimPlayerId);
+
+const validateRobberMove = (
+  state: GameState,
+  playerId: PlayerId,
+  command: MoveRobberCommand,
+): Effect.Effect<void, RuleViolation> => {
+  if (!state.topology.hexes.some(({ id }) => id === command.hexId)) {
+    return failure("unknown-location", "The robber destination does not exist.");
+  }
+  if (command.hexId === state.layout.robberHexId) {
+    return failure("robber-must-move", "The robber must move to a different hex.");
+  }
+  const victims = robberVictims(state, command.hexId, playerId);
+  return validRobberVictim(victims, command.victimPlayerId)
+    ? Effect.void
+    : failure("invalid-victim", "The robber action must name an eligible victim.");
+};
+
+const selectedRobberResource = (
+  state: GameState,
+  victimPlayerId: PlayerId | null,
+): ReturnType<typeof randomlySelectedResource> => {
+  const victim = victimPlayerId === null ? undefined : playerById(state, victimPlayerId);
+  return randomlySelectedResource(victim?.resources ?? EMPTY_RESOURCES, state.random.resourceSteal);
+};
+
+const decideMoveRobber = (
+  state: GameState,
+  envelope: GameCommand,
+  command: MoveRobberCommand,
+): Effect.Effect<EventBatch, RuleViolation> => {
+  if (state.phase.tag !== "turn.robber") {
+    return failure("wrong-command", "No robber move is pending.");
+  }
+  return Effect.map(validateRobberMove(state, envelope.playerId, command), () => {
+    const selected = selectedRobberResource(state, command.victimPlayerId);
+    return actionEvent(state, envelope, {
+      type: "robber.moved" as const,
+      playerId: envelope.playerId,
+      fromHexId: state.layout.robberHexId,
+      toHexId: command.hexId,
+      victimPlayerId: command.victimPlayerId,
+      stolenResource: selected.resource,
+      nextRandom: selected.nextRandom,
+    });
+  });
+};
+
+const developmentPhase = (
+  state: GameState,
+):
+  | Extract<GamePhase, { readonly tag: "turn.roll" | "turn.action" | "turn.robber" }>
+  | undefined => {
+  const phase = state.phase;
+  return phase.tag === "turn.roll" || phase.tag === "turn.action" || phase.tag === "turn.robber"
+    ? phase
+    : undefined;
+};
+
+const canPlayDevelopmentCard = (
+  state: GameState,
+  playerId: PlayerId,
+  card: PlayerState["developmentCards"][number]["card"],
+): boolean => {
+  const phase = developmentPhase(state);
+  const player = playerById(state, playerId);
+  return (
+    phase !== undefined &&
+    !phase.developmentCardPlayed &&
+    (player?.developmentCards.some(
+      (owned) => owned.card === card && owned.purchasedTurn < phase.turn,
+    ) ??
+      false)
+  );
+};
+
+const requireDevelopmentCard = (
+  state: GameState,
+  playerId: PlayerId,
+  card: PlayerState["developmentCards"][number]["card"],
+): Effect.Effect<void, RuleViolation> =>
+  canPlayDevelopmentCard(state, playerId, card)
+    ? Effect.void
+    : failure(
+        "development-card-unavailable",
+        "The development card cannot be played in the current turn.",
+      );
+
+const decidePlayKnight = (
+  state: GameState,
+  envelope: GameCommand,
+  _command: PlayKnightCommand,
+): Effect.Effect<EventBatch, RuleViolation> =>
+  Effect.map(requireDevelopmentCard(state, envelope.playerId, "knight"), () =>
+    actionEvent(state, envelope, {
+      type: "knight.played" as const,
+      playerId: envelope.playerId,
+    }),
+  );
+
+const freeRoadCount = (state: GameState, playerId: PlayerId): 0 | 1 | 2 => {
+  if (!hasFreeRoadPlacement(state, playerId)) return 0;
+  return playerRoadCount(state, playerId) === 14 ? 1 : 2;
+};
+
+const decidePlayRoadBuilding = (
+  state: GameState,
+  envelope: GameCommand,
+  _command: PlayRoadBuildingCommand,
+): Effect.Effect<EventBatch, RuleViolation> =>
+  Effect.map(requireDevelopmentCard(state, envelope.playerId, "road-building"), () =>
+    actionEvent(state, envelope, {
+      type: "road-building.played" as const,
+      playerId: envelope.playerId,
+      roadsToPlace: freeRoadCount(state, envelope.playerId),
+    }),
+  );
+
+const decidePlaceFreeRoad = (
+  state: GameState,
+  envelope: GameCommand,
+  command: PlaceFreeRoadCommand,
+): Effect.Effect<EventBatch, RuleViolation> => {
+  if (state.phase.tag !== "turn.free-road") {
+    return failure("wrong-command", "No free road placement is pending.");
+  }
+  if (!state.topology.edges.some(({ id }) => id === command.edgeId)) {
+    return failure("unknown-location", "The road edge does not exist.");
+  }
+  if (state.occupancy.roads.some(({ edgeId }) => edgeId === command.edgeId)) {
+    return failure("occupied-edge", "The road edge is occupied.");
+  }
+  if (playerRoadCount(state, envelope.playerId) >= 15) {
+    return failure("piece-supply", "The player has no road piece available.");
+  }
+  if (!canBuildRoadAt(state, envelope.playerId, command.edgeId)) {
+    return failure("disconnected-route", "The road must connect to the player's route.");
+  }
+  return Effect.succeed(
+    actionEvent(state, envelope, {
+      type: "free-road.placed" as const,
+      playerId: envelope.playerId,
+      edgeId: command.edgeId,
+    }),
+  );
+};
+
+const yearOfPlentyGrant = (
+  bank: ResourceCounts,
+  requested: readonly [Resource, Resource],
+): ResourceCounts => {
+  let grant = EMPTY_RESOURCES;
+  let available = bank;
+  for (const resource of requested) {
+    if (available[resource] < 1) continue;
+    const card = resourceAmount(resource, 1);
+    grant = addResources(grant, card);
+    available = subtractResources(available, card);
+  }
+  return grant;
+};
+
+const decidePlayYearOfPlenty = (
+  state: GameState,
+  envelope: GameCommand,
+  command: PlayYearOfPlentyCommand,
+): Effect.Effect<EventBatch, RuleViolation> =>
+  Effect.map(requireDevelopmentCard(state, envelope.playerId, "year-of-plenty"), () =>
+    actionEvent(state, envelope, {
+      type: "year-of-plenty.played" as const,
+      playerId: envelope.playerId,
+      requested: command.resources,
+      granted: yearOfPlentyGrant(state.bank, command.resources),
+    }),
+  );
+
+const monopolyTransfers = (
+  state: GameState,
+  playerId: PlayerId,
+  resource: Resource,
+): ReadonlyArray<{ readonly playerId: PlayerId; readonly amount: number }> =>
+  state.players
+    .filter((player) => player.id !== playerId && player.resources[resource] > 0)
+    .map((player) => ({ playerId: player.id, amount: player.resources[resource] }));
+
+const decidePlayMonopoly = (
+  state: GameState,
+  envelope: GameCommand,
+  command: PlayMonopolyCommand,
+): Effect.Effect<EventBatch, RuleViolation> =>
+  Effect.map(requireDevelopmentCard(state, envelope.playerId, "monopoly"), () =>
+    actionEvent(state, envelope, {
+      type: "monopoly.played" as const,
+      playerId: envelope.playerId,
+      resource: command.resource,
+      transfers: monopolyTransfers(state, envelope.playerId, command.resource),
+    }),
+  );
+
 const decideSetupCommand = (
   state: GameState,
   command: GameCommand,
@@ -912,7 +1520,7 @@ const decideSetupCommand = (
 const decideNormalCommand = (
   state: GameState,
   command: GameCommand,
-): Effect.Effect<EventBatch, RuleViolation> => {
+): Effect.Effect<EventBatch, RuleViolation> | undefined => {
   switch (command.command.type) {
     case "roll-dice":
       return decideRollDice(state, command, command.command);
@@ -929,7 +1537,31 @@ const decideNormalCommand = (
     case "end-turn":
       return decideEndTurn(state, command, command.command);
     default:
-      return failure("wrong-command", "Initial placement is complete.");
+      return undefined;
+  }
+};
+
+const decideEffectCommand = (
+  state: GameState,
+  command: GameCommand,
+): Effect.Effect<EventBatch, RuleViolation> => {
+  switch (command.command.type) {
+    case "discard-resource":
+      return decideDiscardResource(state, command, command.command);
+    case "move-robber":
+      return decideMoveRobber(state, command, command.command);
+    case "play-knight":
+      return decidePlayKnight(state, command, command.command);
+    case "play-road-building":
+      return decidePlayRoadBuilding(state, command, command.command);
+    case "place-free-road":
+      return decidePlaceFreeRoad(state, command, command.command);
+    case "play-year-of-plenty":
+      return decidePlayYearOfPlenty(state, command, command.command);
+    case "play-monopoly":
+      return decidePlayMonopoly(state, command, command.command);
+    default:
+      return failure("wrong-command", "The command is not available in the current phase.");
   }
 };
 
@@ -948,8 +1580,11 @@ export const decide = (
       ),
     )) as GameCommand;
     yield* checkCommonCommand(state, command);
-    const setupDecision = decideSetupCommand(state, command);
-    return yield* setupDecision ?? decideNormalCommand(state, command);
+    const decision =
+      decideSetupCommand(state, command) ??
+      decideNormalCommand(state, command) ??
+      decideEffectCommand(state, command);
+    return yield* decision;
   });
 
 export const handleCommand = (
@@ -1087,26 +1722,134 @@ const legalMaritimeActions = (state: GameState, playerId: PlayerId): ReadonlyArr
   return actions;
 };
 
-export const legalActions = (state: GameState): ReadonlyArray<LegalAction> => {
-  const playerId = currentPlayerId(state);
-  if (playerId === null) return [];
+const legalDiscardActions = (state: GameState, playerId: PlayerId): ReadonlyArray<LegalAction> => {
+  const player = playerById(state, playerId);
+  if (player === undefined) return [];
+  return RESOURCE_KEYS.filter((resource) => player.resources[resource] > 0).map((resource) =>
+    makeAction(state, playerId, `discard:${resource}`, { type: "discard-resource", resource }),
+  );
+};
+
+const legalRobberActions = (state: GameState, playerId: PlayerId): ReadonlyArray<LegalAction> =>
+  state.topology.hexes
+    .filter(({ id }) => id !== state.layout.robberHexId)
+    .flatMap((hex) => {
+      const victims = robberVictims(state, hex.id, playerId);
+      const choices: ReadonlyArray<PlayerId | null> = victims.length === 0 ? [null] : victims;
+      return choices.map((victimPlayerId) =>
+        makeAction(state, playerId, `move-robber:${hex.id}:${victimPlayerId ?? "none"}`, {
+          type: "move-robber",
+          hexId: hex.id,
+          victimPlayerId,
+        }),
+      );
+    });
+
+const legalFreeRoadActions = (state: GameState, playerId: PlayerId): ReadonlyArray<LegalAction> => {
+  if (playerRoadCount(state, playerId) >= 15) return [];
+  return state.topology.edges
+    .filter((edge) => canBuildRoadAt(state, playerId, edge.id))
+    .map((edge) =>
+      makeAction(state, playerId, `free-road:${edge.id}`, {
+        type: "place-free-road",
+        edgeId: edge.id,
+      }),
+    );
+};
+
+const legalYearOfPlentyActions = (
+  state: GameState,
+  playerId: PlayerId,
+): ReadonlyArray<LegalAction> => {
+  if (!canPlayDevelopmentCard(state, playerId, "year-of-plenty")) return [];
+  const actions: LegalAction[] = [];
+  for (let first = 0; first < RESOURCE_KEYS.length; first += 1) {
+    for (let second = first; second < RESOURCE_KEYS.length; second += 1) {
+      const resources = [RESOURCE_KEYS[first]!, RESOURCE_KEYS[second]!] as const;
+      actions.push(
+        makeAction(state, playerId, `play-year-of-plenty:${resources.join(":")}`, {
+          type: "play-year-of-plenty",
+          resources,
+        }),
+      );
+    }
+  }
+  return actions;
+};
+
+const legalActionDevelopmentCards = (
+  state: GameState,
+  playerId: PlayerId,
+): ReadonlyArray<LegalAction> => {
+  const actions: LegalAction[] = [];
+  if (canPlayDevelopmentCard(state, playerId, "knight")) {
+    actions.push(makeAction(state, playerId, "play-knight", { type: "play-knight" }));
+  }
+  if (canPlayDevelopmentCard(state, playerId, "road-building")) {
+    actions.push(makeAction(state, playerId, "play-road-building", { type: "play-road-building" }));
+  }
+  if (canPlayDevelopmentCard(state, playerId, "monopoly")) {
+    for (const resource of RESOURCE_KEYS) {
+      actions.push(
+        makeAction(state, playerId, `play-monopoly:${resource}`, {
+          type: "play-monopoly",
+          resource,
+        }),
+      );
+    }
+  }
+  actions.push(...legalYearOfPlentyActions(state, playerId));
+  return actions;
+};
+
+const legalSetupActions = (
+  state: GameState,
+  playerId: PlayerId,
+): ReadonlyArray<LegalAction> | undefined => {
   switch (state.phase.tag) {
     case "setup.settlement":
       return legalInitialSettlementActions(state, playerId);
     case "setup.road":
       return legalInitialRoadActions(state, playerId);
     case "setup.completing":
-    case "turn.robber":
       return [];
+    default:
+      return undefined;
+  }
+};
+
+const legalTurnActions = (state: GameState, playerId: PlayerId): ReadonlyArray<LegalAction> => {
+  switch (state.phase.tag) {
+    case "turn.discard":
+      return legalDiscardActions(state, playerId);
+    case "turn.robber":
+      return [
+        ...legalActionDevelopmentCards(state, playerId),
+        ...legalRobberActions(state, playerId),
+      ];
+    case "turn.free-road":
+      return legalFreeRoadActions(state, playerId);
     case "turn.roll":
-      return [makeAction(state, playerId, "roll", { type: "roll-dice" })];
+      return [
+        ...legalActionDevelopmentCards(state, playerId),
+        makeAction(state, playerId, "roll", { type: "roll-dice" }),
+      ];
     case "turn.action":
       return [
         ...legalBuildActions(state, playerId),
         ...legalMaritimeActions(state, playerId),
+        ...legalActionDevelopmentCards(state, playerId),
         makeAction(state, playerId, "end-turn", { type: "end-turn" }),
       ];
+    default:
+      return [];
   }
+};
+
+export const legalActions = (state: GameState): ReadonlyArray<LegalAction> => {
+  const playerId = currentPlayerId(state);
+  if (playerId === null) return [];
+  return legalSetupActions(state, playerId) ?? legalTurnActions(state, playerId);
 };
 
 export const observe = (state: GameState, viewer: Viewer = { type: "public" }): GameObservation => {
@@ -1142,6 +1885,7 @@ export const observe = (state: GameState, viewer: Viewer = { type: "public" }): 
     }),
     bank: state.bank,
     ownResources: ownPlayer?.resources ?? null,
+    ownDevelopmentCards: ownPlayer?.developmentCards ?? null,
   };
 };
 
@@ -1235,8 +1979,66 @@ const normalCommandFromEvent = (state: GameState, envelope: GameEvent): GameComm
   }
 };
 
+const effectCommandFromEvent = (state: GameState, envelope: GameEvent): GameCommand | undefined => {
+  const common = {
+    schema: "catanarchy.command.v1" as const,
+    matchId: envelope.matchId,
+    commandId: envelope.commandId,
+    expectedSequence: state.sequence,
+  };
+  switch (envelope.event.type) {
+    case "resource.discarded":
+      return {
+        ...common,
+        playerId: envelope.event.playerId,
+        command: { type: "discard-resource", resource: envelope.event.resource },
+      };
+    case "robber.moved":
+      return {
+        ...common,
+        playerId: envelope.event.playerId,
+        command: {
+          type: "move-robber",
+          hexId: envelope.event.toHexId,
+          victimPlayerId: envelope.event.victimPlayerId,
+        },
+      };
+    case "knight.played":
+      return { ...common, playerId: envelope.event.playerId, command: { type: "play-knight" } };
+    case "road-building.played":
+      return {
+        ...common,
+        playerId: envelope.event.playerId,
+        command: { type: "play-road-building" },
+      };
+    case "free-road.placed":
+      return {
+        ...common,
+        playerId: envelope.event.playerId,
+        command: { type: "place-free-road", edgeId: envelope.event.edgeId },
+      };
+    case "year-of-plenty.played":
+      return {
+        ...common,
+        playerId: envelope.event.playerId,
+        command: { type: "play-year-of-plenty", resources: envelope.event.requested },
+      };
+    case "monopoly.played":
+      return {
+        ...common,
+        playerId: envelope.event.playerId,
+        command: { type: "play-monopoly", resource: envelope.event.resource },
+      };
+    default:
+      return undefined;
+  }
+};
+
 const commandFromEvent = (state: GameState, envelope: GameEvent): GameCommand | null =>
-  setupCommandFromEvent(state, envelope) ?? normalCommandFromEvent(state, envelope) ?? null;
+  setupCommandFromEvent(state, envelope) ??
+  normalCommandFromEvent(state, envelope) ??
+  effectCommandFromEvent(state, envelope) ??
+  null;
 
 const replayFailure = (message: string): ReplayViolation => new ReplayViolation({ message });
 

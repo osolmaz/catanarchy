@@ -80,7 +80,13 @@ const blankState = (): GameState => {
   const state = Effect.runSync(createGame(config())).state;
   return {
     ...state,
-    phase: { tag: "turn.action", playerIndex: 0, turn: 1, dice: [3, 3] },
+    phase: {
+      tag: "turn.action",
+      playerIndex: 0,
+      turn: 1,
+      dice: [3, 3],
+      developmentCardPlayed: false,
+    },
   };
 };
 
@@ -126,7 +132,7 @@ const diceStateForTotal = (total: number): GameState["random"]["dice"] => {
 
 const withRollTotal = (state: GameState, total: number): GameState => ({
   ...state,
-  phase: { tag: "turn.roll", playerIndex: 0, turn: 1 },
+  phase: { tag: "turn.roll", playerIndex: 0, turn: 1, developmentCardPlayed: false },
   random: { ...state.random, dice: diceStateForTotal(total) },
 });
 
@@ -282,12 +288,15 @@ describe("normal turn production", () => {
     expect(event.type === "dice.rolled" ? event.shortages : []).toContain(resource);
   });
 
-  it("stops at the explicit robber boundary after a seven", () => {
+  it("requires a robber move after a seven when no discard is needed", () => {
     const state = withRollTotal(blankState(), 7);
     const result = roll(state);
 
     expect(result.state.phase.tag).toBe("turn.robber");
-    expect(legalActions(result.state)).toEqual([]);
+    expect(legalActions(result.state)).toHaveLength(18);
+    expect(
+      legalActions(result.state).every(({ command }) => command.command.type === "move-robber"),
+    ).toBe(true);
   });
 });
 
@@ -390,11 +399,19 @@ describe("normal turn actions", () => {
 
   it("replaces an owned settlement with a city and pays its cost", () => {
     const fixture = roadFixture();
+    const otherVertex = fixture.state.topology.vertices.find(({ id }) => id !== fixture.start)!;
+    const state: GameState = {
+      ...fixture.state,
+      occupancy: {
+        ...fixture.state.occupancy,
+        buildings: [
+          ...fixture.state.occupancy.buildings,
+          { vertexId: otherVertex.id, playerId: "blue", kind: "settlement" },
+        ],
+      },
+    };
     const result = Effect.runSync(
-      handleCommand(
-        fixture.state,
-        command(fixture.state, { type: "build-city", vertexId: fixture.start }),
-      ),
+      handleCommand(state, command(state, { type: "build-city", vertexId: fixture.start })),
     );
 
     expect(result.state.occupancy.buildings).toContainEqual({
@@ -404,7 +421,12 @@ describe("normal turn actions", () => {
     });
     expect(result.state.players[0]!.resources.grain).toBe(3);
     expect(result.state.players[0]!.resources.ore).toBe(1);
-    expect(result.state.occupancy.buildings).toHaveLength(1);
+    expect(result.state.occupancy.buildings).toContainEqual({
+      vertexId: otherVertex.id,
+      playerId: "blue",
+      kind: "settlement",
+    });
+    expect(result.state.occupancy.buildings).toHaveLength(2);
   });
 
   it("buys the top development card without exposing its identity in observations", () => {
@@ -426,9 +448,9 @@ describe("normal turn actions", () => {
     });
     expect(JSON.stringify(result.state)).toContain(topCard);
     expect(JSON.stringify(observe(result.state))).not.toContain(topCard);
-    expect(
-      JSON.stringify(observe(result.state, { type: "player", playerId: "red" })),
-    ).not.toContain(topCard);
+    expect(JSON.stringify(observe(result.state, { type: "player", playerId: "red" }))).toContain(
+      topCard,
+    );
     expect(checkInvariants(result.state)).toEqual([]);
   });
 
@@ -504,7 +526,12 @@ describe("normal turn actions", () => {
     const state = blankState();
     const result = Effect.runSync(handleCommand(state, command(state, { type: "end-turn" })));
 
-    expect(result.state.phase).toEqual({ tag: "turn.roll", playerIndex: 1, turn: 2 });
+    expect(result.state.phase).toEqual({
+      tag: "turn.roll",
+      playerIndex: 1,
+      turn: 2,
+      developmentCardPlayed: false,
+    });
     expect(legalActions(result.state)).toHaveLength(1);
     expect(legalActions(result.state)[0]!.command.playerId).toBe("blue");
   });
@@ -551,7 +578,7 @@ describe("normal turn actions", () => {
 
     const rollPhase: GameState = {
       ...fixture.state,
-      phase: { tag: "turn.roll", playerIndex: 0, turn: 1 },
+      phase: { tag: "turn.roll", playerIndex: 0, turn: 1, developmentCardPlayed: false },
     };
     expect(() =>
       Effect.runSync(handleCommand(rollPhase, command(rollPhase, { type: "end-turn" }))),

@@ -66,20 +66,21 @@ describe("web simulator", () => {
     }
 
     fireEvent.click(screen.getByRole("button", { name: "Roll dice" }));
-    expect(screen.getByText(/Red: trade, build, or end turn after/)).toBeTruthy();
+    expect(screen.getByText(/Red: trade, build, play a card, or end turn after/)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "End turn" }));
     expect(screen.getByText("Blue: roll the dice (turn 2)")).toBeTruthy();
   });
 
-  it("shows the explicit robber boundary after a seven", () => {
+  it("moves the robber after a seven", () => {
     const { container } = render(<App />);
     for (let turn = 0; turn < 16; turn += 1) {
       fireEvent.click(firstLegalAction(container)!);
     }
 
     fireEvent.click(screen.getByRole("button", { name: "Roll dice" }));
-    expect(screen.getByText(/resolve a rolled seven/)).toBeTruthy();
-    expect(screen.getByText("No action is available.")).toBeTruthy();
+    expect(screen.getByText("Red: move the robber (roll)")).toBeTruthy();
+    fireEvent.click(screen.getAllByRole("button", { name: /^Move robber/ })[0]!);
+    expect(screen.getByText(/Red: trade, build, play a card, or end turn after/)).toBeTruthy();
   });
 
   it("navigates accepted-command frames without enabling historical actions", () => {

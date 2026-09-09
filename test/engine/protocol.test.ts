@@ -81,6 +81,52 @@ describe("protocol boundaries", () => {
     expect(Effect.runSync(decodeGameEventEnvelope(roll))).toEqual(roll);
   });
 
+  it("decodes robber and development-card commands and events", () => {
+    const move = {
+      schema: "catanarchy.command.v1",
+      matchId: "protocol",
+      commandId: "robber-1",
+      playerId: "red",
+      expectedSequence: 21,
+      command: { type: "move-robber", hexId: "h:0:0", victimPlayerId: null },
+    };
+    const plenty = {
+      ...move,
+      commandId: "plenty-1",
+      command: { type: "play-year-of-plenty", resources: ["ore", "ore"] },
+    };
+    const robberEvent = {
+      schema: "catanarchy.game-event.v1",
+      matchId: "protocol",
+      commandId: "robber-1",
+      sequence: 22,
+      event: {
+        type: "robber.moved",
+        playerId: "red",
+        fromHexId: "h:0:0",
+        toHexId: "h:1:0",
+        victimPlayerId: null,
+        stolenResource: null,
+        nextRandom: { algorithm: "catanarchy-prng-v1", value: 7, draws: 0 },
+      },
+    };
+    const monopolyEvent = {
+      ...robberEvent,
+      commandId: "monopoly-1",
+      event: {
+        type: "monopoly.played",
+        playerId: "red",
+        resource: "ore",
+        transfers: [{ playerId: "blue", amount: 2 }],
+      },
+    };
+
+    expect(Effect.runSync(decodeGameCommand(move))).toEqual(move);
+    expect(Effect.runSync(decodeGameCommand(plenty))).toEqual(plenty);
+    expect(Effect.runSync(decodeGameEventEnvelope(robberEvent))).toEqual(robberEvent);
+    expect(Effect.runSync(decodeGameEventEnvelope(monopolyEvent))).toEqual(monopolyEvent);
+  });
+
   it("exports stable vocabulary", () => {
     expect(PLAYER_COLORS).toEqual(["red", "blue", "white", "orange"]);
     expect(RESOURCE_TYPES).toHaveLength(5);
