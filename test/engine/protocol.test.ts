@@ -1,6 +1,8 @@
 import {
   decodeGameCommand,
   decodeGameConfig,
+  decodeGameEventEnvelope,
+  DEVELOPMENT_CARDS,
   GameConfigSchema,
   PLAYER_COLORS,
   RESOURCE_TYPES,
@@ -51,9 +53,44 @@ describe("protocol boundaries", () => {
     ).toBe(true);
   });
 
+  it("decodes normal-turn commands and random outcome events", () => {
+    const trade = {
+      schema: "catanarchy.command.v1",
+      matchId: "protocol",
+      commandId: "trade-1",
+      playerId: "red",
+      expectedSequence: 20,
+      command: { type: "maritime-trade", give: "lumber", receive: "ore" },
+    };
+    const roll = {
+      schema: "catanarchy.game-event.v1",
+      matchId: "protocol",
+      commandId: "roll-1",
+      sequence: 21,
+      event: {
+        type: "dice.rolled",
+        playerId: "red",
+        dice: [3, 4],
+        nextRandom: { algorithm: "catanarchy-prng-v1", value: 7, draws: 2 },
+        grants: [],
+        shortages: [],
+      },
+    };
+
+    expect(Effect.runSync(decodeGameCommand(trade))).toEqual(trade);
+    expect(Effect.runSync(decodeGameEventEnvelope(roll))).toEqual(roll);
+  });
+
   it("exports stable vocabulary", () => {
     expect(PLAYER_COLORS).toEqual(["red", "blue", "white", "orange"]);
     expect(RESOURCE_TYPES).toHaveLength(5);
     expect(TERRAIN_TYPES).toHaveLength(6);
+    expect(DEVELOPMENT_CARDS).toEqual([
+      "knight",
+      "road-building",
+      "year-of-plenty",
+      "monopoly",
+      "victory-point",
+    ]);
   });
 });

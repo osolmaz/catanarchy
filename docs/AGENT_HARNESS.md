@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The agent harness lets scripted agents and Pi model agents use the same game protocol. The first implementation drives the initial-placement phase that the native engine supports now. It does not claim to play a complete Catan game. Normal turns and negotiation will use the same boundary after the engine implements them.
+The agent harness lets scripted agents and Pi model agents use the same game protocol. It can run a fixed number of decisions through setup and normal turns. It stops safely when the engine reaches the current robber boundary. It does not claim to play a complete Catan game. Negotiation will use the same boundary after the engine implements it.
 
 ## Module boundaries
 
@@ -59,8 +59,9 @@ The system prompt tells the model that it controls one Catan seat, must use only
 - public player summaries
 - occupied vertices and edges
 - board terrain and number tokens
-- legal settlement locations with adjacent terrain, numbers, and harbors
+- legal settlement and city locations with adjacent terrain, numbers, and harbors
 - legal road locations with endpoint IDs
+- roll, development-card purchase, maritime trade, and end-turn actions
 
 The tool input is:
 
@@ -96,12 +97,13 @@ The live runner accepts model references in `provider/model-id` form:
 
 ```bash
 npm run play:pi -- \
-  --models=openai-codex/gpt-5.6-luna,huggingface/deepseek-ai/DeepSeek-V4-Flash \
+  --models=openai/gpt-5.6-luna,huggingface/deepseek-ai/DeepSeek-V4-Flash \
   --seed=42 \
+  --decisions=17 \
   --timeout-ms=90000
 ```
 
-Four seats receive models in round-robin order. The runner rejects unknown models and missing provider authentication before it creates a game. `--max-attempts` defaults to one. `--output` is optional.
+Four seats receive models in round-robin order. The runner rejects unknown models and missing provider authentication before it creates a game. `--decisions` defaults to 16, which completes four-player setup. A larger value continues into normal turns and stops safely at the robber boundary. `--max-attempts` defaults to one. `--output` is optional.
 
 ## Live-test limit
 
@@ -121,6 +123,7 @@ Deterministic tests cover these cases:
 - bounded retry behavior and cancellation
 - round-robin model assignment
 - three-player and four-player setup completion
+- bounded normal-turn decisions and safe stops at phases with no legal action
 - stable event and trace order
 - Pi tool termination and usage extraction through a fake Pi session boundary
 

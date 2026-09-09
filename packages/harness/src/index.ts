@@ -69,17 +69,25 @@ export interface DecisionTrace {
   readonly failure?: DecisionFailure;
 }
 
-export interface InitialPlacementResult {
+export interface MatchRunResult {
   readonly state: GameState;
   readonly events: ReadonlyArray<GameEvent>;
   readonly decisions: ReadonlyArray<DecisionTrace>;
 }
 
-export interface InitialPlacementOptions {
+export interface InitialPlacementResult extends MatchRunResult {}
+
+export interface AgentRunOptions {
   readonly config: GameConfig;
   readonly createAgent: SeatAgentFactory;
   readonly decisionTimeoutMs?: number;
   readonly maxAttempts?: number;
+}
+
+export interface InitialPlacementOptions extends AgentRunOptions {}
+
+export interface GameStepOptions extends AgentRunOptions {
+  readonly maxDecisions: number;
 }
 
 export class HarnessError extends Data.TaggedError("HarnessError")<{
@@ -317,10 +325,23 @@ const chooseAction = async (
   return { action, traces };
 };
 
+const actionsForState = (
+  state: GameState,
+  allowNoLegalActions: boolean,
+): ReadonlyArray<LegalAction> => {
+  const actions = legalActions(state);
+  if (actions.length === 0 && !allowNoLegalActions) {
+    throw new HarnessError({ message: "The active player has no legal action." });
+  }
+  return actions;
+};
+
 const runWithAgents = async (
-  options: InitialPlacementOptions,
+  options: AgentRunOptions,
   agents: ReadonlyMap<string, SeatAgent>,
-): Promise<InitialPlacementResult> => {
+  shouldContinue: (state: GameState, decisionCount: number) => boolean,
+  allowNoLegalActions: boolean,
+): Promise<MatchRunResult> => {
   const timeoutMs = options.decisionTimeoutMs ?? 90_000;
   const maxAttempts = options.maxAttempts ?? 1;
   positiveInteger(timeoutMs, "decisionTimeoutMs", MAX_TIMER_DELAY_MS);
@@ -331,8 +352,9 @@ const runWithAgents = async (
   const events: GameEvent[] = [...created.events];
   const decisions: DecisionTrace[] = [];
   const unavailableAgents = new WeakSet<SeatAgent>();
+  let decisionCount = 0;
 
-  while (state.phase.tag !== "turn.roll") {
+  while (shouldContinue(state, decisionCount)) {
     const activePlayer = options.config.players[state.phase.playerIndex];
     if (activePlayer === undefined) {
       throw new HarnessError({ message: "The active player index is invalid." });
@@ -341,10 +363,8 @@ const runWithAgents = async (
     if (agent === undefined) {
       throw new HarnessError({ message: `No agent exists for player ${activePlayer.id}.` });
     }
-    const actions = legalActions(state);
-    if (actions.length === 0) {
-      throw new HarnessError({ message: "The active player has no legal action." });
-    }
+    const actions = actionsForState(state, allowNoLegalActions);
+    if (actions.length === 0) break;
     const chosen = await chooseAction(
       agent,
       {
@@ -363,6 +383,7 @@ const runWithAgents = async (
     const result = await Effect.runPromise(handleCommand(state, chosen.action.command));
     state = result.state;
     events.push(...result.events);
+    decisionCount += 1;
   }
 
   return { state, events, decisions };
@@ -378,7 +399,8 @@ export const runInitialPlacement = (
     }),
     (agents) =>
       Effect.tryPromise({
-        try: async () => runWithAgents(options, agents),
+        try: async () =>
+          runWithAgents(options, agents, (state) => state.phase.tag !== "turn.roll", false),
         catch: (error) =>
           error instanceof HarnessError
             ? error
@@ -386,6 +408,41 @@ export const runInitialPlacement = (
       }),
     (agents) => Effect.promise(async () => disposeAgents(agents)),
   );
+
+export const runGameSteps = (
+  options: GameStepOptions,
+): Effect.Effect<MatchRunResult, HarnessError> => {
+  try {
+    positiveInteger(options.maxDecisions, "maxDecisions");
+  } catch (error) {
+    return Effect.fail(
+      error instanceof HarnessError
+        ? error
+        : new HarnessError({ message: "maxDecisions is invalid." }),
+    );
+  }
+  return Effect.acquireUseRelease(
+    Effect.tryPromise({
+      try: async () => createAgents(options.config, options.createAgent),
+      catch: () => new HarnessError({ message: "An agent could not be created." }),
+    }),
+    (agents) =>
+      Effect.tryPromise({
+        try: async () =>
+          runWithAgents(
+            options,
+            agents,
+            (_state, decisionCount) => decisionCount < options.maxDecisions,
+            true,
+          ),
+        catch: (error) =>
+          error instanceof HarnessError
+            ? error
+            : new HarnessError({ message: "The game-step run failed." }),
+      }),
+    (agents) => Effect.promise(async () => disposeAgents(agents)),
+  );
+};
 
 export const createFirstLegalAgent = (): SeatAgent => ({
   async decide(request) {

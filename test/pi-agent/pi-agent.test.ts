@@ -145,6 +145,26 @@ describe("Pi action selection", () => {
     expect(prompt).toContain('"adjacentHexes": [');
   });
 
+  it("describes roll and action-phase choices", () => {
+    const normalConfig: GameConfig = { ...config, seed: 0, matchId: "pi-normal-turn" };
+    let state = Effect.runSync(createGame(normalConfig)).state;
+    while (state.phase.tag !== "turn.roll") {
+      state = Effect.runSync(handleCommand(state, legalActions(state)[0]!.command)).state;
+    }
+    const makeRequest = (): AgentDecisionRequest => ({
+      matchId: state.matchId,
+      sequence: state.sequence,
+      playerId: "red",
+      observation: observe(state, { type: "player", playerId: "red" }),
+      legalActions: legalActions(state),
+      signal: new AbortController().signal,
+    });
+
+    expect(buildDecisionPrompt(makeRequest())).toContain('"type": "roll-dice"');
+    state = Effect.runSync(handleCommand(state, legalActions(state)[0]!.command)).state;
+    expect(buildDecisionPrompt(makeRequest())).toContain('"type": "end-turn"');
+  });
+
   it("describes a legal road after a settlement", () => {
     const created = Effect.runSync(createGame(config));
     const settlement = legalActions(created.state)[0];

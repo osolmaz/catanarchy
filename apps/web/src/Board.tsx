@@ -64,10 +64,19 @@ export const Board = ({ observation, legalActions, onAction, interactive }: Boar
   const legalByVertex = new Map<VertexId, LegalAction>();
   const legalByEdge = new Map<EdgeId, LegalAction>();
   for (const action of legalActions) {
-    if (action.command.command.type === "place-initial-settlement") {
-      legalByVertex.set(action.command.command.vertexId, action);
-    } else {
-      legalByEdge.set(action.command.command.edgeId, action);
+    const command = action.command.command;
+    switch (command.type) {
+      case "place-initial-settlement":
+      case "build-settlement":
+      case "build-city":
+        legalByVertex.set(command.vertexId, action);
+        break;
+      case "place-initial-road":
+      case "build-road":
+        legalByEdge.set(command.edgeId, action);
+        break;
+      default:
+        break;
     }
   }
 
@@ -198,14 +207,14 @@ export const Board = ({ observation, legalActions, onAction, interactive }: Boar
             <rect
               key={building.vertexId}
               data-building-vertex={building.vertexId}
-              x={location.x - 8}
-              y={location.y - 8}
-              width="16"
-              height="16"
-              rx="3"
+              x={location.x - (building.kind === "city" ? 10 : 8)}
+              y={location.y - (building.kind === "city" ? 10 : 8)}
+              width={building.kind === "city" ? 20 : 16}
+              height={building.kind === "city" ? 20 : 16}
+              rx={building.kind === "city" ? 1 : 3}
               fill={playerColor(observation, building.playerId)}
-              className="settlement"
-              aria-label={`${building.playerId} settlement on ${building.vertexId}`}
+              className={building.kind}
+              aria-label={`${building.playerId} ${building.kind} on ${building.vertexId}`}
             />
           );
         })}
@@ -229,7 +238,7 @@ export const Board = ({ observation, legalActions, onAction, interactive }: Boar
                 className="legal-road"
                 role="button"
                 tabIndex={0}
-                aria-label={`Place road on ${id}`}
+                aria-label={`${action.command.command.type === "build-road" ? "Build" : "Place"} road on ${id}`}
                 onClick={() => onAction(action)}
                 onKeyDown={(event) => {
                   if (event.key === "Enter" || event.key === " ") onAction(action);
@@ -246,11 +255,19 @@ export const Board = ({ observation, legalActions, onAction, interactive }: Boar
                 data-legal-vertex={id}
                 cx={location.x}
                 cy={location.y}
-                r="7"
-                className="legal-settlement"
+                r={action.command.command.type === "build-city" ? 11 : 7}
+                className={
+                  action.command.command.type === "build-city" ? "legal-city" : "legal-settlement"
+                }
                 role="button"
                 tabIndex={0}
-                aria-label={`Place settlement on ${id}`}
+                aria-label={`${
+                  action.command.command.type === "build-city"
+                    ? "Build city"
+                    : action.command.command.type === "build-settlement"
+                      ? "Build settlement"
+                      : "Place settlement"
+                } on ${id}`}
                 onClick={() => onAction(action)}
                 onKeyDown={(event) => {
                   if (event.key === "Enter" || event.key === " ") onAction(action);

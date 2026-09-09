@@ -117,6 +117,26 @@ describe("state invariants", () => {
     expect(checkInvariants(extraCity)).toContain("building-supply:red");
   });
 
+  it("checks development-card conservation and purchase turns", () => {
+    const state = initialState();
+    const broken: GameState = {
+      ...state,
+      developmentDeck: state.developmentDeck.slice(2),
+      players: state.players.map((player) =>
+        player.id === "red"
+          ? {
+              ...player,
+              developmentCards: [{ card: state.developmentDeck[0]!, purchasedTurn: 0 }],
+            }
+          : player,
+      ),
+    };
+
+    expect(checkInvariants(broken)).toEqual(
+      expect.arrayContaining(["development-card-turn:red", "development-card-conservation"]),
+    );
+  });
+
   it("reports a setup road without its player anchor", () => {
     const state = initialState();
     const broken: GameState = {

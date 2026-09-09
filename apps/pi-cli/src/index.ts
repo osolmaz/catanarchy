@@ -2,10 +2,10 @@
 
 import { writeFile } from "node:fs/promises";
 import {
-  runInitialPlacement,
+  runGameSteps,
   type AgentUsage,
   type DecisionTrace,
-  type InitialPlacementResult,
+  type MatchRunResult,
 } from "@catanarchy/harness";
 import {
   applyEnvironmentAuthentication,
@@ -38,6 +38,7 @@ const seed = integerArgument("seed", 42, 0, 0xffff_ffff);
 const timeoutMs = integerArgument("timeout-ms", 90_000, 1, 0x7fff_ffff);
 const maxAttempts = integerArgument("max-attempts", 1, 1);
 const maxOutputTokens = integerArgument("max-output-tokens", 4_096, 1);
+const maxDecisions = integerArgument("decisions", 16, 1);
 const outputPath = argument("output");
 const modelReferences = (
   argument("models") ?? "openai/gpt-5.6-luna,huggingface/deepseek-ai/DeepSeek-V4-Flash"
@@ -100,18 +101,18 @@ const estimateCost = (
   runtime: ModelRuntime,
   references: ReadonlyArray<PiModelReference>,
 ): Estimate => {
-  let lowUsd = 0;
-  let highUsd = 0;
-  for (let seat = 0; seat < config.players.length; seat += 1) {
-    const reference = references[seat % references.length];
-    if (reference === undefined) {
-      throw new Error("At least one model reference is required.");
-    }
-    const decisionsPerSeat = 4 * maxAttempts;
-    lowUsd += decisionsPerSeat * modelCost(runtime, reference, 8_000, 100, false);
-    highUsd += decisionsPerSeat * modelCost(runtime, reference, 64_000, maxOutputTokens, true);
-  }
-  return { lowUsd, highUsd };
+  if (references.length === 0) throw new Error("At least one model reference is required.");
+  const maximumRequests = maxDecisions * maxAttempts;
+  const lowPerRequest = Math.min(
+    ...references.map((reference) => modelCost(runtime, reference, 8_000, 100, false)),
+  );
+  const highPerRequest = Math.max(
+    ...references.map((reference) => modelCost(runtime, reference, 64_000, maxOutputTokens, true)),
+  );
+  return {
+    lowUsd: maximumRequests * lowPerRequest,
+    highUsd: maximumRequests * highPerRequest,
+  };
 };
 
 const EMPTY_USAGE: AgentUsage = {
@@ -125,7 +126,7 @@ const EMPTY_USAGE: AgentUsage = {
 
 const traceUsage = (decision: DecisionTrace): AgentUsage => decision.usage ?? EMPTY_USAGE;
 
-const totalUsage = (result: InitialPlacementResult): AgentUsage =>
+const totalUsage = (result: MatchRunResult): AgentUsage =>
   result.decisions.reduce<AgentUsage>((usage, decision) => {
     const current = traceUsage(decision);
     return {
@@ -138,7 +139,7 @@ const totalUsage = (result: InitialPlacementResult): AgentUsage =>
     };
   }, EMPTY_USAGE);
 
-const summarize = (result: InitialPlacementResult) => ({
+const summarize = (result: MatchRunResult) => ({
   matchId: result.state.matchId,
   seed,
   sequence: result.state.sequence,
@@ -170,15 +171,16 @@ const main = async (): Promise<void> => {
       lowUsd: Number(estimate.lowUsd.toFixed(6)),
       highUsd: Number(estimate.highUsd.toFixed(6)),
       ceilingUsd: fallbackCeilingUsd,
-      maximumRequests: config.players.length * 4 * maxAttempts,
+      maximumRequests: maxDecisions * maxAttempts,
       maxOutputTokens,
       note: "The providers do not expose an immutable per-run billing cap. The fixed request and token limits bound this smoke test.",
     }),
   );
 
   const result = await Effect.runPromise(
-    runInitialPlacement({
+    runGameSteps({
       config,
+      maxDecisions,
       createAgent: createPiAgentFactory({
         models: modelReferences,
         modelRuntime: runtime,

@@ -251,13 +251,19 @@ h1 {
   filter: drop-shadow(0 1px 0 rgb(0 0 0 / 55%));
 }
 
-.settlement {
+.settlement,
+.city {
   stroke: #2b302d;
   stroke-width: 2;
   filter: drop-shadow(0 2px 1px rgb(0 0 0 / 25%));
 }
 
-.legal-settlement {
+.city {
+  stroke-width: 3;
+}
+
+.legal-settlement,
+.legal-city {
   fill: #fff4b8;
   stroke: #694f10;
   stroke-width: 2;
@@ -314,9 +320,16 @@ aside {
   text-transform: uppercase;
 }
 
+.turn-actions,
 .players {
   display: grid;
   gap: 0.45rem;
+}
+
+.turn-actions p {
+  margin: 0;
+  color: #66736c;
+  font-size: 0.85rem;
 }
 
 .player {
@@ -454,7 +467,8 @@ aside {
 
 @media (prefers-reduced-motion: reduce) {
   .legal-road,
-  .legal-settlement {
+  .legal-settlement,
+  .legal-city {
     animation: none;
   }
 }

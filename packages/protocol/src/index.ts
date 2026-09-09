@@ -14,6 +14,7 @@ export type PlayerId = string;
 export type CommandId = string;
 
 export const PlayerColorSchema = Schema.Literal(...PLAYER_COLORS);
+export const ResourceSchema = Schema.Literal(...RESOURCE_TYPES);
 export const PlayerConfigSchema = Schema.Struct({
   id: Schema.String.pipe(Schema.minLength(1)),
   name: Schema.String.pipe(Schema.minLength(1)),
@@ -110,12 +111,20 @@ export const ResourceCountsSchema = Schema.Struct({
   ore: Schema.Number,
 });
 
-export type DevelopmentCard =
-  | "knight"
-  | "road-building"
-  | "year-of-plenty"
-  | "monopoly"
-  | "victory-point";
+export const DEVELOPMENT_CARDS = [
+  "knight",
+  "road-building",
+  "year-of-plenty",
+  "monopoly",
+  "victory-point",
+] as const;
+export type DevelopmentCard = (typeof DEVELOPMENT_CARDS)[number];
+export const DevelopmentCardSchema = Schema.Literal(...DEVELOPMENT_CARDS);
+
+export interface OwnedDevelopmentCard {
+  readonly card: DevelopmentCard;
+  readonly purchasedTurn: number;
+}
 
 export interface Building {
   readonly vertexId: VertexId;
@@ -136,11 +145,11 @@ export interface BoardOccupancy {
 export interface PlayerState {
   readonly id: PlayerId;
   readonly resources: ResourceCounts;
-  readonly developmentCards: ReadonlyArray<DevelopmentCard>;
+  readonly developmentCards: ReadonlyArray<OwnedDevelopmentCard>;
   readonly playedKnights: number;
 }
 
-export type SetupPhase =
+export type GamePhase =
   | {
       readonly tag: "setup.settlement";
       readonly direction: "forward" | "reverse";
@@ -159,7 +168,19 @@ export type SetupPhase =
   | {
       readonly tag: "turn.roll";
       readonly playerIndex: number;
-      readonly turn: 1;
+      readonly turn: number;
+    }
+  | {
+      readonly tag: "turn.action";
+      readonly playerIndex: number;
+      readonly turn: number;
+      readonly dice: readonly [number, number];
+    }
+  | {
+      readonly tag: "turn.robber";
+      readonly playerIndex: number;
+      readonly turn: number;
+      readonly dice: readonly [number, number];
     };
 
 export interface GameState {
@@ -173,7 +194,7 @@ export interface GameState {
   readonly bank: ResourceCounts;
   readonly players: ReadonlyArray<PlayerState>;
   readonly developmentDeck: ReadonlyArray<DevelopmentCard>;
-  readonly phase: SetupPhase;
+  readonly phase: GamePhase;
   readonly random: {
     readonly board: RandomState;
     readonly developmentDeck: RandomState;
@@ -187,6 +208,12 @@ export interface RandomState {
   readonly value: number;
   readonly draws: number;
 }
+
+export const RandomStateSchema = Schema.Struct({
+  algorithm: Schema.Literal("catanarchy-prng-v1"),
+  value: Schema.Number,
+  draws: Schema.Number,
+});
 
 export interface GameCreatedEvent {
   readonly type: "game.created";
@@ -215,6 +242,60 @@ export interface InitialPlacementCompletedEvent {
   readonly type: "initial-placement.completed";
 }
 
+export interface ResourceGrant {
+  readonly playerId: PlayerId;
+  readonly resources: ResourceCounts;
+}
+
+export interface DiceRolledEvent {
+  readonly type: "dice.rolled";
+  readonly playerId: PlayerId;
+  readonly dice: readonly [number, number];
+  readonly nextRandom: RandomState;
+  readonly grants: ReadonlyArray<ResourceGrant>;
+  readonly shortages: ReadonlyArray<Resource>;
+}
+
+export interface RoadBuiltEvent {
+  readonly type: "road.built";
+  readonly playerId: PlayerId;
+  readonly edgeId: EdgeId;
+}
+
+export interface SettlementBuiltEvent {
+  readonly type: "settlement.built";
+  readonly playerId: PlayerId;
+  readonly vertexId: VertexId;
+}
+
+export interface CityBuiltEvent {
+  readonly type: "city.built";
+  readonly playerId: PlayerId;
+  readonly vertexId: VertexId;
+}
+
+export interface DevelopmentCardBoughtEvent {
+  readonly type: "development-card.bought";
+  readonly playerId: PlayerId;
+  readonly card: DevelopmentCard;
+  readonly purchasedTurn: number;
+}
+
+export interface MaritimeTradeCompletedEvent {
+  readonly type: "maritime-trade.completed";
+  readonly playerId: PlayerId;
+  readonly give: Resource;
+  readonly receive: Resource;
+  readonly rate: 2 | 3 | 4;
+}
+
+export interface TurnEndedEvent {
+  readonly type: "turn.ended";
+  readonly playerId: PlayerId;
+  readonly nextPlayerIndex: number;
+  readonly nextTurn: number;
+}
+
 export interface EventEnvelope<TEvent> {
   readonly schema: "catanarchy.game-event.v1";
   readonly matchId: string;
@@ -228,7 +309,14 @@ export type GameEvent =
   | EventEnvelope<SettlementPlacedEvent>
   | EventEnvelope<InitialResourcesGrantedEvent>
   | EventEnvelope<RoadPlacedEvent>
-  | EventEnvelope<InitialPlacementCompletedEvent>;
+  | EventEnvelope<InitialPlacementCompletedEvent>
+  | EventEnvelope<DiceRolledEvent>
+  | EventEnvelope<RoadBuiltEvent>
+  | EventEnvelope<SettlementBuiltEvent>
+  | EventEnvelope<CityBuiltEvent>
+  | EventEnvelope<DevelopmentCardBoughtEvent>
+  | EventEnvelope<MaritimeTradeCompletedEvent>
+  | EventEnvelope<TurnEndedEvent>;
 
 const EventEnvelopeSchemaFields = {
   schema: Schema.Literal("catanarchy.game-event.v1"),
@@ -273,6 +361,71 @@ export const GameEventEnvelopeSchema = Schema.Union(
     ...EventEnvelopeSchemaFields,
     event: Schema.Struct({ type: Schema.Literal("initial-placement.completed") }),
   }),
+  Schema.Struct({
+    ...EventEnvelopeSchemaFields,
+    event: Schema.Struct({
+      type: Schema.Literal("dice.rolled"),
+      playerId: Schema.String,
+      dice: Schema.Tuple(Schema.Number, Schema.Number),
+      nextRandom: RandomStateSchema,
+      grants: Schema.Array(
+        Schema.Struct({ playerId: Schema.String, resources: ResourceCountsSchema }),
+      ),
+      shortages: Schema.Array(ResourceSchema),
+    }),
+  }),
+  Schema.Struct({
+    ...EventEnvelopeSchemaFields,
+    event: Schema.Struct({
+      type: Schema.Literal("road.built"),
+      playerId: Schema.String,
+      edgeId: Schema.String,
+    }),
+  }),
+  Schema.Struct({
+    ...EventEnvelopeSchemaFields,
+    event: Schema.Struct({
+      type: Schema.Literal("settlement.built"),
+      playerId: Schema.String,
+      vertexId: Schema.String,
+    }),
+  }),
+  Schema.Struct({
+    ...EventEnvelopeSchemaFields,
+    event: Schema.Struct({
+      type: Schema.Literal("city.built"),
+      playerId: Schema.String,
+      vertexId: Schema.String,
+    }),
+  }),
+  Schema.Struct({
+    ...EventEnvelopeSchemaFields,
+    event: Schema.Struct({
+      type: Schema.Literal("development-card.bought"),
+      playerId: Schema.String,
+      card: DevelopmentCardSchema,
+      purchasedTurn: Schema.Number,
+    }),
+  }),
+  Schema.Struct({
+    ...EventEnvelopeSchemaFields,
+    event: Schema.Struct({
+      type: Schema.Literal("maritime-trade.completed"),
+      playerId: Schema.String,
+      give: ResourceSchema,
+      receive: ResourceSchema,
+      rate: Schema.Literal(2, 3, 4),
+    }),
+  }),
+  Schema.Struct({
+    ...EventEnvelopeSchemaFields,
+    event: Schema.Struct({
+      type: Schema.Literal("turn.ended"),
+      playerId: Schema.String,
+      nextPlayerIndex: Schema.Number,
+      nextTurn: Schema.Number,
+    }),
+  }),
 );
 export const decodeGameEventEnvelope = Schema.decodeUnknown(GameEventEnvelopeSchema);
 
@@ -286,7 +439,49 @@ export interface PlaceInitialRoadCommand {
   readonly edgeId: EdgeId;
 }
 
-export type GameCommandPayload = PlaceInitialSettlementCommand | PlaceInitialRoadCommand;
+export interface RollDiceCommand {
+  readonly type: "roll-dice";
+}
+
+export interface BuildRoadCommand {
+  readonly type: "build-road";
+  readonly edgeId: EdgeId;
+}
+
+export interface BuildSettlementCommand {
+  readonly type: "build-settlement";
+  readonly vertexId: VertexId;
+}
+
+export interface BuildCityCommand {
+  readonly type: "build-city";
+  readonly vertexId: VertexId;
+}
+
+export interface BuyDevelopmentCardCommand {
+  readonly type: "buy-development-card";
+}
+
+export interface MaritimeTradeCommand {
+  readonly type: "maritime-trade";
+  readonly give: Resource;
+  readonly receive: Resource;
+}
+
+export interface EndTurnCommand {
+  readonly type: "end-turn";
+}
+
+export type GameCommandPayload =
+  | PlaceInitialSettlementCommand
+  | PlaceInitialRoadCommand
+  | RollDiceCommand
+  | BuildRoadCommand
+  | BuildSettlementCommand
+  | BuildCityCommand
+  | BuyDevelopmentCardCommand
+  | MaritimeTradeCommand
+  | EndTurnCommand;
 
 export interface GameCommand {
   readonly schema: "catanarchy.command.v1";
@@ -320,6 +515,41 @@ export const GameCommandSchema = Schema.Union(
       edgeId: Schema.String,
     }),
   }),
+  Schema.Struct({
+    ...CommandEnvelopeSchemaFields,
+    command: Schema.Struct({ type: Schema.Literal("roll-dice") }),
+  }),
+  Schema.Struct({
+    ...CommandEnvelopeSchemaFields,
+    command: Schema.Struct({ type: Schema.Literal("build-road"), edgeId: Schema.String }),
+  }),
+  Schema.Struct({
+    ...CommandEnvelopeSchemaFields,
+    command: Schema.Struct({
+      type: Schema.Literal("build-settlement"),
+      vertexId: Schema.String,
+    }),
+  }),
+  Schema.Struct({
+    ...CommandEnvelopeSchemaFields,
+    command: Schema.Struct({ type: Schema.Literal("build-city"), vertexId: Schema.String }),
+  }),
+  Schema.Struct({
+    ...CommandEnvelopeSchemaFields,
+    command: Schema.Struct({ type: Schema.Literal("buy-development-card") }),
+  }),
+  Schema.Struct({
+    ...CommandEnvelopeSchemaFields,
+    command: Schema.Struct({
+      type: Schema.Literal("maritime-trade"),
+      give: ResourceSchema,
+      receive: ResourceSchema,
+    }),
+  }),
+  Schema.Struct({
+    ...CommandEnvelopeSchemaFields,
+    command: Schema.Struct({ type: Schema.Literal("end-turn") }),
+  }),
 );
 export const decodeGameCommand = Schema.decodeUnknown(GameCommandSchema);
 
@@ -346,7 +576,7 @@ export interface GameObservation {
   readonly topology: StandardTopology;
   readonly layout: BoardLayout;
   readonly occupancy: BoardOccupancy;
-  readonly phase: SetupPhase;
+  readonly phase: GamePhase;
   readonly activePlayerId: PlayerId | null;
   readonly players: ReadonlyArray<PlayerSummary>;
   readonly bank: ResourceCounts;

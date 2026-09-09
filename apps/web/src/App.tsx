@@ -41,16 +41,48 @@ const resourceText = (resources: GameState["bank"] | null): string =>
 
 const phaseText = (state: GameState): string => {
   const player = state.config.players[state.phase.playerIndex];
-  if (state.phase.tag === "setup.settlement") {
-    return `${player?.name ?? "Player"}: place a settlement (${state.phase.direction} round)`;
+  const playerName = player === undefined ? "Player" : player.name;
+  switch (state.phase.tag) {
+    case "setup.settlement":
+      return `${playerName}: place a settlement (${state.phase.direction} round)`;
+    case "setup.road":
+      return `${playerName}: place an adjacent road (${state.phase.direction} round)`;
+    case "setup.completing":
+      return "Completing initial placement";
+    case "turn.roll":
+      return `${playerName}: roll the dice (turn ${state.phase.turn})`;
+    case "turn.action":
+      return `${playerName}: trade, build, or end turn after ${state.phase.dice.join(" + ")}`;
+    case "turn.robber":
+      return `${playerName}: resolve a rolled seven (planned for Milestone 3)`;
   }
-  if (state.phase.tag === "setup.road") {
-    return `${player?.name ?? "Player"}: place an adjacent road (${state.phase.direction} round)`;
+};
+
+const isBoardAction = (action: LegalAction): boolean => {
+  const type = action.command.command.type;
+  return (
+    type === "place-initial-settlement" ||
+    type === "place-initial-road" ||
+    type === "build-settlement" ||
+    type === "build-road" ||
+    type === "build-city"
+  );
+};
+
+const actionLabel = (action: LegalAction): string => {
+  const command = action.command.command;
+  switch (command.type) {
+    case "roll-dice":
+      return "Roll dice";
+    case "buy-development-card":
+      return "Buy development card";
+    case "maritime-trade":
+      return `Trade ${command.give} for ${command.receive}`;
+    case "end-turn":
+      return "End turn";
+    default:
+      return action.id;
   }
-  if (state.phase.tag === "setup.completing") {
-    return "Completing initial placement";
-  }
-  return "Initial placement complete";
 };
 
 export const App = () => {
@@ -107,9 +139,10 @@ export const App = () => {
       <header className="hero">
         <div>
           <p className="eyebrow">Catanarchy simulator</p>
-          <h1>Build the first settlements</h1>
+          <h1>Play a deterministic game</h1>
           <p className="subtitle">
-            Start a deterministic game, place every initial piece, and inspect its event history.
+            Place pieces, roll for production, build, use maritime trade, and inspect the event
+            history.
           </p>
         </div>
         <form
@@ -195,6 +228,23 @@ export const App = () => {
 
         <aside>
           <section className="panel">
+            <h2>Actions</h2>
+            <div className="turn-actions">
+              {actions
+                .filter((action) => !isBoardAction(action))
+                .map((action) => (
+                  <button key={action.id} type="button" onClick={() => onAction(action)}>
+                    {actionLabel(action)}
+                  </button>
+                ))}
+              {actions.length === 0 ? <p>No action is available.</p> : null}
+              {actions.length > 0 && actions.every(isBoardAction) ? (
+                <p>Select a highlighted board location.</p>
+              ) : null}
+            </div>
+          </section>
+
+          <section className="panel">
             <h2>Players</h2>
             <div className="players">
               {observation.players.map((player) => (
@@ -206,8 +256,9 @@ export const App = () => {
                   <div>
                     <strong>{player.name}</strong>
                     <small>
-                      {player.settlements} settlements · {player.roads} roads ·{" "}
-                      {player.resourceCount} cards
+                      {player.settlements} settlements · {player.cities} cities · {player.roads}{" "}
+                      roads · {player.resourceCount} resources · {player.developmentCardCount}{" "}
+                      development cards
                     </small>
                   </div>
                 </article>

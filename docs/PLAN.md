@@ -6,7 +6,7 @@ Catanarchy will provide a deterministic Catan simulator and a multi-agent negoti
 
 The first rules target is the current three-player and four-player CATAN base game. Expansions and house rules remain outside the first release.
 
-The current implementation covers the standard board and complete initial placement. It also includes a trusted local web client for starting a game, placing setup pieces, and inspecting accepted-command history. Normal turns, negotiation, adapters, and Pi agents remain planned work.
+The current implementation covers the standard board, complete initial placement, production, paid building, development-card purchases, maritime trade, normal turn order, a trusted local web client, and the Pi agent harness. A rolled seven stops at the explicit robber boundary for Milestone 3. Negotiation and adapters remain planned work.
 
 ## Product boundaries
 
@@ -208,15 +208,17 @@ A scripted three-player or four-player game now completes setup through legal ac
 
 ### Milestone 2: production and main turn
 
-- [ ] Add turn phases and command legality.
-- [ ] Implement dice production and bank shortages.
-- [ ] Implement purchases for roads and settlements.
-- [ ] Implement purchases for cities and development cards.
-- [ ] Implement maritime trade rates and harbor ownership.
-- [ ] Allow legal ordering between trade and build operations or card play.
-- [ ] Add exhaustive legal-action generation.
+The [Milestone 2 engine contract](ENGINE.md#milestone-2-contract) locks the phases, dice and shortage behavior, costs, placement rules, maritime rates, commands, events, legal actions, privacy boundary, and tests before implementation.
 
-Completion requires seeded games to progress from setup through repeated normal turns without manual state changes.
+- [x] Add turn phases and command legality.
+- [x] Implement dice production and bank shortages.
+- [x] Implement purchases for roads and settlements.
+- [x] Implement purchases for cities and development cards.
+- [x] Implement maritime trade rates and harbor ownership.
+- [x] Allow legal ordering between trade and build operations.
+- [x] Add exhaustive legal-action generation.
+
+Seeded games now progress from setup through normal turns without manual state changes. A seven stops at `turn.robber` until Milestone 3 adds discard, robber movement, and theft.
 
 ### Milestone 3: robber and development cards
 

@@ -13,7 +13,7 @@ describe("web simulator", () => {
   it("renders the standard board and starts with legal settlements", () => {
     const { container } = render(<App />);
 
-    expect(screen.getByRole("heading", { name: "Build the first settlements" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Play a deterministic game" })).toBeTruthy();
     expect(screen.getByRole("group", { name: "Catan game board" })).toBeTruthy();
     expect(screen.getAllByRole("button", { name: /^Place settlement on / })).toHaveLength(54);
     expect(container.querySelectorAll("[data-hex-id]")).toHaveLength(19);
@@ -48,10 +48,38 @@ describe("web simulator", () => {
       fireEvent.click(action);
     }
 
-    expect(screen.getByText("Initial placement complete")).toBeTruthy();
+    expect(screen.getByText("Red: roll the dice (turn 1)")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Roll dice" })).toBeTruthy();
     expect(container.querySelectorAll("[data-building-vertex]")).toHaveLength(8);
     expect(container.querySelectorAll("[data-road-edge]")).toHaveLength(8);
     expect(firstLegalAction(container)).toBeNull();
+  });
+
+  it("rolls production dice and advances to the next turn", () => {
+    const { container } = render(<App />);
+    fireEvent.change(screen.getByLabelText("Seed"), { target: { value: "0" } });
+    fireEvent.click(screen.getByRole("button", { name: "New game" }));
+    for (let turn = 0; turn < 16; turn += 1) {
+      const action = firstLegalAction(container);
+      if (action === null) throw new Error(`Expected legal action ${turn + 1}.`);
+      fireEvent.click(action);
+    }
+
+    fireEvent.click(screen.getByRole("button", { name: "Roll dice" }));
+    expect(screen.getByText(/Red: trade, build, or end turn after/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "End turn" }));
+    expect(screen.getByText("Blue: roll the dice (turn 2)")).toBeTruthy();
+  });
+
+  it("shows the explicit robber boundary after a seven", () => {
+    const { container } = render(<App />);
+    for (let turn = 0; turn < 16; turn += 1) {
+      fireEvent.click(firstLegalAction(container)!);
+    }
+
+    fireEvent.click(screen.getByRole("button", { name: "Roll dice" }));
+    expect(screen.getByText(/resolve a rolled seven/)).toBeTruthy();
+    expect(screen.getByText("No action is available.")).toBeTruthy();
   });
 
   it("navigates accepted-command frames without enabling historical actions", () => {

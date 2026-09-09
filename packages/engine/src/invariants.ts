@@ -32,16 +32,22 @@ const distanceViolations = (state: GameState): ReadonlyArray<string> => {
   return tooClose ? ["settlement-distance"] : [];
 };
 
-const supplyViolations = (state: GameState): ReadonlyArray<string> => {
+const resourceSupplyViolations = (state: GameState): ReadonlyArray<string> => {
   const violations: string[] = [];
   const allResources = [state.bank, ...state.players.map(({ resources }) => resources)];
   const values = allResources.flatMap(resourceValues);
-  if (values.some((value) => !Number.isSafeInteger(value) || value < 0))
+  if (values.some((value) => !Number.isSafeInteger(value) || value < 0)) {
     violations.push("invalid-resource-count");
+  }
   const hasInvalidSupply = RESOURCE_KEYS.some(
     (resource) => allResources.reduce((total, resources) => total + resources[resource], 0) !== 19,
   );
   if (hasInvalidSupply) violations.push("resource-conservation");
+  return violations;
+};
+
+const pieceSupplyViolations = (state: GameState): ReadonlyArray<string> => {
+  const violations: string[] = [];
   for (const player of state.players) {
     const buildings = state.occupancy.buildings.filter(({ playerId }) => playerId === player.id);
     const settlements = buildings.filter(({ kind }) => kind === "settlement").length;
@@ -53,6 +59,29 @@ const supplyViolations = (state: GameState): ReadonlyArray<string> => {
   }
   return violations;
 };
+
+const developmentCardViolations = (state: GameState): ReadonlyArray<string> => {
+  const violations = state.players
+    .filter((player) =>
+      player.developmentCards.some(
+        ({ purchasedTurn }) => !Number.isSafeInteger(purchasedTurn) || purchasedTurn < 1,
+      ),
+    )
+    .map((player) => `development-card-turn:${player.id}`);
+  const ownedCount = state.players.reduce(
+    (total, player) => total + player.developmentCards.length,
+    0,
+  );
+  return state.developmentDeck.length + ownedCount === 25
+    ? violations
+    : [...violations, "development-card-conservation"];
+};
+
+const supplyViolations = (state: GameState): ReadonlyArray<string> => [
+  ...resourceSupplyViolations(state),
+  ...pieceSupplyViolations(state),
+  ...developmentCardViolations(state),
+];
 
 const phaseViolations = (state: GameState): ReadonlyArray<string> => {
   if (state.phase.playerIndex < 0 || state.phase.playerIndex >= state.players.length)
