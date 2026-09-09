@@ -246,6 +246,22 @@ const updateOfferStatus = (
 const findOpenOffer = (session: NegotiationSession, offerId: string): TradeOffer | undefined =>
   session.offers.find((offer) => offer.id === offerId && offer.status === "open");
 
+const scopeIncludesPlayer = (
+  scope: NegotiationScope,
+  ownerPlayerId: PlayerId,
+  playerId: PlayerId,
+): boolean => scope.type === "public" || playerId === ownerPlayerId || playerId === scope.playerId;
+
+const offerVisibleToScope = (
+  offer: TradeOffer,
+  scope: NegotiationScope,
+  ownerPlayerId: PlayerId,
+): boolean =>
+  scope.type === "public"
+    ? offer.scope.type === "public"
+    : scopeIncludesPlayer(offer.scope, offer.proposerPlayerId, ownerPlayerId) &&
+      scopeIncludesPlayer(offer.scope, offer.proposerPlayerId, scope.playerId);
+
 const validateOfferScope = (
   scope: NegotiationScope,
   targetPlayerId: PlayerId,
@@ -382,6 +398,12 @@ const counterOffer = (
     if (parent === undefined || parent.targetPlayerId !== playerId) {
       return yield* fail("invalid-offer", "Only the target can counter an open offer.");
     }
+    if (!offerVisibleToScope(parent, action.scope, playerId)) {
+      return yield* fail(
+        "invalid-offer",
+        "A counteroffer cannot expose an offer outside its audience.",
+      );
+    }
     const closed = closeOffer(state, session, parent, playerId, "countered");
     const next = yield* createOffer(
       state,
@@ -509,25 +531,15 @@ const rejectOrWithdraw = (
       );
 };
 
-const scopeIncludesPlayer = (
-  scope: NegotiationScope,
-  ownerPlayerId: PlayerId,
-  playerId: PlayerId,
-): boolean => scope.type === "public" || playerId === ownerPlayerId || playerId === scope.playerId;
-
-const relatedOfferIsVisible = (
+const relatedOfferIsVisibleToScope = (
   session: NegotiationSession,
   offerId: string | null,
+  scope: NegotiationScope,
   playerId: PlayerId,
 ): boolean => {
   if (offerId === null) return true;
   const offer = session.offers.find(({ id }) => id === offerId);
-  return (
-    offer !== undefined &&
-    (offer.scope.type === "public" ||
-      playerId === offer.proposerPlayerId ||
-      playerId === offer.targetPlayerId)
-  );
+  return offer !== undefined && offerVisibleToScope(offer, scope, playerId);
 };
 
 const validPromiseFields = (
@@ -540,7 +552,7 @@ const validPromiseFields = (
   action.beneficiaryPlayerId !== playerId &&
   validText(action.text, session.policy.maxMessageLength) &&
   (action.scope.type === "public" || action.scope.playerId === action.beneficiaryPlayerId) &&
-  relatedOfferIsVisible(session, action.relatedOfferId, playerId);
+  relatedOfferIsVisibleToScope(session, action.relatedOfferId, action.scope, playerId);
 
 const nextPromiseId = (
   session: NegotiationSession,
