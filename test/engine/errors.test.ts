@@ -194,8 +194,24 @@ describe("command failures", () => {
 });
 
 describe("replay failures", () => {
-  it("requires game.created at sequence zero", () => {
+  it("requires a decodable game.created event at sequence zero", () => {
     expect(Either.isLeft(Effect.runSync(Effect.either(replay([]))))).toBe(true);
+    expect(
+      Either.isLeft(
+        Effect.runSync(
+          Effect.either(
+            replay([
+              {
+                schema: "catanarchy.game-event.v1",
+                matchId: "errors",
+                sequence: 0,
+                commandId: "malformed",
+              },
+            ]),
+          ),
+        ),
+      ),
+    ).toBe(true);
   });
 
   it("rejects forged initial state and event payloads", () => {

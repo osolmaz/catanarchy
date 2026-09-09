@@ -22,7 +22,7 @@ import type {
   Terrain,
   Viewer,
 } from "@catanarchy/protocol";
-import { decodeGameCommand, decodeGameConfig } from "@catanarchy/protocol";
+import { decodeGameCommand, decodeGameConfig, decodeGameEventEnvelope } from "@catanarchy/protocol";
 import { Effect } from "effect";
 import { ReplayViolation, RuleViolation } from "./errors.js";
 import { generateGameMaterials } from "./layout.js";
@@ -473,11 +473,6 @@ export const observe = (state: GameState, viewer: Viewer = { type: "public" }): 
   };
 };
 
-const isInitialEvent = (event: GameEvent | undefined): event is EventEnvelope<GameCreatedEvent> =>
-  event?.schema === "catanarchy.game-event.v1" &&
-  event.sequence === 0 &&
-  event.event.type === "game.created";
-
 const canonicalize = (value: unknown): unknown => {
   if (Array.isArray(value)) return value.map(canonicalize);
   if (typeof value !== "object" || value === null) return value;
@@ -519,12 +514,12 @@ const commandFromEvent = (state: GameState, envelope: GameEvent): GameCommand | 
 
 const replayFailure = (message: string): ReplayViolation => new ReplayViolation({ message });
 
-export const replay = (
-  events: ReadonlyArray<GameEvent>,
-): Effect.Effect<GameState, ReplayViolation> =>
+export const replay = (events: ReadonlyArray<unknown>): Effect.Effect<GameState, ReplayViolation> =>
   Effect.gen(function* () {
-    const first = events[0];
-    if (!isInitialEvent(first)) {
+    const first = yield* decodeGameEventEnvelope(events[0]).pipe(
+      Effect.mapError(() => replayFailure("The first replay event is malformed.")),
+    );
+    if (first.sequence !== 0 || first.event.type !== "game.created") {
       return yield* Effect.fail(
         replayFailure("A replay must start with game.created at sequence zero."),
       );
@@ -532,14 +527,17 @@ export const replay = (
     const created = yield* createGame(first.event.state.config).pipe(
       Effect.mapError(() => replayFailure("The initial game configuration is invalid.")),
     );
-    if (!sameCanonicalValue(created.events[0], first)) {
+    if (!sameCanonicalValue(created.events[0], events[0])) {
       return yield* Effect.fail(replayFailure("The initial game event is invalid."));
     }
 
     let state = created.state;
     let index = 1;
     while (index < events.length) {
-      const command = commandFromEvent(state, events[index]!);
+      const decoded = yield* decodeGameEventEnvelope(events[index]).pipe(
+        Effect.mapError(() => replayFailure("A replay event is malformed.")),
+      );
+      const command = commandFromEvent(state, decoded as unknown as GameEvent);
       if (command === null) {
         return yield* Effect.fail(replayFailure("A replay event cannot start a valid command."));
       }
@@ -550,7 +548,7 @@ export const replay = (
       if (!sameCanonicalValue(expected, actual)) {
         return yield* Effect.fail(replayFailure("A replay event batch is invalid."));
       }
-      state = actual.reduce((current, event) => applyEvent(current, event), state);
+      state = expected.reduce((current, event) => applyEvent(current, event), state);
       index += expected.length;
     }
     return state;
