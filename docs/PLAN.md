@@ -8,13 +8,14 @@ The first rules target is the current three-player and four-player CATAN base ga
 
 ## Product boundaries
 
-The repository will keep five concerns separate.
+The repository will keep six concerns separate.
 
 - The protocol defines stable commands and events. It also defines observations and adapter capabilities.
 - The engine owns authoritative game state and applies base-game rules.
 - The harness schedules turns and negotiation rounds. It manages agents with their timeouts and traces.
 - The Pi runtime gives each player an isolated model session and game-specific tools.
 - Adapters translate between the protocol and external game systems.
+- The web viewer renders authorized observations and projected events without running game rules.
 
 The engine will have no Pi, browser, network, database, or model dependency. This boundary keeps batch simulation fast and makes rule tests easy to run.
 
@@ -165,7 +166,7 @@ test/
 docs/
 ```
 
-Later milestones add source directories for negotiation and the harness. Separate directories will hold agents and adapters. A workspace split will happen only when a boundary needs an independent build or release. The repository will remain one monorepo.
+Later milestones add source directories for negotiation and the harness. Separate directories will hold agents and adapters. The [web viewer](VIEWER.md) is the first independent application build and triggers an npm workspace split when its implementation starts. The repository will remain one monorepo.
 
 ## Milestones
 
@@ -229,7 +230,21 @@ Completion requires conformance tests for every robber and development-card rule
 
 Completion requires generated graph cases plus full-game tests with deterministic scripted agents.
 
-### Milestone 5: domestic trade and language
+### Milestone 5: web viewer
+
+The [web viewer design](VIEWER.md) is the detailed contract for this milestone.
+
+- [ ] Add viewer-safe frame and replay schemas.
+- [ ] Create the npm workspace and Vite React application.
+- [ ] Render the regular board as layered SVG with canonical topology IDs.
+- [ ] Add replay loading, navigation, playback, and event inspection.
+- [ ] Add public player summaries and the projected event timeline.
+- [ ] Stream live frames through HTTP and server-sent events.
+- [ ] Add reconnect, sequence-gap, privacy, accessibility, and visual tests.
+
+Completion requires saved and live scripted matches to render correctly in public scope. Seeking and sequential playback must agree, forced disconnects must recover, and the viewer merge gate must pass.
+
+### Milestone 6: domestic trade and language
 
 - [ ] Add negotiation windows and policy limits.
 - [ ] Add public and directed messages.
@@ -237,11 +252,12 @@ Completion requires generated graph cases plus full-game tests with deterministi
 - [ ] Add replies with withdrawal and expiry.
 - [ ] Validate and atomically commit accepted trades.
 - [ ] Record nonbinding promises and later evidence.
+- [ ] Extend the web timeline with scope-safe message and offer views.
 - [ ] Add adversarial tests for stale or conflicting offers and impossible trades.
 
-Completion requires four scripted agents to conduct multi-round bargaining and finish a valid game.
+Completion requires four scripted agents to conduct multi-round bargaining and finish a valid game. The viewer must show the resulting public and seat-specific negotiations without private-data leaks.
 
-### Milestone 6: Pi agents
+### Milestone 7: Pi agents
 
 - [ ] Define the seat-scoped Pi system prompt.
 - [ ] Register game tools through the Pi SDK.
@@ -251,9 +267,9 @@ Completion requires four scripted agents to conduct multi-round bargaining and f
 - [ ] Add deterministic fallback behavior.
 - [ ] Capture model and token data with latency, tool, and outcome traces.
 
-Completion requires a mixed match with Pi agents and scripted agents using the same protocol.
+Completion requires a mixed match with Pi agents and scripted agents using the same protocol. The web viewer must be able to follow the match without access to Pi session state.
 
-### Milestone 7: batch simulation and training data
+### Milestone 8: batch simulation and training data
 
 - [ ] Add bounded parallel match execution.
 - [ ] Add seat rotation and fixed seed sets.
@@ -265,19 +281,20 @@ Completion requires a mixed match with Pi agents and scripted agents using the s
 
 Completion requires a repeatable batch that produces byte-stable event logs for deterministic agents.
 
-### Milestone 8: adapters
+### Milestone 9: adapters
 
 - [ ] Publish the adapter capability contract.
 - [ ] Add a fake adapter for failure and resynchronization tests.
 - [ ] Add the Colonist adapter.
 - [ ] Add at least one second simulator adapter to prove portability.
 - [ ] Run the shared conformance suite against every adapter.
+- [ ] Verify that adapter matches use the same viewer protocol.
 
-Completion requires one unchanged agent to play through the native engine and each supported adapter.
+Completion requires one unchanged agent to play through the native engine and each supported adapter. The same web viewer must display each backend without backend-specific rendering code.
 
 ## Test strategy
 
-The [engine design](ENGINE.md) defines the Milestone 1 test files, mathematical topology checks, generated layout checks, exhaustive legal-action checks, replay cases, state invariants, privacy checks, and rule traceability matrix.
+The [engine design](ENGINE.md) defines the Milestone 1 test files, mathematical topology checks, generated layout checks, exhaustive legal-action checks, replay cases, state invariants, privacy checks, and rule traceability matrix. The [web viewer design](VIEWER.md) defines geometry, component, replay, live transport, browser privacy, accessibility, and visual tests.
 
 Unit tests will cover rules and pure calculations. Property tests will cover graph structure and resource conservation. They will also cover piece limits and legal-action soundness against reducer invariants. Replay tests will compare complete event streams and final states for fixed inputs. Information-boundary tests will snapshot every viewer projection and search for private fields.
 
@@ -293,4 +310,4 @@ A Rust replacement becomes a candidate only when engine work consumes a material
 
 ## Initial exclusions
 
-The first implementation excludes expansions and graphical game assets. It also excludes public matchmaking and persistent accounts. Rating systems, model training jobs, and production Colonist operation can be planned after the base engine and negotiation model pass conformance tests with the Pi session boundary.
+The first implementation excludes expansions and copied graphical game assets. It also excludes public matchmaking and persistent accounts. Rating systems, model training jobs, and production Colonist operation can be planned after the base engine and negotiation model pass conformance tests with the Pi session boundary.

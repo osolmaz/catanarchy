@@ -505,7 +505,7 @@ Topology tests cover every invariant in the topology table. They also verify:
 - Reversing generator insertion order produces byte-identical serialized topology.
 - The generated topology matches the reviewed standard-board fixture.
 
-A diagnostic renderer can produce an SVG from topology data for human inspection. The generated image is a debugging aid and does not become a rule oracle or game asset.
+A diagnostic renderer can produce an SVG from topology data for human inspection. The generated image is a debugging aid and does not become a rule oracle or game asset. The full replay and live interface follows the separate [web viewer design](VIEWER.md).
 
 ### Layout tests
 

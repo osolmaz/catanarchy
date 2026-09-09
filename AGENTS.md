@@ -8,6 +8,7 @@
 - Use an explicit seeded random source. Do not call `Math.random()` in production code.
 - Represent changes as commands and ordered events. A replay from the same configuration and commands must produce the same events and state.
 - Follow `docs/ENGINE.md` as the Milestone 1 implementation contract. Update it before changing a locked decision.
+- Keep the web viewer read-only until a separate command-client plan is approved. Follow `docs/VIEWER.md` for viewer data, privacy, rendering, and tests.
 - Keep free-form messages separate from binding game operations. The engine validates and commits structured trades. The harness records arguments, promises, and other speech.
 - Keep Pi integration under its own boundary. Use documented Pi SDK APIs unless a separately approved plan requires a core change.
 - Follow the dependency boundaries in `slophammer.yml`.

@@ -8,6 +8,7 @@ The repository currently contains the TypeScript simulator foundation. It valida
 
 - [Implementation plan](docs/PLAN.md)
 - [Engine design and correctness plan](docs/ENGINE.md)
+- [Web viewer design](docs/VIEWER.md)
 - [Colonist compatibility profile](docs/COLONIST.md)
 
 ## Run the simulator
