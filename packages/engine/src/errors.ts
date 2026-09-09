@@ -3,6 +3,7 @@ import { Data } from "effect";
 export type RuleViolationCode =
   | "duplicate-player-color"
   | "invalid-config"
+  | "invalid-command"
   | "duplicate-player-id"
   | "invalid-player-count"
   | "invalid-seed"

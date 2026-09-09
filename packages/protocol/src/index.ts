@@ -240,6 +240,26 @@ export interface PlaceInitialRoadCommand extends CommandBase {
 
 export type GameCommand = PlaceInitialSettlementCommand | PlaceInitialRoadCommand;
 
+const CommandBaseSchemaFields = {
+  commandId: Schema.String,
+  playerId: Schema.String,
+  expectedSequence: Schema.Number,
+};
+
+export const GameCommandSchema = Schema.Union(
+  Schema.Struct({
+    ...CommandBaseSchemaFields,
+    type: Schema.Literal("place-initial-settlement"),
+    vertexId: Schema.String,
+  }),
+  Schema.Struct({
+    ...CommandBaseSchemaFields,
+    type: Schema.Literal("place-initial-road"),
+    edgeId: Schema.String,
+  }),
+);
+export const decodeGameCommand = Schema.decodeUnknown(GameCommandSchema);
+
 export interface LegalAction {
   readonly id: string;
   readonly command: GameCommand;
