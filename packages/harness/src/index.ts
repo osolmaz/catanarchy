@@ -122,8 +122,8 @@ const timeoutDecision = async (
   let timer: ReturnType<typeof setTimeout> | undefined;
   const deadline = new Promise<never>((_resolve, reject) => {
     timer = setTimeout(() => {
-      controller.abort();
       reject(new HarnessError({ message: "decision-deadline" }));
+      controller.abort();
     }, timeoutMs);
   });
 
