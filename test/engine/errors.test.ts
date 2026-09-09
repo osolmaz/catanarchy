@@ -62,12 +62,14 @@ describe("configuration failures", () => {
 });
 
 describe("command failures", () => {
-  it("rejects stale and wrong-player commands", () => {
+  it("rejects stale, wrong-player, and malformed commands", () => {
     const state = Effect.runSync(createGame(config())).state;
     const action = legalActions(state)[0]!;
+    const malformed = { ...action.command, type: "place-anywhere" } as unknown as GameCommand;
 
     expect(failureCode(state, { ...action.command, expectedSequence: 99 })).toBe("stale-command");
     expect(failureCode(state, { ...action.command, playerId: "blue" })).toBe("wrong-player");
+    expect(failureCode(state, malformed)).toBe("invalid-command");
   });
 
   it("rejects an unknown settlement and a road in the wrong phase", () => {

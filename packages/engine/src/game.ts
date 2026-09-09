@@ -21,7 +21,7 @@ import type {
   Terrain,
   Viewer,
 } from "@catanarchy/protocol";
-import { decodeGameConfig } from "@catanarchy/protocol";
+import { decodeGameCommand, decodeGameConfig } from "@catanarchy/protocol";
 import { Effect } from "effect";
 import { ReplayViolation, RuleViolation } from "./errors.js";
 import { generateGameMaterials } from "./layout.js";
@@ -340,9 +340,18 @@ const decideRoad = (
 
 export const decide = (
   state: GameState,
-  command: GameCommand,
+  input: GameCommand,
 ): Effect.Effect<readonly [GameEvent, ...ReadonlyArray<GameEvent>], RuleViolation> =>
   Effect.gen(function* () {
+    const command = (yield* decodeGameCommand(input).pipe(
+      Effect.mapError(
+        () =>
+          new RuleViolation({
+            code: "invalid-command",
+            message: "The command does not match a supported command schema.",
+          }),
+      ),
+    )) as GameCommand;
     yield* checkCommonCommand(state, command);
     return yield* command.type === "place-initial-settlement"
       ? decideSettlement(state, command)

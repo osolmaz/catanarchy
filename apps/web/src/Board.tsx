@@ -70,7 +70,7 @@ export const Board = ({ observation, legalActions, onAction, interactive }: Boar
   }
 
   return (
-    <svg className="board" viewBox="0 0 540 460" role="img" aria-label="Catan game board">
+    <svg className="board" viewBox="0 0 540 460" role="group" aria-label="Catan game board">
       <g className="terrain-layer">
         {observation.topology.hexes.map((hex) => {
           const vertices = hex.vertexIds
