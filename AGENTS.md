@@ -1,6 +1,6 @@
 # AGENTS.md
 
-- Use Node.js 22 or later.
+- Use Node.js 22.12 or later.
 - Use TypeScript with strict compiler settings. Do not weaken a compiler option to make code pass.
 - Keep `packages/engine` deterministic, headless, and independent from Pi, network clients, databases, and user interfaces.
 - Keep player-visible observations separate from the authoritative state. Tests must prove that private cards and hidden development cards do not leak.
