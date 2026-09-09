@@ -5,7 +5,7 @@ import {
   type AgentDecisionRequest,
   type SeatAgent,
 } from "@catanarchy/harness";
-import type { GameConfig, PlayerColor } from "@catanarchy/protocol";
+import type { Building, GameConfig, LegalAction, PlayerColor } from "@catanarchy/protocol";
 import { Effect } from "effect";
 import { describe, expect, it, vi } from "vitest";
 
@@ -99,6 +99,33 @@ describe("initial-placement harness", () => {
       reason: "A concise reason.",
       usage: { total: 13 },
       selectionMode: "tool",
+    });
+  });
+
+  it("protects authoritative state and actions from agent mutation", async () => {
+    const result = await Effect.runPromise(
+      runInitialPlacement({
+        config: config(3),
+        createAgent: async () =>
+          inertAgent(async (request) => {
+            const action = firstAction(request);
+            (request.observation.occupancy.buildings as Building[]).push({
+              vertexId: "v:999:999",
+              playerId: "red",
+              kind: "settlement",
+            });
+            (request.legalActions as LegalAction[]).length = 0;
+            return { actionId: action.id };
+          }),
+      }),
+    );
+
+    expect(result.state.phase.tag).toBe("turn.roll");
+    expect(result.state.occupancy.buildings).toHaveLength(6);
+    expect(result.state.occupancy.buildings).not.toContainEqual({
+      vertexId: "v:999:999",
+      playerId: "red",
+      kind: "settlement",
     });
   });
 

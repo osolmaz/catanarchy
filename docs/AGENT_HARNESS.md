@@ -23,7 +23,7 @@ For each decision, the harness sends an agent these values:
 - the complete legal-action list for that state
 - an abort signal controlled by the decision deadline
 
-The agent returns one legal-action ID and an optional short reason. Action IDs are opaque. The harness resolves the ID to the command that the engine produced. It does not accept a model-written command payload.
+The agent returns one legal-action ID and an optional short reason. Action IDs are opaque. The harness gives the agent deep copies of the observation and legal actions. It resolves the returned ID against a private canonical action list from the engine. It does not accept a model-written command payload or any mutation made through the agent request.
 
 The harness creates one agent instance for each player and keeps it for the match. It disposes all created agents when the match ends or fails. Different seats never share model messages or private observations.
 

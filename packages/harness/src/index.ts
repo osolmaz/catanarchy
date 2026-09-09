@@ -212,6 +212,7 @@ interface ChosenAction {
 const chooseAction = async (
   agent: SeatAgent,
   request: Omit<AgentDecisionRequest, "signal">,
+  canonicalActions: ReadonlyArray<LegalAction>,
   timeoutMs: number,
   maxAttempts: number,
 ): Promise<ChosenAction> => {
@@ -221,7 +222,7 @@ const chooseAction = async (
     const startedAt = performance.now();
     try {
       const decision = await timeoutDecision(agent, request, timeoutMs);
-      const action = request.legalActions.find(({ id }) => id === decision.actionId);
+      const action = canonicalActions.find(({ id }) => id === decision.actionId);
       const elapsedMs = performance.now() - startedAt;
       if (action !== undefined) {
         traces.push(selectedTrace(agent, request, decision, action.id, attempt, elapsedMs));
@@ -242,7 +243,7 @@ const chooseAction = async (
     }
   }
 
-  const action = request.legalActions[0];
+  const action = canonicalActions[0];
   if (action === undefined) {
     throw new HarnessError({ message: "The active player has no legal action." });
   }
@@ -286,9 +287,10 @@ const runWithAgents = async (
         matchId: state.matchId,
         sequence: state.sequence,
         playerId: activePlayer.id,
-        observation: observe(state, { type: "player", playerId: activePlayer.id }),
-        legalActions: actions,
+        observation: structuredClone(observe(state, { type: "player", playerId: activePlayer.id })),
+        legalActions: structuredClone(actions),
       },
+      actions,
       timeoutMs,
       maxAttempts,
     );
