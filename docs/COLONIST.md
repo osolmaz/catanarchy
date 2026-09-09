@@ -6,6 +6,22 @@ This document records the public Colonist rules that affect Catanarchy. It keeps
 
 The initial compatibility target is Colonist's public four-player base game. The public page is concise and does not specify every rule or room option. This snapshot was checked on September 9, 2026.
 
+## Compatibility conclusion
+
+Colonist's published normal four-player base-game rules have no confirmed core difference from the official CATAN base-game rules. Catanarchy must use one base-game rules profile for both. It must not create a separate Colonist rules engine unless a repeatable conformance test proves a difference.
+
+The current compatibility differences are platform mechanics:
+
+- Colonist prevents illegal selections through its interface.
+- Colonist adds timers and timeout behavior.
+- Room settings can change the game configuration and speed.
+- The interface controls player observations and available actions.
+- Session recovery and communication affect adapter behavior.
+
+These mechanics belong to adapter capabilities and match configuration. They do not change the core base-game rules. Colonist expansions and modes such as five-player and six-player games or Colonist Rush use separate rule profiles.
+
+Colonist's public base-game page omits some rule details. An omission is not a rule difference. Catanarchy uses the official CATAN rule until current Colonist behavior proves a platform-specific exception.
+
 ## Official Colonist sources
 
 Colonist publishes these rule pages:
