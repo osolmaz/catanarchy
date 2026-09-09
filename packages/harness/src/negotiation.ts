@@ -821,7 +821,6 @@ const eventVisible = (
 };
 
 export interface NegotiationProjectionOptions {
-  readonly eventOffset?: number;
   readonly currentWindowOffersOnly?: boolean;
 }
 
@@ -833,7 +832,6 @@ export const projectNegotiation = (
   const promises = session.promises.filter((promise) => promiseVisible(promise, viewer));
   const promiseIds = new Set(promises.map(({ id }) => id));
   const events = session.events
-    .slice(options.eventOffset ?? 0)
     .filter((event) => eventVisible(session, event, viewer))
     .map((event, sequence) => ({ ...event, sequence }));
   const offers = options.currentWindowOffersOnly
