@@ -298,8 +298,8 @@ The Pi adapter connects isolated model sessions to normal game decisions and the
 - [x] Scale Pi compaction history to the effective context window.
 - [x] Clear pending time warnings when a selection or planning limit ends the model turn.
 - [x] Give each seat a 10-minute shared exploration window and a 60-second finalization window.
-- [ ] Test multi-message turns, clock rollover, finalization, fallback, hidden-state isolation, and legal engine application.
-- [ ] Run an opt-in DS4 test through setup and the first normal turns without token-limit failures.
+- [x] Test multi-message turns, clock rollover, finalization, fallback, hidden-state isolation, and legal engine application.
+- [x] Run an opt-in DS4 test through setup and the first normal turns without token-limit failures.
 
 Acceptance requires at least one test turn with several assistant messages before selection, no applied illegal command, no hidden-state leak, and no fallback caused by a harness output cap. The turn clock must reset only when the game turn changes. Setup placement pairs use one shared setup clock. The model can inspect and reason until the exploration clock or planning-message limit ends. Finalization then allows only the action tool for a separate grace period.
 

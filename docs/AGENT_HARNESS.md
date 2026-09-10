@@ -216,3 +216,15 @@ A focused negotiation validation completed on 2026-09-10 with the same Pi SDK an
 - The result is outside the repository at `/home/onur/scratch/catanarchy-ds4-negotiation-seed42-19.json`. It contains no credential fields.
 
 This proves the live negotiation tool boundary. It is not a complete match or a model-quality benchmark.
+
+A multi-message turn validation completed on 2026-09-10 with Pi SDK 0.85.1 and seed 46.
+
+- All four seats used `huggingface/deepseek-ai/DeepSeek-V4-Flash` through Hugging Face Inference Providers.
+- The run used high thinking, a 32,768-token context window, two planning steps, the 10-minute exploration window, and the 60-second finalization window. It did not set an output-token override.
+- The match completed all 18 requested game decisions and four negotiation decisions. It reached turn 2 with eight settlements and eight roads.
+- Every decision used the model's selection tool. No game or negotiation decision failed, and no deterministic fallback ran.
+- The four seat sessions contained 32 assistant messages, 11 `inspect_game` calls, 18 `choose_action` calls, four `choose_negotiation` calls, and 14 context compactions. No assistant response stopped because of the context length.
+- The run reported 392,122 input tokens, 48,576 output tokens, 621,690 total tokens including cache accounting, and $0.06849836 total cost.
+- The result is outside the repository at `/home/onur/scratch/catanarchy-ds4-turns-final-seed46`. It contains no credentials.
+
+This proves that a seat can inspect, reason across several Pi messages, compact its session, and select legal actions through setup and the first normal turns without a low harness output limit. It is a functional test, not a complete match or a model-quality benchmark.
