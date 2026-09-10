@@ -21,6 +21,9 @@ const runStatus = (snapshot: RunPackageSnapshot): RunStatus | null => {
     : null;
 };
 
+const isTerminalStatus = (status: RunStatus | null): boolean =>
+  status !== null && status !== "partial";
+
 const fetchSnapshot = async (): Promise<RunPackageSnapshot> => {
   const response = await fetch("/__catanarchy/run-snapshot", { cache: "no-store" });
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -44,10 +47,9 @@ export const LiveRunViewer = ({ initialSnapshot, initialRun }: LiveRunViewerProp
     }
     const after = snapshot.current.records.length - 1;
     const source = new EventSource(`/__catanarchy/run-stream?after=${after}`);
+    let terminalResyncing = false;
     const updateStatus = (next: RunPackageSnapshot): void => {
-      const nextStatus = runStatus(next);
-      if (active) setStatus(nextStatus);
-      if (nextStatus !== null && nextStatus !== "partial") source.close();
+      if (active) setStatus(runStatus(next));
     };
     const publish = async (next: RunPackageSnapshot): Promise<void> => {
       const currentGeneration = generation.current + 1;
@@ -66,14 +68,24 @@ export const LiveRunViewer = ({ initialSnapshot, initialRun }: LiveRunViewerProp
         }
       }
     };
-    const resync = async (): Promise<void> => {
+    const resync = async (closeAtTerminal = false): Promise<void> => {
       try {
-        await publish(await fetchSnapshot());
+        const next = await fetchSnapshot();
+        await publish(next);
+        const nextStatus = runStatus(next);
+        if (closeAtTerminal && isTerminalStatus(nextStatus)) source.close();
       } catch (cause) {
         if (active) {
           setError(cause instanceof Error ? cause.message : "Could not reload the live run.");
         }
+      } finally {
+        if (closeAtTerminal) terminalResyncing = false;
       }
+    };
+    const catchUpTerminal = (): void => {
+      if (terminalResyncing) return;
+      terminalResyncing = true;
+      void resync(true);
     };
     source.onopen = () => {
       if (active) setConnection("live");
@@ -90,6 +102,16 @@ export const LiveRunViewer = ({ initialSnapshot, initialRun }: LiveRunViewerProp
           readonly verification: unknown;
         };
         const record = message.record as { readonly index?: unknown };
+        const incoming = {
+          manifest: message.manifest,
+          records: snapshot.current.records,
+          verification: message.verification,
+        };
+        const incomingStatus = runStatus(incoming);
+        if (isTerminalStatus(incomingStatus)) {
+          catchUpTerminal();
+          return;
+        }
         const expected = snapshot.current.records.length;
         if (typeof record.index === "number" && record.index < expected) return;
         if (record.index !== expected) {
@@ -108,7 +130,13 @@ export const LiveRunViewer = ({ initialSnapshot, initialRun }: LiveRunViewerProp
     source.addEventListener("manifest", (event) => {
       if (!active || !(event instanceof MessageEvent)) return;
       try {
-        void publish({ ...snapshot.current, manifest: JSON.parse(event.data) });
+        const next = { ...snapshot.current, manifest: JSON.parse(event.data) as unknown };
+        const nextStatus = runStatus(next);
+        if (isTerminalStatus(nextStatus)) {
+          catchUpTerminal();
+          return;
+        }
+        void publish(next);
       } catch {
         void resync();
       }

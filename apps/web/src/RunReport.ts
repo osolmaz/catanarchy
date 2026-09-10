@@ -503,7 +503,7 @@ export const loadRunPackage = async (input: RunPackageSnapshot): Promise<LoadedR
     previousOffset = record.offsetMs;
     await consumeRecord(build, record);
   }
-  if (build.events.length !== build.completedGameEventCount && manifest.status !== "partial") {
+  if (build.events.length !== build.completedGameEventCount && manifest.status === "completed") {
     throw new Error("The completed run ends inside a game-event batch.");
   }
   const finalState = build.frames.at(-1)?.state;
