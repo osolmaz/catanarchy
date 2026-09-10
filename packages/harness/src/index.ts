@@ -365,7 +365,7 @@ const timeoutNegotiation = async (
           .then(async () => agent.cancel())
           .then(
             () => true,
-            () => true,
+            () => false,
           ),
         decision.then(
           () => true,
@@ -588,12 +588,6 @@ const failedNegotiationTrace = (
     : {}),
 });
 
-const availableAttemptCount = (
-  unavailableAgents: WeakSet<SeatAgent>,
-  agent: SeatAgent,
-  maxAttempts: number,
-): number => (unavailableAgents.has(agent) ? 0 : maxAttempts);
-
 const applyNegotiationFallback = async (
   state: GameState,
   session: NegotiationSession,
@@ -634,8 +628,8 @@ const chooseNegotiationAction = async (
     ),
   };
   const traces: NegotiationTrace[] = [];
-  const attemptCount = availableAttemptCount(unavailableAgents, agent, maxAttempts);
-  for (let attempt = 1; attempt <= attemptCount; attempt += 1) {
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    if (unavailableAgents.has(agent)) break;
     await record({ kind: "negotiation.agent-requested", payload: { attempt, request } });
     const startedAt = performance.now();
     try {

@@ -1,5 +1,5 @@
 import { watchFile, unwatchFile } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { readFile, realpath } from "node:fs/promises";
 import { isAbsolute, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { RunManifest, RunPackage } from "@catanarchy/run-log";
@@ -53,6 +53,25 @@ const sessionPathForSeat = (root: string, manifest: RunManifest, seatId: string)
   return path;
 };
 
+export const resolveContainedRealPath = async (
+  root: string,
+  path: string,
+): Promise<string | null> => {
+  let realRoot: string;
+  let realPath: string;
+  try {
+    [realRoot, realPath] = await Promise.all([realpath(root), realpath(path)]);
+  } catch (error) {
+    if (isMissingFileError(error)) return null;
+    throw error;
+  }
+  const localPath = relative(realRoot, realPath);
+  if (localPath.startsWith("..") || isAbsolute(localPath)) {
+    throw new Error("The Pi session path resolves outside the run directory.");
+  }
+  return realPath;
+};
+
 const readPiSession = async (path: string): Promise<string | null> => {
   try {
     return await readFile(path, "utf8");
@@ -79,7 +98,8 @@ const servePiSession = async (
     sendText(response, 404, "No Pi session exists for this seat.");
     return;
   }
-  const content = await readPiSession(path);
+  const realPath = await resolveContainedRealPath(root, path);
+  const content = realPath === null ? null : await readPiSession(realPath);
   if (content === null) {
     sendText(response, 404, "The Pi session file is not available yet.");
     return;
