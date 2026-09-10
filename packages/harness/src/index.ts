@@ -623,7 +623,7 @@ const chooseNegotiationAction = async (
       projectNegotiation(
         session,
         { type: "player", playerId: player.id },
-        { currentWindowOffersOnly: true },
+        { currentWindowOnly: true },
       ),
     ),
   };

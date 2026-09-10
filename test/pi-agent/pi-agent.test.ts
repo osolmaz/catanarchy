@@ -311,6 +311,55 @@ describe("Pi negotiation selection", () => {
     expect(prompt).toContain('"negotiation"');
     expect(prompt).not.toContain("developmentDeck");
   });
+
+  it("bounds negotiation history in the model prompt", () => {
+    const base = negotiationRequest();
+    const promises = Array.from({ length: 34 }, (_value, index) => ({
+      id: `promise:${index}`,
+      round: 1,
+      playerId: "red",
+      beneficiaryPlayerId: "blue",
+      scope: { type: "public" as const },
+      text: `Promise ${index}`,
+      relatedOfferId: null,
+    }));
+    const prompt = buildNegotiationPrompt({
+      ...base,
+      negotiation: {
+        ...base.negotiation,
+        events: Array.from({ length: 130 }, (_value, sequence) => ({
+          schema: "catanarchy.negotiation-event.v1" as const,
+          matchId: base.matchId,
+          sequence,
+          gameSequence: base.gameSequence,
+          event: {
+            type: "negotiation.player-passed" as const,
+            round: 1,
+            playerId: "red",
+          },
+        })),
+        promises,
+        evidence: promises.flatMap((promise, index) =>
+          Array.from({ length: 3 }, (_value, evidenceIndex) => ({
+            id: `evidence:${index}:${evidenceIndex}`,
+            round: 1,
+            playerId: "blue",
+            promiseId: promise.id,
+            gameSequence: base.gameSequence,
+            text: "Evidence",
+          })),
+        ),
+      },
+    });
+    const projected = JSON.parse(prompt) as {
+      negotiation: { events: unknown[]; promises: Array<{ id: string }>; evidence: unknown[] };
+    };
+
+    expect(projected.negotiation.events).toHaveLength(128);
+    expect(projected.negotiation.promises).toHaveLength(32);
+    expect(projected.negotiation.promises[0]?.id).toBe("promise:2");
+    expect(projected.negotiation.evidence).toHaveLength(64);
+  });
 });
 
 describe("Pi model setup", () => {

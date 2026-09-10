@@ -821,8 +821,16 @@ const eventVisible = (
 };
 
 export interface NegotiationProjectionOptions {
-  readonly currentWindowOffersOnly?: boolean;
+  readonly currentWindowOnly?: boolean;
 }
+
+const currentWindowEvents = (session: NegotiationSession): ReadonlyArray<NegotiationEvent> => {
+  const start = session.events.findLastIndex(
+    ({ event }) =>
+      event.type === "negotiation.window-opened" && event.windowId === session.windowId,
+  );
+  return start < 0 ? [] : session.events.slice(start);
+};
 
 export const projectNegotiation = (
   session: NegotiationSession,
@@ -831,10 +839,11 @@ export const projectNegotiation = (
 ): NegotiationView => {
   const promises = session.promises.filter((promise) => promiseVisible(promise, viewer));
   const promiseIds = new Set(promises.map(({ id }) => id));
-  const events = session.events
+  const sourceEvents = options.currentWindowOnly ? currentWindowEvents(session) : session.events;
+  const events = sourceEvents
     .filter((event) => eventVisible(session, event, viewer))
     .map((event, sequence) => ({ ...event, sequence }));
-  const offers = options.currentWindowOffersOnly
+  const offers = options.currentWindowOnly
     ? session.offers.filter(({ id }) => id.startsWith(`${session.windowId}:offer:`))
     : session.offers;
   return {

@@ -91,8 +91,7 @@ The system prompt tells the model that it controls one Catan seat, must use only
 
 - phase and active seat
 - public player summaries
-- occupied vertices and edges
-- board terrain and number tokens
+- occupied vertices and edges, identified by stable graph IDs
 - legal settlement and city locations with adjacent terrain, numbers, and harbors
 - legal road locations with endpoint IDs
 - roll, development-card purchase, maritime trade, and end-turn actions
@@ -106,7 +105,7 @@ The game-action tool input is:
 }
 ```
 
-A negotiation request contains the authorized observation, complete visible negotiation transcript, current open offers, promises, evidence, and operation rules. The `choose_negotiation` tool accepts one typed operation with the fields needed for messages, offers, counteroffers, replies, withdrawal, promises, or evidence. Providers without tool-call support can return one exact `NegotiationAction` JSON object. The protocol decoder and harness validate it before it can affect the negotiation session.
+A negotiation request contains the authorized observation, the current window's visible transcript and offers, promises, evidence, and operation rules. Earlier window events stay in the run record and the seat's Pi session, but the harness does not repeat them in each new request. The model prompt keeps at most the latest 128 current-window events, 32 visible promises, and 64 evidence records. These limits prevent negotiation context from growing for the complete match. The `choose_negotiation` tool accepts one typed operation with the fields needed for messages, offers, counteroffers, replies, withdrawal, promises, or evidence. Providers without tool-call support can return one exact `NegotiationAction` JSON object. The protocol decoder and harness validate it before it can affect the negotiation session.
 
 The active tool validates the selection against the current request. Every call terminates the Pi turn, which limits one harness attempt to one provider generation. A valid call returns the selected action or operation. A call to the wrong tool, an invalid selection, or a duplicate call poisons the complete decision attempt and returns a terminating tool error. Text in the same response cannot recover a poisoned attempt. The harness then controls the next bounded attempt or deterministic fallback.
 

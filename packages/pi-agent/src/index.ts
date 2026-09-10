@@ -666,6 +666,25 @@ export const buildDecisionPrompt = (request: AgentDecisionRequest): string =>
     2,
   );
 
+const MAX_NEGOTIATION_PROMPT_EVENTS = 128;
+const MAX_NEGOTIATION_PROMPT_PROMISES = 32;
+const MAX_NEGOTIATION_PROMPT_EVIDENCE = 64;
+
+const negotiationForPrompt = (
+  negotiation: AgentNegotiationRequest["negotiation"],
+): AgentNegotiationRequest["negotiation"] => {
+  const promises = negotiation.promises.slice(-MAX_NEGOTIATION_PROMPT_PROMISES);
+  const promiseIds = new Set(promises.map(({ id }) => id));
+  return {
+    ...negotiation,
+    events: negotiation.events.slice(-MAX_NEGOTIATION_PROMPT_EVENTS),
+    promises,
+    evidence: negotiation.evidence
+      .filter(({ promiseId }) => promiseIds.has(promiseId))
+      .slice(-MAX_NEGOTIATION_PROMPT_EVIDENCE),
+  };
+};
+
 export const buildNegotiationPrompt = (request: AgentNegotiationRequest): string =>
   JSON.stringify(
     {
@@ -685,7 +704,7 @@ export const buildNegotiationPrompt = (request: AgentNegotiationRequest): string
       ownDevelopmentCards: request.observation.ownDevelopmentCards,
       occupiedBuildings: request.observation.occupancy.buildings,
       occupiedRoads: request.observation.occupancy.roads,
-      negotiation: request.negotiation,
+      negotiation: negotiationForPrompt(request.negotiation),
       rules: [
         "Passing is always allowed.",
         "Only the active turn player can make a new offer.",
