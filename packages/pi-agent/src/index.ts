@@ -674,10 +674,14 @@ const utf8Encoder = new TextEncoder();
 
 type PromptNegotiation = AgentNegotiationRequest["negotiation"];
 
+const reindexNegotiationEvents = (
+  events: PromptNegotiation["events"],
+): PromptNegotiation["events"] => events.map((event, sequence) => ({ ...event, sequence }));
+
 const initialNegotiationForPrompt = (negotiation: PromptNegotiation): PromptNegotiation => {
   const promises = negotiation.promises.slice(-MAX_NEGOTIATION_PROMPT_PROMISES);
   const promiseIds = new Set(promises.map(({ id }) => id));
-  const events = negotiation.events.slice(-MAX_NEGOTIATION_PROMPT_EVENTS);
+  const events = reindexNegotiationEvents(negotiation.events.slice(-MAX_NEGOTIATION_PROMPT_EVENTS));
   return {
     ...negotiation,
     sequence: events.length,
@@ -693,7 +697,7 @@ const trimNegotiationPromptHistory = (
   negotiation: PromptNegotiation,
 ): PromptNegotiation | undefined => {
   if (negotiation.events.length > 0) {
-    const events = negotiation.events.slice(1);
+    const events = reindexNegotiationEvents(negotiation.events.slice(1));
     return { ...negotiation, sequence: events.length, events };
   }
   if (negotiation.evidence.length > 0) {
