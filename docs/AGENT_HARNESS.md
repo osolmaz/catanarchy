@@ -93,6 +93,8 @@ The seat uses one exploration clock for all model messages and action decisions 
 
 The generic harness also keeps an outer wall-clock limit for an agent call and its cancellation. Its default is 180 seconds. The Pi CLI sets this limit to the 90-second turn time plus the 30-second finalization grace and a 60-second cancellation margin.
 
+A submitted selection clears pending time warnings so they cannot start another model response after the decision. Pi compaction also scales to the effective context window. At the minimum 32,768-token context, Pi reserves 16,384 tokens and keeps 8,192 recent tokens. Larger contexts use Pi's normal 16,384-token reserve and keep up to 20,000 recent tokens.
+
 A game decision uses `choose_action`. Its prompt contains a compact JSON document derived from the seat observation. It includes:
 
 - phase and active seat
@@ -174,6 +176,7 @@ Deterministic tests cover these cases:
 - invalid IDs, exceptions, and deadline expiry
 - deterministic fallback selection
 - bounded retry behavior and cancellation
+- warning termination and context-aware compaction settings
 - round-robin model assignment
 - three-player and four-player setup completion
 - bounded normal-turn, discard, robber, and development-card decisions
