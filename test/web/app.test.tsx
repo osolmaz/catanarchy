@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import type { NegotiationView } from "@catanarchy/protocol";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { App } from "../../apps/web/src/App.js";
@@ -128,5 +129,35 @@ describe("web simulator", () => {
 
     expect(screen.getByText("Seed must be an unsigned 32-bit integer.")).toBeTruthy();
     expect(screen.getByText("local-42-4")).toBeTruthy();
+  });
+
+  it("renders a matching projected negotiation view supplied by the harness transport", () => {
+    const negotiation: NegotiationView = {
+      schema: "catanarchy.negotiation-view.v1",
+      matchId: "local-42-4",
+      sequence: 1,
+      events: [
+        {
+          schema: "catanarchy.negotiation-event.v1",
+          matchId: "local-42-4",
+          sequence: 0,
+          gameSequence: 0,
+          event: {
+            type: "negotiation.message-sent",
+            round: 1,
+            playerId: "red",
+            scope: { type: "public" },
+            text: "I can trade lumber for brick.",
+          },
+        },
+      ],
+      offers: [],
+      promises: [],
+      evidence: [],
+    };
+
+    render(<App negotiation={negotiation} />);
+
+    expect(screen.getByText("red (public): I can trade lumber for brick.")).toBeTruthy();
   });
 });

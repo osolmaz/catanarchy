@@ -47,6 +47,11 @@ const emptyNegotiation = (matchId: string): NegotiationView => ({
   evidence: [],
 });
 
+const negotiationForMatch = (
+  negotiation: NegotiationView | undefined,
+  matchId: string,
+): NegotiationView => (negotiation?.matchId === matchId ? negotiation : emptyNegotiation(matchId));
+
 const resourceText = (resources: GameState["bank"] | null): string =>
   resources === null
     ? "Hidden"
@@ -172,7 +177,11 @@ const ActionControls = ({ actions, onAction }: ActionControlsProps) => {
   return buttons;
 };
 
-export const App = () => {
+export interface AppProps {
+  readonly negotiation?: NegotiationView;
+}
+
+export const App = ({ negotiation }: AppProps = {}) => {
   const [seedInput, setSeedInput] = useState("42");
   const [playerCount, setPlayerCount] = useState(4);
   const [game, setGame] = useState<LocalGame>(() => startGame(42, 4));
@@ -183,6 +192,7 @@ export const App = () => {
   const isLive = frameIndex === latestIndex;
   const observation = useMemo(() => activePlayerObservation(state), [state]);
   const actions = isLive ? legalActions(state) : [];
+  const negotiationView = negotiationForMatch(negotiation, state.matchId);
 
   const onNewGame = () => {
     const seed = Number(seedInput);
@@ -350,7 +360,7 @@ export const App = () => {
           <section className="panel">
             <h2>Negotiation</h2>
             <NegotiationTimeline
-              negotiation={emptyNegotiation(state.matchId)}
+              negotiation={negotiationView}
               gameEvents={game.events}
               throughGameSequence={state.sequence}
             />
