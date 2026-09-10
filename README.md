@@ -2,7 +2,7 @@
 
 Catanarchy is a deterministic Catan simulator for agent research. The long-term goal is to let agents play, talk, negotiate, and make structured trades through one protocol. Native games and external adapters will use the same commands and observations.
 
-The current simulator supports the regular three-player and four-player board, initial placement, production, building, maritime and domestic trade, robber theft, development cards, Longest Road, Largest Army, scoring, and game completion. The harness runs bounded public or directed negotiation rounds with offers, counteroffers, messages, promises, and atomic trade settlement. The local web app can submit game actions, inspect accepted-command history, and render projected negotiation timelines. A Pi agent harness can run complete scripted or model-driven games with isolated sessions and structured game-action and negotiation tools. External adapters come later.
+The current simulator supports the regular three-player and four-player board, initial placement, production, building, maritime and domestic trade, robber theft, development cards, Longest Road, Largest Army, scoring, and game completion. The harness runs bounded public or directed negotiation rounds with offers, counteroffers, messages, promises, and atomic trade settlement. The local web app can submit game actions, inspect accepted-command history, watch a running agent match, and replay it at different speeds. A Pi agent harness can run complete scripted or model-driven games with separate sessions and structured game-action and negotiation tools. External adapters come later.
 
 ## Start the web app
 
@@ -15,15 +15,21 @@ npm run dev
 
 Open the local URL that Vite prints. Choose a seed and player count, select **New game**, then use the highlighted board points, edges, and action buttons to play.
 
-To inspect a saved local Pi run, start the temporary viewer with the report path:
+To inspect an old saved Pi report, start the temporary viewer with the report path:
 
 ```sh
 CATANARCHY_RUN_FILE=/path/to/run.json npm run dev
 ```
 
-The report view shows the final board, negotiation timeline, seat summaries, game decisions, negotiation decisions, reasons, timing, token use, and cost. Pi sessions are in memory and are disposed after a run, so raw Pi message history is not available unless a future run explicitly records it.
+New Pi matches write a run directory. Open it in the viewer from another terminal while the match is running:
 
-The web app and saved-run report are trusted local views. They can use authoritative state and private traces. A future remote viewer will receive only public or seat-authorized observations.
+```sh
+CATANARCHY_RUN_DIR=/path/printed/by/play-pi npm run dev
+```
+
+The viewer follows new records as they arrive. You can pause, move through the timeline, return to the latest record, or replay at 1×, 2×, 5×, 10×, or 20×. Each Pi seat has a link to its native Pi session JSONL file after that seat makes its first model request.
+
+The web app and run viewer are trusted local views. They can use authoritative state, private traces, and private Pi sessions. A future remote viewer will receive only public or seat-authorized observations.
 
 ## Run a scripted setup
 
@@ -43,7 +49,9 @@ OPENAI_API_KEY=... HF_TOKEN=... npm run play:pi -- \
   --seed=42
 ```
 
-Four seats receive the models in round-robin order. The command runs 16 setup decisions by default. Add `--decisions=17` to include the first dice roll or use a larger bound to continue through normal turns, negotiation, robber resolution, and development-card effects. Negotiation uses one round per turn by default. Set `--negotiation-rounds=0` to disable it or select a larger bounded value. The command limits requests and output tokens, prints a conservative cost estimate before the first request, and uses deterministic fallbacks if a model fails. Add `--output=path.json` to save the full result outside the repository.
+Four seats receive the models in round-robin order. The command runs 16 setup decisions by default. Add `--decisions=17` to include the first dice roll or use a larger bound to continue through normal turns, negotiation, robber resolution, and development-card effects. Negotiation uses one round per turn by default. Set `--negotiation-rounds=0` to disable it or select a larger bounded value. The command limits requests and output tokens, prints a conservative cost estimate before the first request, and uses deterministic fallbacks if a model fails.
+
+Each run is saved under `runs/` by default. The command prints the exact path before the first model request. Use `--run-dir=/path/to/run` to choose another path. Add `--output=path.json` only when you also need the older single-file result format.
 
 Use `npm run probe:pi -- --model=provider/model-id` for one live model decision. Live model commands are opt-in and are not part of the normal quality gate.
 
@@ -53,6 +61,7 @@ Use `npm run probe:pi -- --model=provider/model-id` for one live model decision.
 - [Agent harness](docs/AGENT_HARNESS.md)
 - [Engine design and correctness plan](docs/ENGINE.md)
 - [Web viewer design](docs/VIEWER.md)
+- [Run log format](docs/RUN_LOG.md)
 - [Colonist compatibility profile](docs/COLONIST.md)
 
 ## Development

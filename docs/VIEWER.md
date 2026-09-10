@@ -6,7 +6,9 @@ The first web slice is implemented as a trusted local game client. It starts see
 
 A trusted local report mode can load a Pi CLI result selected through `CATANARCHY_RUN_FILE`. It validates and replays authoritative game events at complete command boundaries. It shows the board, negotiation timeline, and saved model-call traces for the selected frame. Controls support first, previous, play, pause, next, last, and 1×, 2×, 5×, 10×, or 20× playback. Old reports use recorded model-call durations and a one-second fallback because they do not contain exact chronological offsets. Raw Pi session messages are not present because those match sessions were ephemeral and were disposed.
 
-The [run log format](RUN_LOG.md) defines exact monotonic timing and native per-seat Pi session files for future runs. Viewer-safe package loading, live streams, and negotiation transport remain planned. The `App` component accepts the current projected `NegotiationView` from such a transport and passes matching records to the implemented timeline. The timeline never decides trade legality. Remote and replay modes stay read-only and consume only viewer-safe data. The local setup client and local run report are deliberate trusted exceptions.
+New Pi runs use the [run log format](RUN_LOG.md). The harness writes exact timing, game events, negotiation events, model requests, and decisions while the match runs. Pi writes one native session file for each seat. The trusted local viewer follows new records through server-sent events, reconnects after a dropped stream, and reloads when it finds a sequence gap. It can download each seat's Pi session.
+
+A public or player-specific remote viewer still needs a server-side privacy filter. The current run viewer is a trusted local tool and can read referee records. Replay and live modes cannot send game commands. The local hot-seat client remains a separate trusted mode.
 
 ## Goals
 
@@ -25,7 +27,7 @@ The viewer also helps engine development. A wrong edge, harbor, road, or settlem
 
 The first release supports the regular three-player and four-player base-game board defined in the [engine design](ENGINE.md). It renders original geometric shapes and text. It does not use copied board artwork or game assets.
 
-The current slice includes native setup, dice rolls, building, development cards, maritime trade, discards, robber choices, awards, scores, and victory. It excludes domestic trade, remote commands, matchmaking, accounts, ratings, map editing, and expansion layouts. It also excludes public access to referee state.
+The current slice includes native setup, dice rolls, building, development cards, maritime and domestic trade, negotiation, discards, robber choices, awards, scores, and victory. It excludes remote commands, matchmaking, accounts, ratings, map editing, and expansion layouts. It also excludes public access to referee state.
 
 ## Boundary
 
@@ -62,7 +64,10 @@ apps/
   web/src/
 packages/
   engine/src/
+  harness/src/
+  pi-agent/src/
   protocol/src/
+  run-log/src/
 test/
   engine/
   web/
@@ -346,13 +351,11 @@ Complete for the standard board and setup pieces. The layered SVG uses canonical
 
 ### Step 4: replay viewer
 
-In progress. The local client records one complete state after each accepted command and supports first, previous, next, and live navigation. Historical frames cannot send actions. Trusted report loading and timed sequential playback are implemented. Direct timeline seeking and viewer-safe run-package payloads remain planned.
+Complete for trusted local runs. Old reports replay at command boundaries with recorded model time where available. New run directories replay every visible timeline record with exact recorded timing. The board changes only after the full event batch for one game command. Controls support buttons, keyboard input, a range control, direct URL frame selection, and five playback speeds. Viewer-safe exported packages remain planned.
 
 ### Step 5: live viewing
 
-Add latest-frame HTTP loading and the SSE client. Check both sequence fields. Add reconnection and resynchronization through a fake server before connecting the harness.
-
-Completion requires a live scripted match to remain correct across a forced disconnect and frame-sequence gap.
+Complete for trusted local runs. The Vite server reads the selected run directory and sends new records through server-sent events. The browser starts at the latest frame, follows new frames, reconnects automatically, and reloads the run after a sequence gap. It keeps the last valid frame while reconnecting. Component tests cover startup before the first game state and normal completion. A scripted server smoke test covers the HTTP snapshot and SSE endpoints.
 
 ### Step 6: negotiation views
 
@@ -364,7 +367,7 @@ Completion requires a multi-round scripted negotiation replay to display only th
 
 ## Project milestone
 
-The local SVG game client now covers engine Milestones 1 and 2. The complete read-only replay and live viewer remains a later milestone. Negotiation work will extend the same timeline instead of creating another UI.
+The local SVG game client, trusted replay viewer, and trusted live viewer are implemented. Public and seat-specific remote viewing still needs server-side projections and privacy tests.
 
 ## Merge gate
 

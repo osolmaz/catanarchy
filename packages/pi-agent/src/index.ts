@@ -38,6 +38,11 @@ export interface PiAgentFactoryOptions {
   readonly modelRuntime: ModelRuntime;
   readonly thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
   readonly maxOutputTokens?: number;
+  readonly sessionDirectory?: string;
+  readonly onSessionCreated?: (
+    player: PlayerConfig,
+    session: PiSessionReference,
+  ) => void | Promise<void>;
   readonly createChannel?: PiDecisionChannelFactory;
 }
 
@@ -48,11 +53,21 @@ interface Selection {
 
 type PiModel = NonNullable<ReturnType<ModelRuntime["getModel"]>>;
 
+export interface PiSessionReference {
+  readonly sessionId: string;
+  readonly sessionFile: string;
+}
+
+export interface PiDecisionChannelContext {
+  readonly player: PlayerConfig;
+  readonly model: PiModel;
+  readonly modelRuntime: ModelRuntime;
+  readonly thinkingLevel: PiAgentFactoryOptions["thinkingLevel"];
+  readonly sessionDirectory?: string;
+}
+
 export type PiDecisionChannelFactory = (
-  player: PlayerConfig,
-  model: PiModel,
-  modelRuntime: ModelRuntime,
-  thinkingLevel: PiAgentFactoryOptions["thinkingLevel"],
+  context: PiDecisionChannelContext,
 ) => Promise<PiDecisionChannel>;
 
 type ToolResult = {
@@ -191,6 +206,7 @@ export class NegotiationSelectionGate {
 }
 
 export interface PiDecisionChannel {
+  readonly session?: PiSessionReference;
   run(
     prompt: string,
     legalActionIds: ReadonlyArray<string>,
@@ -505,12 +521,13 @@ class SdkDecisionChannel implements PiDecisionChannel {
   }
 }
 
-const createSdkDecisionChannel = async (
-  player: PlayerConfig,
-  model: PiModel,
-  modelRuntime: ModelRuntime,
-  thinkingLevel: PiAgentFactoryOptions["thinkingLevel"],
-): Promise<PiDecisionChannel> => {
+const createSdkDecisionChannel = async ({
+  player,
+  model,
+  modelRuntime,
+  thinkingLevel,
+  sessionDirectory,
+}: PiDecisionChannelContext): Promise<PiDecisionChannel> => {
   const actionGate = new ActionSelectionGate();
   const negotiationGate = new NegotiationSelectionGate();
   const chooseAction = defineTool({
@@ -552,13 +569,21 @@ const createSdkDecisionChannel = async (
     resourceLoader: emptyResourceLoader(systemPromptFor(player)),
     tools: ["choose_action", "choose_negotiation"],
     customTools: [chooseAction, chooseNegotiation],
-    sessionManager: SessionManager.inMemory(cwd),
+    sessionManager:
+      sessionDirectory === undefined
+        ? SessionManager.inMemory(cwd)
+        : SessionManager.create(cwd, sessionDirectory),
     settingsManager: SettingsManager.inMemory({
       compaction: { enabled: false },
       retry: { enabled: false },
     }),
   });
-  return new SdkDecisionChannel(session, actionGate, negotiationGate);
+  const channel = new SdkDecisionChannel(session, actionGate, negotiationGate);
+  return session.sessionFile === undefined
+    ? channel
+    : Object.assign(channel, {
+        session: { sessionId: session.sessionId, sessionFile: session.sessionFile },
+      });
 };
 
 const harborKindsAtVertex = (
@@ -704,35 +729,67 @@ export const parseModelReference = (reference: string): PiModelReference => {
   return { provider: reference.slice(0, separator), modelId: reference.slice(separator + 1) };
 };
 
-export const createPiAgentFactory = (options: PiAgentFactoryOptions): SeatAgentFactory => {
-  if (options.models.length === 0) {
-    throw new Error("At least one Pi model is required.");
+const modelForSeat = (
+  options: PiAgentFactoryOptions,
+  seatIndex: number,
+): { readonly reference: PiModelReference; readonly model: PiModel } => {
+  const reference = options.models[seatIndex % options.models.length];
+  if (reference === undefined) throw new Error("No Pi model is assigned to the seat.");
+  const model = options.modelRuntime.getModel(reference.provider, reference.modelId);
+  if (model === undefined) {
+    throw new Error(`Unknown Pi model: ${reference.provider}/${reference.modelId}`);
   }
+  const maxOutputTokens = options.maxOutputTokens ?? 4_096;
+  if (!Number.isSafeInteger(maxOutputTokens) || maxOutputTokens < 1) {
+    throw new Error("maxOutputTokens must be a positive integer.");
+  }
+  return {
+    reference,
+    model: { ...model, maxTokens: Math.min(model.maxTokens, maxOutputTokens) },
+  };
+};
+
+const createChannelForSeat = async (
+  options: PiAgentFactoryOptions,
+  player: PlayerConfig,
+  model: PiModel,
+): Promise<PiDecisionChannel> =>
+  (options.createChannel ?? createSdkDecisionChannel)({
+    player,
+    model,
+    modelRuntime: options.modelRuntime,
+    thinkingLevel: options.thinkingLevel,
+    ...(options.sessionDirectory === undefined
+      ? {}
+      : { sessionDirectory: options.sessionDirectory }),
+  });
+
+const registerChannelSession = async (
+  options: PiAgentFactoryOptions,
+  player: PlayerConfig,
+  channel: PiDecisionChannel,
+): Promise<void> => {
+  if (options.sessionDirectory !== undefined && channel.session === undefined) {
+    await channel.dispose();
+    throw new Error(`The Pi channel for ${player.id} did not create a persistent session.`);
+  }
+  if (channel.session === undefined || options.onSessionCreated === undefined) return;
+  try {
+    await options.onSessionCreated(player, channel.session);
+  } catch (error) {
+    await channel.dispose();
+    throw error;
+  }
+};
+
+export const createPiAgentFactory = (options: PiAgentFactoryOptions): SeatAgentFactory => {
+  if (options.models.length === 0) throw new Error("At least one Pi model is required.");
   let seatIndex = 0;
   return async (player) => {
-    const reference = options.models[seatIndex % options.models.length];
+    const { reference, model } = modelForSeat(options, seatIndex);
     seatIndex += 1;
-    if (reference === undefined) {
-      throw new Error("No Pi model is assigned to the seat.");
-    }
-    const model = options.modelRuntime.getModel(reference.provider, reference.modelId);
-    if (model === undefined) {
-      throw new Error(`Unknown Pi model: ${reference.provider}/${reference.modelId}`);
-    }
-    const maxOutputTokens = options.maxOutputTokens ?? 4_096;
-    if (!Number.isSafeInteger(maxOutputTokens) || maxOutputTokens < 1) {
-      throw new Error("maxOutputTokens must be a positive integer.");
-    }
-    const boundedModel: PiModel = {
-      ...model,
-      maxTokens: Math.min(model.maxTokens, maxOutputTokens),
-    };
-    const channel = await (options.createChannel ?? createSdkDecisionChannel)(
-      player,
-      boundedModel,
-      options.modelRuntime,
-      options.thinkingLevel,
-    );
+    const channel = await createChannelForSeat(options, player, model);
+    await registerChannelSession(options, player, channel);
     return createPiSeatAgent(reference, channel);
   };
 };

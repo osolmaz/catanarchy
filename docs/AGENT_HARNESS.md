@@ -6,10 +6,11 @@ The agent harness lets scripted agents and Pi model agents use the same game pro
 
 ## Module boundaries
 
-The implementation has two modules.
+The implementation has three modules.
 
-- `packages/harness` schedules decisions, gives each seat an authorized observation, validates the selected action, applies the command through the engine, and records a trace.
+- `packages/harness` schedules decisions, gives each seat an authorized observation, validates the selected action, applies the command through the engine, and reports each request, decision, negotiation event, and complete game-event batch.
 - `packages/pi-agent` adapts one Pi `AgentSession` to the harness agent interface. It owns model lookup, the seat system prompt, the `choose_action` tool, timeout cancellation, usage collection, and session disposal.
+- `packages/run-log` writes the harness records, run status, timing, and Pi session references to a run directory.
 
 The engine stays deterministic and has no Pi dependency. The Pi tool selects an action but does not change game state. Only the harness can pass the selected command to the engine.
 
@@ -82,7 +83,7 @@ Each seat uses one in-memory Pi session. The integration uses these documented S
 
 The resource loader returns no extensions, skills, prompt templates, themes, or `AGENTS.md` files. The session gets a game-specific system prompt and only the `choose_action` and `choose_negotiation` tools. Read, shell, edit, write, web, and other coding tools are disabled.
 
-The integration does not use or change Pi internals. It does not write normal Pi session files or settings. Model authentication stays in the user's existing provider stores or process environment. The harness never writes credentials to match traces.
+The integration does not use or change Pi internals. A normal Pi match uses `SessionManager.create(cwd, sessionDirectory)` to write one native session file for each seat. Tests and callers that do not request saved sessions still use `SessionManager.inMemory(cwd)`. Settings remain in memory. Model authentication stays in the user's existing provider stores or process environment. The harness never writes credentials to match records.
 
 ## Prompt and tool
 
@@ -108,6 +109,12 @@ The game-action tool input is:
 A negotiation request contains the authorized observation, complete visible negotiation transcript, current open offers, promises, evidence, and operation rules. The `choose_negotiation` tool accepts one typed operation with the fields needed for messages, offers, counteroffers, replies, withdrawal, promises, or evidence. Providers without tool-call support can return one exact `NegotiationAction` JSON object. The protocol decoder and harness validate it before it can affect the negotiation session.
 
 The active tool validates the selection against the current request. Every call terminates the Pi turn, which limits one harness attempt to one provider generation. A valid call returns the selected action or operation. A call to the wrong tool, an invalid selection, or a duplicate call poisons the complete decision attempt and returns a terminating tool error. Text in the same response cannot recover a poisoned attempt. The harness then controls the next bounded attempt or deterministic fallback.
+
+## Run records
+
+The optional harness activity callback receives records in the order that they happen. It receives a seat-scoped request before each attempt, a decision after the attempt, each negotiation event, each game event, and a command-completed marker after the full event batch for one game command. The callback is awaited. A write failure stops the match instead of leaving the saved record behind the game.
+
+The [run log format](RUN_LOG.md) adds monotonic time and writes each activity as one JSONL line. The Pi CLI enables this by default and records the path before its first model request.
 
 ## Traces
 

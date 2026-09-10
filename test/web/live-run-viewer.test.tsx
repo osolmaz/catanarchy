@@ -1,0 +1,167 @@
+// @vitest-environment jsdom
+
+import { createGame } from "@catanarchy/engine";
+import type { GameConfig } from "@catanarchy/protocol";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { Effect } from "effect";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { LiveRunViewer } from "../../apps/web/src/LiveRunViewer.js";
+import { loadRunPackage } from "../../apps/web/src/RunReport.js";
+
+const config: GameConfig = {
+  schema: "catanarchy.game-config.v1",
+  matchId: "live-run-test",
+  seed: 42,
+  players: [
+    { id: "red", name: "Red", color: "red" },
+    { id: "blue", name: "Blue", color: "blue" },
+    { id: "white", name: "White", color: "white" },
+  ],
+};
+
+const manifest = (status: "partial" | "completed") => ({
+  schema: "catanarchy.run-manifest.v1",
+  runId: "live-run",
+  matchId: config.matchId,
+  status,
+  seats: [],
+});
+
+const runRecord = (index: number, offsetMs: number, kind: string, payload: unknown) => ({
+  schema: "catanarchy.run-record.v1",
+  runId: "live-run",
+  index,
+  offsetMs,
+  recordedAt: new Date(offsetMs).toISOString(),
+  visibility: "referee",
+  kind,
+  payload,
+});
+
+class FakeEventSource {
+  static current: FakeEventSource | undefined;
+  onopen: (() => void) | null = null;
+  onerror: (() => void) | null = null;
+  onmessage: ((event: MessageEvent<string>) => void) | null = null;
+  readonly listeners = new Map<string, (event: Event) => void>();
+  closed = false;
+
+  constructor(readonly url: string) {
+    FakeEventSource.current = this;
+  }
+
+  addEventListener(type: string, listener: EventListener): void {
+    this.listeners.set(type, listener);
+  }
+
+  emit(record: unknown, currentManifest: unknown): void {
+    this.onmessage?.(
+      new MessageEvent("message", {
+        data: JSON.stringify({ manifest: currentManifest, record }),
+      }),
+    );
+  }
+
+  emitManifest(currentManifest: unknown): void {
+    this.listeners.get("manifest")?.(
+      new MessageEvent("manifest", { data: JSON.stringify(currentManifest) }),
+    );
+  }
+
+  close(): void {
+    this.closed = true;
+  }
+}
+
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+  FakeEventSource.current = undefined;
+});
+
+describe("live run viewer", () => {
+  it("keeps the last frame, ignores duplicates, and reloads after a gap", async () => {
+    vi.stubGlobal("EventSource", FakeEventSource);
+    const created = Effect.runSync(createGame(config));
+    const event = created.events[0];
+    if (event === undefined) throw new Error("Expected the game-created event.");
+    const records = [
+      runRecord(0, 0, "run.started", { config }),
+      runRecord(1, 1, "game.event", event),
+      runRecord(2, 2, "game.command-completed", {
+        matchId: config.matchId,
+        commandId: event.commandId,
+        sequence: event.sequence,
+      }),
+    ];
+    const snapshot = { manifest: manifest("partial"), records };
+    const fetch = vi.fn<typeof globalThis.fetch>(async () =>
+      Promise.resolve(new Response(JSON.stringify(snapshot), { status: 200 })),
+    );
+    vi.stubGlobal("fetch", fetch);
+    render(
+      <LiveRunViewer initialSnapshot={snapshot} initialRun={await loadRunPackage(snapshot)} />,
+    );
+    const source = FakeEventSource.current;
+    if (source === undefined) throw new Error("Expected an event source.");
+
+    act(() => source.onerror?.());
+    expect(screen.getByText("The live connection is reconnecting.")).toBeTruthy();
+    expect(screen.getByText(config.matchId)).toBeTruthy();
+    act(() => source.emit(records[2], manifest("partial")));
+    expect(fetch).not.toHaveBeenCalled();
+
+    act(() => source.emit(runRecord(4, 4, "game.decision", {}), manifest("partial")));
+    await waitFor(() => expect(fetch).toHaveBeenCalledOnce());
+    act(() => source.onopen?.());
+    expect(screen.queryByText("The live connection is reconnecting.")).toBeNull();
+  });
+
+  it("waits for the first command and then follows streamed records", async () => {
+    vi.stubGlobal("EventSource", FakeEventSource);
+    const started = runRecord(0, 0, "run.started", { config });
+    render(
+      <LiveRunViewer
+        initialSnapshot={{ manifest: manifest("partial"), records: [started] }}
+        initialRun={null}
+      />,
+    );
+    expect(screen.getByText("Waiting for the first game state.")).toBeTruthy();
+    const source = FakeEventSource.current;
+    if (source === undefined) throw new Error("Expected an event source.");
+    expect(source.url).toBe("/__catanarchy/run-stream?after=0");
+
+    const created = Effect.runSync(createGame(config));
+    const event = created.events[0];
+    if (event === undefined) throw new Error("Expected the game-created event.");
+    await act(async () => {
+      source.emit(runRecord(1, 1, "game.event", event), manifest("partial"));
+      source.emit(
+        runRecord(2, 2, "game.command-completed", {
+          matchId: config.matchId,
+          commandId: event.commandId,
+          sequence: event.sequence,
+        }),
+        manifest("partial"),
+      );
+    });
+
+    expect(await screen.findByText(config.matchId)).toBeTruthy();
+    expect(screen.getByText("live")).toBeTruthy();
+    expect(screen.getByText("game.created")).toBeTruthy();
+
+    await act(async () => {
+      source.emit(
+        runRecord(3, 3, "run.completed", {
+          gameSequence: event.sequence,
+          negotiationSequence: -1,
+          winnerPlayerId: null,
+        }),
+        manifest("completed"),
+      );
+      source.emitManifest(manifest("completed"));
+    });
+
+    await waitFor(() => expect(screen.queryByText("live")).toBeNull());
+  });
+});

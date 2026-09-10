@@ -20,7 +20,7 @@ A completed run uses this layout:
 
 `manifest.json` identifies the run and its files. `timeline.jsonl` contains ordered match records. Each file in `sessions/` is a normal Pi session file created by the public Pi `SessionManager` API. The manifest maps each generated Pi session file to its seat.
 
-A writer first creates the package in a temporary directory. It appends and flushes records while the match runs. It writes completion data to the manifest only after the final timeline record and all Pi sessions are durable. It then renames the package to its final path. An interrupted package remains marked as partial and must not be presented as complete.
+A writer creates the run directory before the match starts. It writes each timeline record to disk before play continues. It updates `manifest.json` with an atomic file replacement. The manifest stays `partial` until the match ends. A stopped run keeps its records and remains clearly marked as partial, failed, or cancelled.
 
 ## Manifest
 
@@ -35,7 +35,7 @@ Required fields:
 - `startedAt`: An RFC 3339 UTC timestamp.
 - `finishedAt`: An RFC 3339 UTC timestamp for a terminal run, or `null`.
 - `timeline`: The relative path `timeline.jsonl`.
-- `timing`: `monotonic` when all records have captured offsets, or `synthetic` for an imported old report.
+- `timing`: The exact value `monotonic`.
 - `piVersion`: The exact Pi package version, or `null` when the run has no Pi agents.
 - `seats`: One entry for each seat.
 
@@ -82,7 +82,7 @@ Smallest valid completed manifest:
 - `visibility`: `public`, `referee`, or an object with `type: "seat"` and `seatId`.
 - `payload`: The kind-specific value.
 
-Playback uses `offsetMs`, not `recordedAt`. Wall clocks can jump. At speed `n`, the viewer waits `(next.offsetMs - current.offsetMs) / n` milliseconds. The viewer offers 1×, 2×, 5×, 10×, and 20× speeds. It can pause and seek to any command boundary.
+Playback uses `offsetMs`, not `recordedAt`. Wall clocks can jump. At speed `n`, the viewer waits `(next.offsetMs - current.offsetMs) / n` milliseconds. The viewer offers 1×, 2×, 5×, 10×, and 20× speeds. It can pause and seek to each visible timeline record. The board changes only after a complete game-command batch.
 
 The first record must have index and offset zero. The final record must have kind `run.completed`, `run.failed`, or `run.cancelled`.
 
@@ -90,24 +90,26 @@ The first record must have index and offset zero. The final record must have kin
 
 Version 1 defines these kinds:
 
-- `run.started`: Public run metadata and seat model identities.
+- `run.started`: The game configuration.
 - `game.event`: One authoritative `catanarchy.game-event.v1` envelope.
-- `negotiation.event`: One authorized `catanarchy.negotiation-event.v1` envelope.
-- `agent.requested`: Request metadata, the seat ID, and the game or negotiation sequence. The full seat observation is seat-visible, not public.
-- `agent.responded`: The selected operation, reason, outcome, model identity, elapsed time, token use, and cost.
-- `agent.failed`: The bounded failure category and attempt. It must not include credentials or an unbounded provider payload.
-- `run.completed`: Final sequence values and result summary.
-- `run.failed`: A bounded failure category and the last durable sequence values.
-- `run.cancelled`: The cancellation reason and the last durable sequence values.
+- `game.command-completed`: The command ID and last game-event sequence in one complete command batch.
+- `negotiation.event`: One `catanarchy.negotiation-event.v1` envelope.
+- `game.agent-requested`: One game request with its seat observation, legal actions, and attempt number.
+- `game.decision`: One selected, failed, or fallback game decision with model, time, token, and cost data when available.
+- `negotiation.agent-requested`: One negotiation request with its seat observation, negotiation view, and attempt number.
+- `negotiation.decision`: One selected, failed, or fallback negotiation decision.
+- `run.completed`: The final game and negotiation sequences and winner, if any.
+- `run.failed`: A short failure reason and the last saved sequence values.
+- `run.cancelled`: A short cancellation reason and the last saved sequence values.
 
 A game command can emit more than one game event. All events with the same `commandId` form one atomic replay batch. A viewer must reduce the complete batch before it displays the next board state.
 
 Example timeline:
 
 ```jsonl
-{"schema":"catanarchy.run-record.v1","runId":"run-42","index":0,"offsetMs":0,"recordedAt":"2026-09-10T10:00:00.000Z","kind":"run.started","visibility":"public","payload":{"matchId":"game-42","seats":["red","blue","white"]}}
-{"schema":"catanarchy.run-record.v1","runId":"run-42","index":1,"offsetMs":36064,"recordedAt":"2026-09-10T10:00:36.064Z","kind":"agent.responded","visibility":"public","payload":{"seatId":"red","gameSequence":0,"outcome":"selected","elapsedMs":36064,"actionId":"settlement:v:-1:-3"}}
-{"schema":"catanarchy.run-record.v1","runId":"run-42","index":2,"offsetMs":36066,"recordedAt":"2026-09-10T10:00:36.066Z","kind":"run.completed","visibility":"public","payload":{"gameSequence":1,"negotiationSequence":0,"winnerPlayerId":null}}
+{"schema":"catanarchy.run-record.v1","runId":"run-42","index":0,"offsetMs":0,"recordedAt":"2026-09-10T10:00:00.000Z","kind":"run.started","visibility":"public","payload":{"config":{"schema":"catanarchy.game-config.v1","matchId":"game-42","seed":42,"players":[{"id":"red","name":"Red","color":"red"},{"id":"blue","name":"Blue","color":"blue"},{"id":"white","name":"White","color":"white"}]}}}
+{"schema":"catanarchy.run-record.v1","runId":"run-42","index":1,"offsetMs":36064,"recordedAt":"2026-09-10T10:00:36.064Z","kind":"game.decision","visibility":"referee","payload":{"matchId":"game-42","sequence":0,"playerId":"red","attempt":1,"outcome":"selected","elapsedMs":36064,"actionId":"settlement:v:-1:-3"}}
+{"schema":"catanarchy.run-record.v1","runId":"run-42","index":2,"offsetMs":36066,"recordedAt":"2026-09-10T10:00:36.066Z","kind":"run.completed","visibility":"public","payload":{"gameSequence":1,"negotiationSequence":-1,"winnerPlayerId":null}}
 ```
 
 ## Pi session compatibility
@@ -116,7 +118,7 @@ Catanarchy does not copy or redefine Pi's session schema. For Pi agents, it crea
 
 This gives each seat a session that Pi can open directly with `SessionManager.open(path)`. It also preserves Pi's normal message and tool-call structure without putting private seat messages in the public timeline.
 
-A viewer reads Pi sessions only through a server-side projection. The projection can expose public chat, selected actions, bounded reasons, timing, and usage. It must not send hidden observations, directed messages for another seat, model reasoning, credentials, or raw provider data to a public browser.
+The trusted local viewer can download each native Pi session file. A future remote viewer will use a server-side projection. That projection can expose public chat, selected actions, short reasons, timing, and usage. It must not send hidden observations, directed messages for another seat, model reasoning, credentials, or raw provider data to a public browser.
 
 Imported runs that have only the old result JSON cannot recover raw Pi messages or exact wall-clock timing. Their viewer uses recorded model-call durations where available and a one-second fallback for missing intervals. The UI must label that timing source.
 
@@ -138,7 +140,7 @@ Unknown record kinds are rejected in version 1. A later compatible addition must
 
 ## Loading and seeking
 
-A loader validates the manifest before it opens referenced files. It replays game events only at complete command boundaries. It builds a sparse index from timeline index and game sequence to byte offset. The viewer seeks to the nearest earlier state checkpoint and replays forward to the selected record.
+A loader validates the manifest before it opens referenced files. It replays game events only at complete command boundaries. The current local viewer loads the run into memory and creates a frame for each visible record. A later large-run loader can add a sparse index from timeline index and game sequence to byte offset.
 
 Checkpoints are derived cache data. They are not authoritative and can be deleted and rebuilt from `timeline.jsonl`.
 

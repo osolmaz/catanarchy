@@ -8,6 +8,6 @@
     "outDir": "dist/types",
     "rootDir": "."
   },
-  "include": ["packages", "apps/cli"],
+  "include": ["packages", "apps/cli", "apps/pi-cli"],
   "exclude": ["test", "apps/web", "vitest.config.ts"]
 }

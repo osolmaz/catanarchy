@@ -141,6 +141,36 @@ export interface MatchRunResult {
   readonly negotiationDecisions: ReadonlyArray<NegotiationTrace>;
 }
 
+export type MatchActivity =
+  | { readonly kind: "game.event"; readonly payload: GameEvent }
+  | {
+      readonly kind: "game.command-completed";
+      readonly payload: {
+        readonly matchId: string;
+        readonly commandId: string;
+        readonly sequence: number;
+      };
+    }
+  | { readonly kind: "negotiation.event"; readonly payload: NegotiationEvent }
+  | {
+      readonly kind: "game.agent-requested";
+      readonly payload: {
+        readonly attempt: number;
+        readonly request: Omit<AgentDecisionRequest, "signal">;
+      };
+    }
+  | { readonly kind: "game.decision"; readonly payload: DecisionTrace }
+  | {
+      readonly kind: "negotiation.agent-requested";
+      readonly payload: {
+        readonly attempt: number;
+        readonly request: Omit<AgentNegotiationRequest, "signal">;
+      };
+    }
+  | { readonly kind: "negotiation.decision"; readonly payload: NegotiationTrace };
+
+export type MatchActivitySink = (activity: MatchActivity) => void | Promise<void>;
+
 export interface InitialPlacementResult extends MatchRunResult {}
 
 export interface AgentRunOptions {
@@ -149,6 +179,7 @@ export interface AgentRunOptions {
   readonly decisionTimeoutMs?: number;
   readonly maxAttempts?: number;
   readonly negotiationPolicy?: NegotiationPolicy;
+  readonly onActivity?: MatchActivitySink;
 }
 
 export interface InitialPlacementOptions extends AgentRunOptions {}
@@ -228,6 +259,39 @@ const positiveInteger = (value: number, name: string, maximum = Number.MAX_SAFE_
 };
 
 class CancellationTimeout extends Error {}
+
+type ActivityRecorder = (activity: MatchActivity) => Promise<void>;
+
+const activityRecorder = (sink: MatchActivitySink | undefined): ActivityRecorder =>
+  sink === undefined ? async () => {} : async (activity) => sink(structuredClone(activity));
+
+const recordGameEventBatch = async (
+  record: ActivityRecorder,
+  events: ReadonlyArray<GameEvent>,
+): Promise<void> => {
+  for (let index = 0; index < events.length; index += 1) {
+    const event = events[index];
+    if (event === undefined) continue;
+    await record({ kind: "game.event", payload: event });
+    if (events[index + 1]?.commandId !== event.commandId) {
+      await record({
+        kind: "game.command-completed",
+        payload: {
+          matchId: event.matchId,
+          commandId: event.commandId,
+          sequence: event.sequence,
+        },
+      });
+    }
+  }
+};
+
+const recordNegotiationEvents = async (
+  record: ActivityRecorder,
+  events: ReadonlyArray<NegotiationEvent>,
+): Promise<void> => {
+  for (const event of events) await record({ kind: "negotiation.event", payload: event });
+};
 
 const timeoutDecision = async (
   agent: SeatAgent,
@@ -398,33 +462,39 @@ const chooseAction = async (
   unavailableAgents: WeakSet<SeatAgent>,
   timeoutMs: number,
   maxAttempts: number,
+  record: ActivityRecorder,
 ): Promise<ChosenAction> => {
   const traces: DecisionTrace[] = [];
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     if (unavailableAgents.has(agent)) break;
+    await record({ kind: "game.agent-requested", payload: { attempt, request } });
     const startedAt = performance.now();
     try {
       const decision = await timeoutDecision(agent, request, timeoutMs);
       const action = canonicalActions.find(({ id }) => id === decision.actionId);
       const elapsedMs = performance.now() - startedAt;
       if (action !== undefined) {
-        traces.push(selectedTrace(agent, request, decision, action, attempt, elapsedMs));
+        const trace = selectedTrace(agent, request, decision, action, attempt, elapsedMs);
+        traces.push(trace);
+        await record({ kind: "game.decision", payload: trace });
         return { action, traces };
       }
-      traces.push(invalidActionTrace(agent, request, decision, attempt, elapsedMs));
+      const trace = invalidActionTrace(agent, request, decision, attempt, elapsedMs);
+      traces.push(trace);
+      await record({ kind: "game.decision", payload: trace });
     } catch (error) {
       const failure = failureCategory(error);
-      traces.push(
-        failedAttemptTrace(
-          agent,
-          request,
-          attempt,
-          performance.now() - startedAt,
-          failure,
-          error instanceof AgentDecisionError ? error.usage : undefined,
-        ),
+      const trace = failedAttemptTrace(
+        agent,
+        request,
+        attempt,
+        performance.now() - startedAt,
+        failure,
+        error instanceof AgentDecisionError ? error.usage : undefined,
       );
+      traces.push(trace);
+      await record({ kind: "game.decision", payload: trace });
       if (failure === "cancellation-timeout") unavailableAgents.add(agent);
     }
   }
@@ -433,10 +503,12 @@ const chooseAction = async (
   if (action === undefined) {
     throw new HarnessError({ message: "The active player has no legal action." });
   }
-  traces.push({
+  const trace: DecisionTrace = {
     ...baseTrace(agent, request, maxAttempts + 1, "fallback", 0),
     actionId: action.id,
-  });
+  };
+  traces.push(trace);
+  await record({ kind: "game.decision", payload: trace });
   return { action, traces };
 };
 
@@ -544,6 +616,7 @@ const chooseNegotiationAction = async (
   timeoutMs: number,
   maxAttempts: number,
   unavailableAgents: WeakSet<SeatAgent>,
+  record: ActivityRecorder,
 ): Promise<NegotiationChoice> => {
   const request: Omit<AgentNegotiationRequest, "signal"> = {
     matchId: state.matchId,
@@ -563,29 +636,44 @@ const chooseNegotiationAction = async (
   const traces: NegotiationTrace[] = [];
   const attemptCount = availableAttemptCount(unavailableAgents, agent, maxAttempts);
   for (let attempt = 1; attempt <= attemptCount; attempt += 1) {
+    await record({ kind: "negotiation.agent-requested", payload: { attempt, request } });
     const startedAt = performance.now();
     try {
       const decision = await timeoutNegotiation(agent, structuredClone(request), timeoutMs);
       const applied = await Effect.runPromise(
         applyNegotiationAction(state, session, round, player.id, decision.action),
       );
-      traces.push(
-        selectedNegotiationTrace(agent, request, decision, attempt, performance.now() - startedAt),
+      const trace = selectedNegotiationTrace(
+        agent,
+        request,
+        decision,
+        attempt,
+        performance.now() - startedAt,
       );
+      traces.push(trace);
+      await record({ kind: "negotiation.decision", payload: trace });
       return { applied, traces };
     } catch (error) {
       const failure = failureCategory(error);
       if (failure === "cancellation-timeout") unavailableAgents.add(agent);
-      traces.push(
-        failedNegotiationTrace(agent, request, error, attempt, performance.now() - startedAt),
+      const trace = failedNegotiationTrace(
+        agent,
+        request,
+        error,
+        attempt,
+        performance.now() - startedAt,
       );
+      traces.push(trace);
+      await record({ kind: "negotiation.decision", payload: trace });
     }
   }
   const applied = await applyNegotiationFallback(state, session, round, player.id);
-  traces.push({
+  const trace: NegotiationTrace = {
     ...negotiationTraceBase(agent, request, maxAttempts + 1, "fallback", 0),
     actionType: "pass",
-  });
+  };
+  traces.push(trace);
+  await record({ kind: "negotiation.decision", payload: trace });
   return { applied, traces };
 };
 
@@ -609,6 +697,7 @@ const runNegotiationRound = async (
   timeoutMs: number,
   maxAttempts: number,
   unavailableAgents: WeakSet<SeatAgent>,
+  record: ActivityRecorder,
 ): Promise<NegotiationRoundResult> => {
   let state = initialState;
   let session = initialSession;
@@ -620,6 +709,7 @@ const runNegotiationRound = async (
     if (agent === undefined) {
       throw new HarnessError({ message: `No agent exists for player ${player.id}.` });
     }
+    const previousNegotiationEventCount = session.events.length;
     const choice = await chooseNegotiationAction(
       state,
       session,
@@ -629,7 +719,13 @@ const runNegotiationRound = async (
       timeoutMs,
       maxAttempts,
       unavailableAgents,
+      record,
     );
+    await recordNegotiationEvents(
+      record,
+      choice.applied.session.events.slice(previousNegotiationEventCount),
+    );
+    await recordGameEventBatch(record, choice.applied.gameEvents);
     if (isPassResult(choice.applied)) passes += 1;
     state = choice.applied.state;
     session = choice.applied.session;
@@ -648,12 +744,14 @@ const runNegotiationWindow = async (
   initialNegotiationSequence: number,
   unavailableAgents: WeakSet<SeatAgent>,
   history: NegotiationSession | null,
+  record: ActivityRecorder,
 ): Promise<NegotiationWindowResult> => {
   let state = stateAtOpen;
   const historicalEventCount = history?.events.length ?? 0;
   let session = await Effect.runPromise(
     openNegotiationWindow(state, policy, initialNegotiationSequence, history ?? undefined),
   );
+  await recordNegotiationEvents(record, session.events.slice(historicalEventCount));
   const gameEvents: GameEvent[] = [];
   const traces: NegotiationTrace[] = [];
   const order = negotiationOrder(state.config, session.turnPlayerId);
@@ -668,13 +766,16 @@ const runNegotiationWindow = async (
       timeoutMs,
       maxAttempts,
       unavailableAgents,
+      record,
     );
     state = result.state;
     session = result.session;
     gameEvents.push(...result.gameEvents);
     traces.push(...result.traces);
     if (result.passes === order.length) {
+      const eventCount = session.events.length;
       session = closeNegotiationWindow(state, session, "all-passed");
+      await recordNegotiationEvents(record, session.events.slice(eventCount));
       return {
         state,
         session,
@@ -685,7 +786,9 @@ const runNegotiationWindow = async (
     }
   }
 
+  const eventCount = session.events.length;
   session = closeNegotiationWindow(state, session, "round-limit");
+  await recordNegotiationEvents(record, session.events.slice(eventCount));
   return {
     state,
     session,
@@ -711,6 +814,7 @@ const negotiateCurrentTurn = async (
   timeoutMs: number,
   maxAttempts: number,
   unavailableAgents: WeakSet<SeatAgent>,
+  record: ActivityRecorder,
 ): Promise<GameState> => {
   if (
     state.phase.tag !== "turn.action" ||
@@ -728,6 +832,7 @@ const negotiateCurrentTurn = async (
     (run.negotiations.at(-1)?.sequence ?? -1) + 1,
     unavailableAgents,
     run.negotiationSession,
+    record,
   );
   run.negotiatedTurns.add(state.phase.turn);
   run.events.push(...negotiated.events);
@@ -747,8 +852,10 @@ const runWithAgents = async (
   const maxAttempts = options.maxAttempts ?? 1;
   positiveInteger(timeoutMs, "decisionTimeoutMs", MAX_TIMER_DELAY_MS);
   positiveInteger(maxAttempts, "maxAttempts");
+  const record = activityRecorder(options.onActivity);
 
   const created = await Effect.runPromise(createGame(options.config));
+  await recordGameEventBatch(record, created.events);
   let state = created.state;
   const events: GameEvent[] = [...created.events];
   const negotiations: NegotiationEvent[] = [];
@@ -774,6 +881,7 @@ const runWithAgents = async (
       timeoutMs,
       maxAttempts,
       unavailableAgents,
+      record,
     );
     const activePlayer = options.config.players[state.phase.playerIndex];
     if (activePlayer === undefined) {
@@ -798,9 +906,11 @@ const runWithAgents = async (
       unavailableAgents,
       timeoutMs,
       maxAttempts,
+      record,
     );
     decisions.push(...chosen.traces);
     const result = await Effect.runPromise(handleCommand(state, chosen.action.command));
+    await recordGameEventBatch(record, result.events);
     state = result.state;
     events.push(...result.events);
     decisionCount += 1;

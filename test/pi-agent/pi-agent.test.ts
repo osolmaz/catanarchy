@@ -1,3 +1,6 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { resolve } from "node:path";
 import { createGame, handleCommand, legalActions, observe } from "@catanarchy/engine";
 import type { AgentDecisionRequest, AgentNegotiationRequest, SeatAgent } from "@catanarchy/harness";
 import {
@@ -18,8 +21,9 @@ import {
   selectNegotiationFromText,
   type PiDecisionChannel,
   type PiModelReference,
+  type PiSessionReference,
 } from "@catanarchy/pi-agent";
-import type { GameConfig } from "@catanarchy/protocol";
+import type { GameConfig, PlayerConfig } from "@catanarchy/protocol";
 import { Effect } from "effect";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -70,11 +74,17 @@ const negotiationRequest = (): AgentNegotiationRequest => {
 
 const originalOpenAiKey = process.env["OPENAI_API_KEY"];
 const originalHfToken = process.env["HF_TOKEN"];
-afterEach(() => {
+const temporaryDirectories: string[] = [];
+afterEach(async () => {
   if (originalOpenAiKey === undefined) delete process.env["OPENAI_API_KEY"];
   else process.env["OPENAI_API_KEY"] = originalOpenAiKey;
   if (originalHfToken === undefined) delete process.env["HF_TOKEN"];
   else process.env["HF_TOKEN"] = originalHfToken;
+  await Promise.all(
+    temporaryDirectories
+      .splice(0)
+      .map(async (directory) => rm(directory, { recursive: true, force: true })),
+  );
 });
 
 describe("Pi action selection", () => {
@@ -340,7 +350,7 @@ describe("Pi model setup", () => {
       models: references,
       modelRuntime: runtime,
       maxOutputTokens: 128,
-      createChannel: async (player, model) => {
+      createChannel: async ({ player, model }) => {
         assigned.push({ player: player.id, modelId: model.id, maxTokens: model.maxTokens });
         return channel;
       },
@@ -365,6 +375,89 @@ describe("Pi model setup", () => {
       references[0],
       references[1],
     ]);
+  });
+
+  it("allocates a native Pi session path before the first model request", async () => {
+    const sessionDirectory = await mkdtemp(resolve(tmpdir(), "catanarchy-pi-session-"));
+    temporaryDirectories.push(sessionDirectory);
+    const runtime = await ModelRuntime.create();
+    const player = config.players[0];
+    if (player === undefined) throw new Error("Expected a player.");
+    let sessionFile: string | undefined;
+    const factory = createPiAgentFactory({
+      models: [{ provider: "openai", modelId: "gpt-5.6-luna" }],
+      modelRuntime: runtime,
+      sessionDirectory,
+      onSessionCreated: (_seat, session) => {
+        sessionFile = session.sessionFile;
+      },
+    });
+
+    const agent = await factory(player);
+    await agent.dispose();
+
+    if (sessionFile === undefined) throw new Error("Expected a Pi session path.");
+    expect(resolve(sessionFile, "..")).toBe(sessionDirectory);
+    expect(sessionFile.endsWith(".jsonl")).toBe(true);
+  });
+
+  it("registers the native Pi session created for a seat", async () => {
+    const runtime = await ModelRuntime.create();
+    const player = config.players[0];
+    if (player === undefined) throw new Error("Expected a player.");
+    const registered = vi.fn<(player: PlayerConfig, session: PiSessionReference) => void>();
+    const factory = createPiAgentFactory({
+      models: [{ provider: "openai", modelId: "gpt-5.6-luna" }],
+      modelRuntime: runtime,
+      sessionDirectory: "/tmp/catanarchy-pi-sessions",
+      onSessionCreated: registered,
+      createChannel: async ({ sessionDirectory }) => ({
+        session: {
+          sessionId: "session-red",
+          sessionFile: `${sessionDirectory}/red.jsonl`,
+        },
+        async run() {
+          return { actionId: "unused" };
+        },
+        async negotiate() {
+          return { action: { type: "pass" } };
+        },
+        async cancel() {},
+        async dispose() {},
+      }),
+    });
+
+    await factory(player);
+
+    expect(registered).toHaveBeenCalledWith(player, {
+      sessionId: "session-red",
+      sessionFile: "/tmp/catanarchy-pi-sessions/red.jsonl",
+    });
+  });
+
+  it("rejects a persistent channel that has no session reference", async () => {
+    const runtime = await ModelRuntime.create();
+    const player = config.players[0];
+    if (player === undefined) throw new Error("Expected a player.");
+    const dispose = vi.fn<() => Promise<void>>(async () => {});
+    const factory = createPiAgentFactory({
+      models: [{ provider: "openai", modelId: "gpt-5.6-luna" }],
+      modelRuntime: runtime,
+      sessionDirectory: "/tmp/catanarchy-pi-sessions",
+      createChannel: async () => ({
+        async run() {
+          return { actionId: "unused" };
+        },
+        async negotiate() {
+          return { action: { type: "pass" } };
+        },
+        async cancel() {},
+        dispose,
+      }),
+    });
+
+    await expect(factory(player)).rejects.toThrow("did not create a persistent session");
+    expect(dispose).toHaveBeenCalledOnce();
   });
 
   it("rejects an unknown assigned model and an invalid output cap", async () => {

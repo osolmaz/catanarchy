@@ -6,7 +6,7 @@ Catanarchy will provide a deterministic Catan simulator and a multi-agent negoti
 
 The first rules target is the current three-player and four-player CATAN base game. Expansions and house rules remain outside the first release.
 
-The current implementation covers the regular board and native base-game rules from setup through victory, atomic domestic trade, bounded negotiation, a trusted local web client, and the Pi agent harness with structured game-action and negotiation tools. The trusted viewer can replay saved reports at command boundaries. The [run log format](RUN_LOG.md) defines exact timing and native Pi session persistence for future runs. Remote viewing and adapters remain planned work.
+The current implementation covers the regular board and native base-game rules from setup through victory, atomic domestic trade, bounded negotiation, a trusted local web client, and the Pi agent harness with structured game-action and negotiation tools. Pi matches write timed run records and one native Pi session per seat. The trusted viewer can follow a running match and replay saved runs. Remote public viewing and adapters remain planned work.
 
 ## Product boundaries
 
@@ -255,8 +255,9 @@ The [web viewer design](VIEWER.md) is the detailed contract for this milestone.
 - [x] Add public player summaries and active-seat resource display for local hot-seat play.
 - [x] Add trusted local report replay at atomic command boundaries with timed controls.
 - [ ] Add viewer-safe saved replay package loading from the run log format.
-- [ ] Stream live frames through HTTP and server-sent events.
-- [ ] Add reconnect, sequence-gap, remote privacy, accessibility, and visual regression tests.
+- [x] Stream trusted local run records through HTTP and server-sent events.
+- [x] Reconnect and reload when the live sequence has a gap.
+- [ ] Add remote privacy, accessibility, and visual regression tests.
 
 The first viewer slice is a trusted local setup client. The full milestone will load viewer-safe saved replays and live streams without authoritative state in the browser.
 
@@ -296,7 +297,9 @@ The first slice is complete when Pi and scripted agents can share an initial-pla
 - [ ] Add bounded parallel match execution.
 - [ ] Add seat rotation and fixed seed sets.
 - [x] Specify the append-only run package, exact timing, privacy scopes, and native Pi session files.
-- [ ] Implement durable run-package recording and interrupted-run recovery.
+- [x] Save run records while each match is in progress.
+- [x] Mark stopped, failed, cancelled, and completed runs clearly.
+- [ ] Add resume support for a stopped match.
 - [ ] Export viewer-safe replay bundles and player-specific training examples.
 - [ ] Add resumable batch manifests without mixing partial and final results.
 - [ ] Measure engine time separately from model time.
