@@ -20,7 +20,7 @@ A completed run uses this layout:
 
 `manifest.json` identifies the run and its files. `timeline.jsonl` contains ordered match records. Each file in `sessions/` is a normal Pi session file created by the public Pi `SessionManager` API. The manifest maps each generated Pi session file to its seat.
 
-A writer creates the run directory before the match starts. It writes each timeline record to disk before play continues. It updates `manifest.json` with an atomic file replacement. The manifest stays `partial` until the match ends. A stopped run keeps its records and remains clearly marked as partial, failed, or cancelled.
+A writer creates the run directory before the match starts. It writes each timeline record to disk before play continues. It updates `manifest.json` with an atomic file replacement. The manifest stays `partial` until the match ends. A stopped run keeps its records and remains clearly marked as partial, failed, or cancelled. If a failed or cancelled run ends during a game command, readers replay the last complete command and retain the unmarked event tail for inspection.
 
 ## Manifest
 

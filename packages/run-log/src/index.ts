@@ -633,7 +633,7 @@ const assertCompleteCommandTail = (
   validation: GameTimelineValidation,
 ): void => {
   if (
-    manifest.status !== "partial" &&
+    manifest.status === "completed" &&
     validation.completedEventCount !== validation.events.length
   ) {
     throw new Error("The run timeline ends inside an atomic command batch.");
