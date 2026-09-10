@@ -309,20 +309,20 @@ The first two questions decide whether a log can be replayed. The last two produ
 
 #### Scope
 
-- [ ] Update the locked replay decision in [Engine design](ENGINE.md) before changing code.
-- [ ] Add a complete runtime schema for `GameState` and the full `game.created` payload.
-- [ ] Split starting-state loading and event reduction from native game generation.
-- [ ] Make replay initialize from the decoded `game.created` state.
-- [ ] Run the full engine invariant suite on the starting state and after each applied atomic batch.
-- [ ] Keep exact command re-decision and event-batch comparison as a native-match verifier.
-- [ ] Let adapter matches use the same reducer while reporting that native command reproduction does not apply.
-- [ ] Separate the match rules and players from the source of the initial board and random outcomes. An observed match must not need a fake generation seed.
-- [ ] Add a run-manifest origin field for a native generated board or an adapter-observed board.
-- [ ] Record the native generator identifier and seed for generated boards.
-- [ ] Calculate whether a native starting state matches the current generator and expose that result to the trusted viewer.
-- [ ] Keep the stored origin as a provenance claim. Do not present it as proof against deliberate file editing.
-- [ ] Update run-log validation so it uses the same starting-state decoder and invariant checks as engine replay.
-- [ ] Update the viewer to show board origin and current-generator match status without blocking replay.
+- [x] Update the locked replay decision in [Engine design](ENGINE.md) before changing code.
+- [x] Add a complete runtime schema for `GameState` and the full `game.created` payload.
+- [x] Split starting-state loading and event reduction from native game generation.
+- [x] Make replay initialize from the decoded `game.created` state.
+- [x] Run the full engine invariant suite on the starting state and after each applied atomic batch.
+- [x] Keep exact command re-decision and event-batch comparison as a native-match verifier.
+- [x] Let adapter matches use the same reducer while reporting that native command reproduction does not apply.
+- [x] Separate the recorded initial-board origin from game rules and players. An observed origin has an adapter ID and no fake generation seed.
+- [x] Add a run-manifest origin field for a native generated board or an adapter-observed board.
+- [x] Record the native generator identifier and seed for generated boards.
+- [x] Calculate whether a native starting state matches the current generator and expose that result to the trusted viewer.
+- [x] Keep the stored origin as a provenance claim. Do not present it as proof against deliberate file editing.
+- [x] Update run-log validation so it uses the same starting-state decoder and invariant checks as engine replay.
+- [x] Update the viewer to show board origin and current-generator match status without blocking replay.
 
 The run manifest will use one origin union in its existing `v1` contract:
 
@@ -344,8 +344,8 @@ type InitialStateOrigin =
 The reader calculates separate results for generation and command verification:
 
 ```ts
-type GeneratorMatch = "matches-current" | "differs-from-current" | "not-applicable";
-type CommandVerification = "exact" | "failed" | "not-applicable";
+type GeneratorMatch = "matches-current" | "differs-from-current" | "not-applicable" | "pending";
+type CommandVerification = "exact" | "not-applicable" | "pending";
 ```
 
 These values are derived when a run is read. They are not stored as authoritative data because the verifier can improve and the current generator can change. Native runs require `exact` command verification for evaluation use. Adapter runs use event reduction, invariant checks, and adapter evidence instead of claiming that Catanarchy produced external random outcomes.
@@ -377,7 +377,7 @@ This milestone will not retain the old board generator, add a fallback replay pa
 3. Add the full state decoder and focused decoder tests.
 4. Extract an invariant-checked event reducer and initialize it from the stored state.
 5. Move command re-decision into the native verifier and remove board regeneration from replay.
-6. Separate native and externally controlled randomness in the protocol without adding a fake seed for observed games.
+6. Keep externally controlled random outcomes in the adapter conformance contract instead of inventing native generator data for observed games.
 7. Add generated and observed origin data to the run manifest in place.
 8. Add generator and command-verification results as report data.
 9. Show origin and verification status in the trusted viewer.
@@ -388,7 +388,7 @@ This milestone will not retain the old board generator, add a fallback replay pa
 
 - A current native game replays to the same final state and passes exact command verification.
 - A valid stored starting state with a different shuffle replays without the old generator code.
-- A valid adapter-observed regular board replays without a generation seed.
+- A valid adapter-observed regular board replays with an observed manifest origin and no generation seed in that origin.
 - A malformed or invariant-breaking starting state is rejected before later events run.
 - A changed, missing, reordered, or illegal later event batch is rejected.
 - A changed native random outcome fails exact command verification.
