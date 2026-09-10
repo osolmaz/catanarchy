@@ -91,7 +91,9 @@ The system prompt tells the model that it controls one Catan seat and must use o
 
 The seat uses one exploration clock for all model messages and action decisions in the current game turn. Setup settlement and road placement for one seat use one setup clock. The Pi adapter sends time warnings while exploration remains. When the exploration clock or planning-message limit ends, inspection is disabled and Pi gets a separate finalization prompt. The finalization phase accepts only the current selection tool. If the finalization grace period ends without a valid selection, the harness records the failure and applies its legal fallback.
 
-The generic harness also keeps an outer wall-clock limit for an agent call and its cancellation. Its default is 180 seconds. The Pi CLI sets this limit to the 90-second turn time plus the 30-second finalization grace and a 60-second cancellation margin.
+The generic harness also keeps an outer wall-clock limit for an agent call and its cancellation. Its default is 12 minutes. The Pi CLI sets this limit to the 10-minute turn time plus the 60-second finalization grace and a 60-second cancellation margin.
+
+A 2026-09-10 DS4 trial showed why the earlier 90-second turn clock was too short. Four of 22 game and negotiation selections, or 18.2 percent, reached a legal fallback because one shared turn clock had to cover setup pairs or roll, negotiation, and action decisions. The minimum useful result for the short functional test is zero timer-driven fallback. The 10-minute exploration window matches the reviewer-style model workflow, while the planning-step and request limits continue to bound model calls and cost.
 
 A submitted selection clears pending time warnings so they cannot start another model response after the decision. Pi compaction also scales to the effective context window. At the minimum 32,768-token context, Pi reserves 16,384 tokens and keeps 8,192 recent tokens. Larger contexts use Pi's normal 16,384-token reserve and keep up to 20,000 recent tokens.
 
@@ -151,14 +153,14 @@ npm run play:pi -- \
   --models=openai/gpt-5.6-luna,huggingface/deepseek-ai/DeepSeek-V4-Flash \
   --seed=42 \
   --decisions=17 \
-  --turn-time-ms=90000 \
-  --finalization-grace-ms=30000 \
+  --turn-time-ms=600000 \
+  --finalization-grace-ms=60000 \
   --max-planning-steps=8 \
   --context-window-tokens=131072 \
   --cost-ceiling-usd=5
 ```
 
-Four seats receive models in round-robin order. The runner rejects unknown models and missing provider authentication before it creates a game. `--decisions` defaults to 16, which completes four-player setup. A larger value continues into normal turns and stops safely at the robber boundary. `--max-attempts` defaults to one. `--thinking` defaults to `high`. `--turn-time-ms` defaults to 90 seconds of exploration for each seat and game turn. `--finalization-grace-ms` defaults to 30 seconds. `--max-planning-steps` defaults to eight inspection calls for each seat and game turn. `--context-window-tokens` defaults to 131,072 and must be at least 32,768. Pi compacts long seat sessions within that limit. `--max-output-tokens` is an optional operator limit. When omitted, the effective output limit is the smaller of the model limit and the configured context window. `--cost-ceiling-usd` defaults to $5 and applies to the complete run. `--output` is optional.
+Four seats receive models in round-robin order. The runner rejects unknown models and missing provider authentication before it creates a game. `--decisions` defaults to 16, which completes four-player setup. A larger value continues into normal turns and stops safely at the robber boundary. `--max-attempts` defaults to one. `--thinking` defaults to `high`. `--turn-time-ms` defaults to 10 minutes of exploration for each seat and game turn. `--finalization-grace-ms` defaults to 60 seconds. `--max-planning-steps` defaults to eight inspection calls for each seat and game turn. `--context-window-tokens` defaults to 131,072 and must be at least 32,768. Pi compacts long seat sessions within that limit. `--max-output-tokens` is an optional operator limit. When omitted, the effective output limit is the smaller of the model limit and the configured context window. `--cost-ceiling-usd` defaults to $5 and applies to the complete run. `--output` is optional.
 
 ## Live-test limit
 

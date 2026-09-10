@@ -854,7 +854,7 @@ const runWithAgents = async (
   shouldContinue: (state: GameState, decisionCount: number) => boolean,
   allowNoLegalActions: boolean,
 ): Promise<MatchRunResult> => {
-  const timeoutMs = options.decisionTimeoutMs ?? 180_000;
+  const timeoutMs = options.decisionTimeoutMs ?? 720_000;
   const maxAttempts = options.maxAttempts ?? 1;
   positiveInteger(timeoutMs, "decisionTimeoutMs", MAX_TIMER_DELAY_MS);
   positiveInteger(maxAttempts, "maxAttempts");

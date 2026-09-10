@@ -1252,8 +1252,8 @@ const modelForSeat = (
   return { reference, model: boundedModel(options, model) };
 };
 
-const DEFAULT_TURN_TIME_MS = 90_000;
-const DEFAULT_FINALIZATION_GRACE_MS = 30_000;
+const DEFAULT_TURN_TIME_MS = 600_000;
+const DEFAULT_FINALIZATION_GRACE_MS = 60_000;
 const DEFAULT_MAX_PLANNING_STEPS = 8;
 
 const boundedPositiveInteger = (

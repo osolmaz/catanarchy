@@ -297,6 +297,7 @@ The Pi adapter connects isolated model sessions to normal game decisions and the
 - [x] Count planning messages, finalization, compaction, and recovery in the launch cost bound.
 - [x] Scale Pi compaction history to the effective context window.
 - [x] Clear pending time warnings when a selection or planning limit ends the model turn.
+- [x] Give each seat a 10-minute shared exploration window and a 60-second finalization window.
 - [ ] Test multi-message turns, clock rollover, finalization, fallback, hidden-state isolation, and legal engine application.
 - [ ] Run an opt-in DS4 test through setup and the first normal turns without token-limit failures.
 
