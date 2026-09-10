@@ -1,17 +1,21 @@
 import { createGame, handleCommand, legalActions, observe } from "@catanarchy/engine";
-import type { AgentDecisionRequest, SeatAgent } from "@catanarchy/harness";
+import type { AgentDecisionRequest, AgentNegotiationRequest, SeatAgent } from "@catanarchy/harness";
 import {
   ActionSelectionGate,
   applyEnvironmentAuthentication,
   assertModelsAvailable,
   buildDecisionPrompt,
+  buildNegotiationPrompt,
   createPiAgentFactory,
   createPiSeatAgent,
   extractAssistantText,
   ModelRuntime,
+  NegotiationSelectionGate,
+  negotiationActionFromToolInput,
   parseModelReference,
   resolveSelection,
   selectActionFromText,
+  selectNegotiationFromText,
   type PiDecisionChannel,
   type PiModelReference,
 } from "@catanarchy/pi-agent";
@@ -39,6 +43,28 @@ const request = (): AgentDecisionRequest => {
     observation: observe(state, { type: "player", playerId: "red" }),
     legalActions: legalActions(state),
     signal: new AbortController().signal,
+  };
+};
+
+const negotiationRequest = (): AgentNegotiationRequest => {
+  const decision = request();
+  return {
+    matchId: decision.matchId,
+    gameSequence: decision.sequence,
+    playerId: decision.playerId,
+    turnPlayerId: decision.playerId,
+    round: 1,
+    observation: decision.observation,
+    negotiation: {
+      schema: "catanarchy.negotiation-view.v1",
+      matchId: decision.matchId,
+      sequence: 0,
+      events: [],
+      offers: [],
+      promises: [],
+      evidence: [],
+    },
+    signal: decision.signal,
   };
 };
 
@@ -191,10 +217,14 @@ describe("Pi action selection", () => {
       actionId: current.legalActions[0]?.id ?? "missing",
       usage: { input: 10, output: 2, cacheRead: 0, cacheWrite: 0, total: 12, cost: 0.001 },
     }));
+    const negotiate = vi.fn<PiDecisionChannel["negotiate"]>(async () => ({
+      action: { type: "pass" },
+      usage: { input: 8, output: 1, cacheRead: 0, cacheWrite: 0, total: 9, cost: 0.0005 },
+    }));
     const cancel = vi.fn<PiDecisionChannel["cancel"]>(async () => {});
     const dispose = vi.fn<PiDecisionChannel["dispose"]>(async () => {});
     const model = { provider: "test", modelId: "model" };
-    const agent = createPiSeatAgent(model, { run, cancel, dispose });
+    const agent = createPiSeatAgent(model, { run, negotiate, cancel, dispose });
 
     await expect(agent.decide(current)).resolves.toMatchObject({ usage: { total: 12 } });
     expect(run).toHaveBeenCalledWith(
@@ -202,10 +232,74 @@ describe("Pi action selection", () => {
       current.legalActions.map(({ id }) => id),
       current.signal,
     );
+    const bargaining = negotiationRequest();
+    await expect(agent.negotiate?.(bargaining)).resolves.toMatchObject({
+      action: { type: "pass" },
+      usage: { total: 9 },
+    });
+    expect(negotiate).toHaveBeenCalledWith(
+      expect.stringContaining('"task": "Choose one negotiation operation'),
+      bargaining.signal,
+    );
     await agent.cancel();
     await agent.dispose();
     expect(cancel).toHaveBeenCalledOnce();
     expect(dispose).toHaveBeenCalledOnce();
+  });
+});
+
+describe("Pi negotiation selection", () => {
+  it("accepts one structured operation and rejects duplicate selection", () => {
+    const gate = new NegotiationSelectionGate();
+    gate.begin();
+
+    expect(gate.choose({ type: "pass" }, "No useful trade.")).toMatchObject({
+      details: { accepted: true, actionType: "pass" },
+      terminate: true,
+    });
+    expect(gate.choose({ type: "pass" })).toMatchObject({ isError: true, terminate: true });
+    expect(gate.take()).toBeUndefined();
+  });
+
+  it("builds protocol actions from negotiation tool input", () => {
+    expect(
+      negotiationActionFromToolInput({
+        operation: "make-offer",
+        targetPlayerId: "blue",
+        scope: "direct",
+        scopePlayerId: "blue",
+        give: { lumber: 1, brick: 0, wool: 0, grain: 0, ore: 0 },
+        receive: { lumber: 0, brick: 1, wool: 0, grain: 0, ore: 0 },
+      }),
+    ).toEqual({
+      type: "make-offer",
+      targetPlayerId: "blue",
+      scope: { type: "direct", playerId: "blue" },
+      give: { lumber: 1, brick: 0, wool: 0, grain: 0, ore: 0 },
+      receive: { lumber: 0, brick: 1, wool: 0, grain: 0, ore: 0 },
+    });
+    expect(
+      negotiationActionFromToolInput({ operation: "send-message", scope: "direct", text: "Hi" }),
+    ).toBeUndefined();
+  });
+
+  it("accepts negotiation JSON from text-only providers", () => {
+    expect(
+      selectNegotiationFromText('```json\n{"type":"accept-offer","offerId":"offer:1"}\n```'),
+    ).toEqual({
+      type: "accept-offer",
+      offerId: "offer:1",
+    });
+    expect(selectNegotiationFromText("No operation selected.")).toBeUndefined();
+  });
+
+  it("builds a seat-scoped negotiation prompt", () => {
+    const prompt = buildNegotiationPrompt(negotiationRequest());
+
+    expect(prompt).toContain('"task": "Choose one negotiation operation');
+    expect(prompt).toContain('"ownResources"');
+    expect(prompt).toContain('"negotiation"');
+    expect(prompt).not.toContain("developmentDeck");
   });
 });
 
@@ -235,6 +329,9 @@ describe("Pi model setup", () => {
     const channel: PiDecisionChannel = {
       async run() {
         return { actionId: "unused" };
+      },
+      async negotiate() {
+        return { action: { type: "pass" } };
       },
       async cancel() {},
       async dispose() {},

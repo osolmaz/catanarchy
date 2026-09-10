@@ -1,12 +1,7 @@
 #!/usr/bin/env node
 
 import { writeFile } from "node:fs/promises";
-import {
-  runGameSteps,
-  type AgentUsage,
-  type DecisionTrace,
-  type MatchRunResult,
-} from "@catanarchy/harness";
+import { runGameSteps, type AgentUsage, type MatchRunResult } from "@catanarchy/harness";
 import {
   applyEnvironmentAuthentication,
   assertModelsAvailable,
@@ -39,6 +34,9 @@ const timeoutMs = integerArgument("timeout-ms", 90_000, 1, 0x7fff_ffff);
 const maxAttempts = integerArgument("max-attempts", 1, 1);
 const maxOutputTokens = integerArgument("max-output-tokens", 4_096, 1);
 const maxDecisions = integerArgument("decisions", 16, 1);
+const negotiationRounds = integerArgument("negotiation-rounds", 1, 0, 10);
+const maxMessageLength = integerArgument("max-message-length", 500, 1, 10_000);
+const maxOpenOffers = integerArgument("max-open-offers", 8, 1, 100);
 const outputPath = argument("output");
 const modelReferences = (
   argument("models") ?? "openai/gpt-5.6-luna,huggingface/deepseek-ai/DeepSeek-V4-Flash"
@@ -49,7 +47,7 @@ const modelReferences = (
 
 const config: GameConfig = {
   schema: "catanarchy.game-config.v1",
-  matchId: `pi-setup-${seed}`,
+  matchId: `pi-game-${seed}`,
   seed,
   players: [
     { id: "red", name: "Red", color: "red" },
@@ -58,6 +56,12 @@ const config: GameConfig = {
     { id: "orange", name: "Orange", color: "orange" },
   ],
 };
+
+const setupDecisionCount = config.players.length * 4;
+const maximumNegotiationWindows = Math.max(0, Math.floor((maxDecisions - setupDecisionCount) / 2));
+const maximumRequests =
+  maxDecisions * maxAttempts +
+  maximumNegotiationWindows * config.players.length * negotiationRounds * maxAttempts;
 
 interface Estimate {
   readonly lowUsd: number;
@@ -102,12 +106,15 @@ const estimateCost = (
   references: ReadonlyArray<PiModelReference>,
 ): Estimate => {
   if (references.length === 0) throw new Error("At least one model reference is required.");
-  const maximumRequests = maxDecisions * maxAttempts;
   const lowPerRequest = Math.min(
     ...references.map((reference) => modelCost(runtime, reference, 8_000, 100, false)),
   );
   const highPerRequest = Math.max(
-    ...references.map((reference) => modelCost(runtime, reference, 64_000, maxOutputTokens, true)),
+    ...references.map((reference) => {
+      const model = runtime.getModel(reference.provider, reference.modelId);
+      if (model === undefined) throw new Error("The model disappeared during cost estimation.");
+      return modelCost(runtime, reference, model.contextWindow, maxOutputTokens, true);
+    }),
   );
   return {
     lowUsd: maximumRequests * lowPerRequest,
@@ -124,10 +131,11 @@ const EMPTY_USAGE: AgentUsage = {
   cost: 0,
 };
 
-const traceUsage = (decision: DecisionTrace): AgentUsage => decision.usage ?? EMPTY_USAGE;
+const traceUsage = (trace: { readonly usage?: AgentUsage }): AgentUsage =>
+  trace.usage ?? EMPTY_USAGE;
 
 const totalUsage = (result: MatchRunResult): AgentUsage =>
-  result.decisions.reduce<AgentUsage>((usage, decision) => {
+  [...result.decisions, ...result.negotiationDecisions].reduce<AgentUsage>((usage, decision) => {
     const current = traceUsage(decision);
     return {
       input: usage.input + current.input,
@@ -149,6 +157,13 @@ const summarize = (result: MatchRunResult) => ({
   decisions: result.decisions.filter(({ outcome }) => outcome !== "failed").length,
   failures: result.decisions.filter(({ outcome }) => outcome === "failed").length,
   fallbacks: result.decisions.filter(({ outcome }) => outcome === "fallback").length,
+  negotiationDecisions: result.negotiationDecisions.filter(({ outcome }) => outcome !== "failed")
+    .length,
+  negotiationFailures: result.negotiationDecisions.filter(({ outcome }) => outcome === "failed")
+    .length,
+  negotiationFallbacks: result.negotiationDecisions.filter(({ outcome }) => outcome === "fallback")
+    .length,
+  negotiationEvents: result.negotiations.length,
   usage: totalUsage(result),
   models: modelReferences,
 });
@@ -171,8 +186,9 @@ const main = async (): Promise<void> => {
       lowUsd: Number(estimate.lowUsd.toFixed(6)),
       highUsd: Number(estimate.highUsd.toFixed(6)),
       ceilingUsd: fallbackCeilingUsd,
-      maximumRequests: maxDecisions * maxAttempts,
+      maximumRequests,
       maxOutputTokens,
+      negotiationRounds,
       note: "The providers do not expose an immutable per-run billing cap. The fixed request and token limits bound this smoke test.",
     }),
   );
@@ -189,6 +205,15 @@ const main = async (): Promise<void> => {
       }),
       decisionTimeoutMs: timeoutMs,
       maxAttempts,
+      ...(negotiationRounds === 0
+        ? {}
+        : {
+            negotiationPolicy: {
+              maxRounds: negotiationRounds,
+              maxMessageLength,
+              maxOpenOffers,
+            },
+          }),
     }),
   );
   const summary = summarize(result);
