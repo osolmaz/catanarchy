@@ -37,7 +37,18 @@ Required fields:
 - `timeline`: The relative path `timeline.jsonl`.
 - `timing`: The exact value `monotonic`.
 - `piVersion`: The exact Pi package version, or `null` when the run has no Pi agents.
+- `initialStateOrigin`: The generated or observed origin of the starting state.
 - `seats`: One entry for each seat.
+
+The origin is one of these values:
+
+```ts
+type InitialStateOrigin =
+  | { readonly type: "generated"; readonly generatorId: string; readonly seed: number }
+  | { readonly type: "observed"; readonly adapterId: string };
+```
+
+A native run uses generator ID `catanarchy.standard-board.v1` and the seed passed to `createGame`. An imported board uses an adapter ID and does not claim that the native generator created it. The origin is a provenance claim, not proof that a file was not edited.
 
 Each seat entry has `seatId`, `agentType`, `model`, `sessionId`, and `sessionFile`. `model` has `provider` and `modelId`, or is `null`. `sessionId` and `sessionFile` are `null` for a non-Pi agent. A session path must stay below `sessions/` and must not contain `..` or an absolute path.
 
@@ -54,6 +65,11 @@ Smallest valid completed manifest:
   "timeline": "timeline.jsonl",
   "timing": "monotonic",
   "piVersion": "0.85.1",
+  "initialStateOrigin": {
+    "type": "generated",
+    "generatorId": "catanarchy.standard-board.v1",
+    "seed": 42
+  },
   "seats": [
     {
       "seatId": "red",
@@ -131,8 +147,10 @@ A reader rejects a package when:
 - timeline indexes have a gap or duplicate
 - monotonic offsets decrease
 - a terminal manifest has no matching terminal record
+- the complete stored starting state does not decode or breaks an engine invariant
 - a game event sequence is invalid
-- an atomic command batch cannot replay
+- a later atomic command batch does not match native command execution
+- a generated origin does not agree with the starting-state seed
 - a seat session path escapes the package
 - a public projection contains a seat-private record
 
@@ -140,7 +158,9 @@ Unknown record kinds are rejected in version 1. A later compatible addition must
 
 ## Loading and seeking
 
-A loader validates the manifest before it opens referenced files. It replays game events only at complete command boundaries. The current local viewer loads the run into memory and creates a frame for each visible record. A later large-run loader can add a sparse index from timeline index and game sequence to byte offset.
+A loader validates the manifest before it opens referenced files. It uses the complete state in `game.created` as the replay starting point and replays later events only at complete command boundaries. It separately reports whether a generated starting state matches the current native generator. A generator mismatch does not make an otherwise valid replay fail.
+
+The current local viewer loads the run into memory and creates a frame for each visible record. A later large-run loader can add a sparse index from timeline index and game sequence to byte offset.
 
 Checkpoints are derived cache data. They are not authoritative and can be deleted and rebuilt from `timeline.jsonl`.
 
