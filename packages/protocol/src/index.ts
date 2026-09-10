@@ -267,6 +267,204 @@ export const RandomStateSchema = Schema.Struct({
   draws: Schema.Number,
 });
 
+const HexIdSchema = Schema.String;
+const VertexIdSchema = Schema.String;
+const EdgeIdSchema = Schema.String;
+const NumberTokenSchema = Schema.Literal(2, 3, 4, 5, 6, 8, 9, 10, 11, 12);
+const HarborKindSchema = Schema.Union(Schema.Literal("generic"), ResourceSchema);
+const DevelopmentDiscardCardSchema = Schema.Literal("road-building", "year-of-plenty", "monopoly");
+
+export const StandardTopologySchema = Schema.Struct({
+  schema: Schema.Literal("catanarchy.standard-topology.v1"),
+  hexes: Schema.Array(
+    Schema.Struct({
+      id: HexIdSchema,
+      q: Schema.Number,
+      r: Schema.Number,
+      vertexIds: Schema.Tuple(
+        VertexIdSchema,
+        VertexIdSchema,
+        VertexIdSchema,
+        VertexIdSchema,
+        VertexIdSchema,
+        VertexIdSchema,
+      ),
+      edgeIds: Schema.Tuple(
+        EdgeIdSchema,
+        EdgeIdSchema,
+        EdgeIdSchema,
+        EdgeIdSchema,
+        EdgeIdSchema,
+        EdgeIdSchema,
+      ),
+      neighborHexIds: Schema.Array(HexIdSchema),
+    }),
+  ),
+  vertices: Schema.Array(
+    Schema.Struct({
+      id: VertexIdSchema,
+      x: Schema.Number,
+      y: Schema.Number,
+      adjacentHexIds: Schema.Array(HexIdSchema),
+      adjacentVertexIds: Schema.Array(VertexIdSchema),
+      edgeIds: Schema.Array(EdgeIdSchema),
+    }),
+  ),
+  edges: Schema.Array(
+    Schema.Struct({
+      id: EdgeIdSchema,
+      vertexIds: Schema.Tuple(VertexIdSchema, VertexIdSchema),
+      adjacentHexIds: Schema.Array(HexIdSchema),
+    }),
+  ),
+  coastalRing: Schema.Array(EdgeIdSchema),
+});
+
+export const BoardLayoutSchema = Schema.Struct({
+  topology: Schema.Literal("standard-radius-2"),
+  terrain: Schema.Array(
+    Schema.Struct({
+      hexId: HexIdSchema,
+      terrain: Schema.Literal(...TERRAIN_TYPES),
+    }),
+  ),
+  numbers: Schema.Array(Schema.Struct({ hexId: HexIdSchema, number: NumberTokenSchema })),
+  harbors: Schema.Array(Schema.Struct({ edgeId: EdgeIdSchema, kind: HarborKindSchema })),
+  robberHexId: HexIdSchema,
+});
+
+export const BoardOccupancySchema = Schema.Struct({
+  buildings: Schema.Array(
+    Schema.Struct({
+      vertexId: VertexIdSchema,
+      playerId: Schema.String,
+      kind: Schema.Union(Schema.Literal("settlement"), Schema.Literal("city")),
+    }),
+  ),
+  roads: Schema.Array(Schema.Struct({ edgeId: EdgeIdSchema, playerId: Schema.String })),
+});
+
+const OwnedDevelopmentCardSchema = Schema.Struct({
+  card: DevelopmentCardSchema,
+  purchasedTurn: Schema.Number,
+});
+
+export const PlayerStateSchema = Schema.Struct({
+  id: Schema.String,
+  resources: ResourceCountsSchema,
+  developmentCards: Schema.Array(OwnedDevelopmentCardSchema),
+  playedKnights: Schema.Number,
+});
+
+const AwardStateSchema = Schema.Struct({
+  longestRoadPlayerId: Schema.NullOr(Schema.String),
+  largestArmyPlayerId: Schema.NullOr(Schema.String),
+});
+
+const GameResultSchema = Schema.Struct({
+  winnerId: Schema.String,
+  turn: Schema.Number,
+  victoryPoints: Schema.Number,
+  revealedVictoryPointCards: Schema.Number,
+});
+
+const DiceSchema = Schema.Tuple(Schema.Number, Schema.Number);
+const TurnContinuationSchema: Schema.Schema<TurnContinuation> = Schema.suspend(
+  (): Schema.Schema<TurnContinuation> =>
+    Schema.Union(
+      Schema.Struct({ tag: Schema.Literal("turn.roll") }),
+      Schema.Struct({ tag: Schema.Literal("turn.action"), dice: DiceSchema }),
+      Schema.Struct({
+        tag: Schema.Literal("turn.robber"),
+        source: Schema.Union(Schema.Literal("roll"), Schema.Literal("knight")),
+        continuation: TurnContinuationSchema,
+      }),
+    ) as Schema.Schema<TurnContinuation>,
+);
+
+export const GamePhaseSchema = Schema.Union(
+  Schema.Struct({
+    tag: Schema.Literal("setup.settlement"),
+    direction: Schema.Union(Schema.Literal("forward"), Schema.Literal("reverse")),
+    playerIndex: Schema.Number,
+  }),
+  Schema.Struct({
+    tag: Schema.Literal("setup.road"),
+    direction: Schema.Union(Schema.Literal("forward"), Schema.Literal("reverse")),
+    playerIndex: Schema.Number,
+    settlementId: VertexIdSchema,
+  }),
+  Schema.Struct({ tag: Schema.Literal("setup.completing"), playerIndex: Schema.Literal(0) }),
+  Schema.Struct({
+    tag: Schema.Literal("turn.roll"),
+    playerIndex: Schema.Number,
+    turn: Schema.Number,
+    developmentCardPlayed: Schema.Boolean,
+  }),
+  Schema.Struct({
+    tag: Schema.Literal("turn.action"),
+    playerIndex: Schema.Number,
+    turn: Schema.Number,
+    dice: DiceSchema,
+    developmentCardPlayed: Schema.Boolean,
+  }),
+  Schema.Struct({
+    tag: Schema.Literal("turn.discard"),
+    playerIndex: Schema.Number,
+    rollerIndex: Schema.Number,
+    turn: Schema.Number,
+    dice: DiceSchema,
+    remaining: Schema.Number,
+    queue: Schema.Array(Schema.Struct({ playerIndex: Schema.Number, remaining: Schema.Number })),
+    developmentCardPlayed: Schema.Boolean,
+  }),
+  Schema.Struct({
+    tag: Schema.Literal("turn.robber"),
+    playerIndex: Schema.Number,
+    turn: Schema.Number,
+    source: Schema.Union(Schema.Literal("roll"), Schema.Literal("knight")),
+    continuation: TurnContinuationSchema,
+    developmentCardPlayed: Schema.Boolean,
+  }),
+  Schema.Struct({
+    tag: Schema.Literal("turn.free-road"),
+    playerIndex: Schema.Number,
+    turn: Schema.Number,
+    remaining: Schema.Union(Schema.Literal(1), Schema.Literal(2)),
+    continuation: TurnContinuationSchema,
+    developmentCardPlayed: Schema.Literal(true),
+  }),
+  Schema.Struct({
+    tag: Schema.Literal("game.finished"),
+    playerIndex: Schema.Number,
+    turn: Schema.Number,
+  }),
+);
+
+export const GameStateSchema = Schema.Struct({
+  schema: Schema.Literal("catanarchy.game-state.v1"),
+  matchId: Schema.String.pipe(Schema.minLength(1)),
+  sequence: Schema.Number,
+  config: GameConfigSchema,
+  topology: StandardTopologySchema,
+  layout: BoardLayoutSchema,
+  occupancy: BoardOccupancySchema,
+  bank: ResourceCountsSchema,
+  players: Schema.Array(PlayerStateSchema),
+  developmentDeck: Schema.Array(DevelopmentCardSchema),
+  developmentDiscard: Schema.Array(DevelopmentDiscardCardSchema),
+  awards: AwardStateSchema,
+  result: Schema.NullOr(GameResultSchema),
+  phase: GamePhaseSchema,
+  random: Schema.Struct({
+    board: RandomStateSchema,
+    developmentDeck: RandomStateSchema,
+    dice: RandomStateSchema,
+    resourceSteal: RandomStateSchema,
+  }),
+});
+export const decodeGameState = Schema.decodeUnknown(GameStateSchema);
+
 export interface GameCreatedEvent {
   readonly type: "game.created";
   readonly state: GameState;
@@ -476,7 +674,7 @@ export const GameEventEnvelopeSchema = Schema.Union(
     ...EventEnvelopeSchemaFields,
     event: Schema.Struct({
       type: Schema.Literal("game.created"),
-      state: Schema.Struct({ config: GameConfigSchema }),
+      state: GameStateSchema,
     }),
   }),
   Schema.Struct({

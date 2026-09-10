@@ -35,6 +35,8 @@ const TERRAIN_SUPPLY: ReadonlyArray<Terrain> = [
   "desert",
 ];
 
+export const STANDARD_BOARD_GENERATOR_ID = "catanarchy.standard-board.v1" as const;
+
 export const NUMBER_SEQUENCE: ReadonlyArray<NumberToken> = [
   5, 2, 6, 3, 8, 10, 9, 12, 11, 4, 8, 10, 9, 4, 5, 6, 3, 11,
 ];
@@ -159,18 +161,25 @@ const harborPatternStart = (topology: StandardTopology): number => {
   return start;
 };
 
+export const standardHarborEdgeIds = (
+  topology: StandardTopology,
+): ReadonlyArray<BoardLayout["harbors"][number]["edgeId"]> => {
+  const start = harborPatternStart(topology);
+  return HARBOR_RING_INDICES.map(
+    (index) => topology.coastalRing[(index + start) % topology.coastalRing.length]!,
+  );
+};
+
 const assignHarbors = (
   topology: StandardTopology,
   state: RandomState,
 ): { readonly harbors: BoardLayout["harbors"]; readonly state: RandomState } => {
-  const start = harborPatternStart(topology);
   const kinds = shuffle(HARBOR_SUPPLY, state);
   const edgeOrder = new Map(topology.edges.map((edge, index) => [edge.id, index]));
   return {
-    harbors: HARBOR_RING_INDICES.map((index, kindIndex) => ({
-      edgeId: topology.coastalRing[(index + start) % topology.coastalRing.length]!,
-      kind: kinds.value[kindIndex]!,
-    })).sort((left, right) => edgeOrder.get(left.edgeId)! - edgeOrder.get(right.edgeId)!),
+    harbors: standardHarborEdgeIds(topology)
+      .map((edgeId, kindIndex) => ({ edgeId, kind: kinds.value[kindIndex]! }))
+      .sort((left, right) => edgeOrder.get(left.edgeId)! - edgeOrder.get(right.edgeId)!),
     state: kinds.state,
   };
 };

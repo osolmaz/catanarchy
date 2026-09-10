@@ -15,11 +15,18 @@ export {
   decide,
   handleCommand,
   legalActions,
+  matchesCurrentGenerator,
   observe,
   replay,
+  verifyNativeReplay,
 } from "./game.js";
-export { checkInvariants } from "./invariants.js";
-export { generateGameMaterials, NUMBER_SEQUENCE } from "./layout.js";
+export { checkInitialStateInvariants, checkInvariants } from "./invariants.js";
+export {
+  generateGameMaterials,
+  NUMBER_SEQUENCE,
+  STANDARD_BOARD_GENERATOR_ID,
+  standardHarborEdgeIds,
+} from "./layout.js";
 export { createRandomState, deriveRandomState, nextInt, nextUint32, shuffle } from "./random.js";
 export type { RandomResult } from "./random.js";
 export { generateStandardTopology, STANDARD_TOPOLOGY } from "./topology.js";

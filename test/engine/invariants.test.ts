@@ -1,4 +1,4 @@
-import { checkInvariants, createGame } from "@catanarchy/engine";
+import { checkInitialStateInvariants, checkInvariants, createGame } from "@catanarchy/engine";
 import type { GameConfig, GameState } from "@catanarchy/protocol";
 import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
@@ -17,6 +17,40 @@ const config: GameConfig = {
 const initialState = (): GameState => Effect.runSync(createGame(config)).state;
 
 describe("state invariants", () => {
+  it("checks the complete stored starting state", () => {
+    const state = initialState();
+    expect(checkInitialStateInvariants(state)).toEqual([]);
+
+    const terrainIndex = state.layout.terrain.findIndex(({ terrain }) => terrain !== "desert");
+    const terrain = state.layout.terrain[terrainIndex];
+    if (terrain === undefined) throw new Error("Expected a resource hex.");
+    const brokenLayout: GameState = {
+      ...state,
+      layout: {
+        ...state.layout,
+        terrain: state.layout.terrain.with(terrainIndex, { ...terrain, terrain: "desert" }),
+      },
+    };
+    expect(checkInitialStateInvariants(brokenLayout)).toEqual(
+      expect.arrayContaining(["layout-terrain", "layout-desert"]),
+    );
+
+    const occupied: GameState = {
+      ...state,
+      occupancy: {
+        ...state.occupancy,
+        buildings: [
+          {
+            vertexId: state.topology.vertices[0]!.id,
+            playerId: state.players[0]!.id,
+            kind: "settlement",
+          },
+        ],
+      },
+    };
+    expect(checkInitialStateInvariants(occupied)).toContain("initial-occupancy");
+  });
+
   it("reports occupancy and distance violations", () => {
     const state = initialState();
     const first = state.topology.vertices[0]!;
