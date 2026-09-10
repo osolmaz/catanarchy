@@ -6,7 +6,7 @@ Catanarchy will provide a deterministic Catan simulator and a multi-agent negoti
 
 The first rules target is the current three-player and four-player CATAN base game. Expansions and house rules remain outside the first release.
 
-The current implementation covers the regular board and native base-game rules from setup through victory, atomic domestic trade, bounded negotiation, a trusted local web client, and the Pi agent harness. Pi negotiation tools, remote viewing, and adapters remain planned work.
+The current implementation covers the regular board and native base-game rules from setup through victory, atomic domestic trade, bounded negotiation, a trusted local web client, and the Pi agent harness with structured game-action and negotiation tools. Remote viewing and adapters remain planned work.
 
 ## Product boundaries
 
@@ -276,7 +276,7 @@ Completion requires four scripted agents to conduct multi-round bargaining and f
 
 ### Milestone 7: Pi agents
 
-The first slice connects Pi agents to the engine's implemented initial-placement phase. It establishes the final seat isolation, tool, deadline, fallback, and trace boundaries before normal turns and negotiation exist.
+The Pi adapter connects isolated model sessions to normal game decisions and the negotiation protocol while preserving the harness deadline, fallback, trace, and information boundaries.
 
 - [x] Define the seat-scoped Pi system prompt.
 - [x] Register the terminating `choose_action` tool through the Pi SDK.
@@ -286,7 +286,7 @@ The first slice connects Pi agents to the engine's implemented initial-placement
 - [x] Add deterministic fallback behavior.
 - [x] Capture model and token data with latency, tool, and outcome traces.
 - [x] Run an opt-in mixed-model initial-placement smoke test.
-- [ ] Route negotiation messages and offers after Milestone 6 defines them.
+- [x] Route negotiation messages and offers through a structured Pi tool.
 
 The first slice is complete when Pi and scripted agents can share an initial-placement match and the deterministic suite proves the session and information boundaries. The complete milestone still requires a mixed full game. The web viewer must be able to follow that match without access to Pi session state.
 

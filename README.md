@@ -2,7 +2,7 @@
 
 Catanarchy is a deterministic Catan simulator for agent research. The long-term goal is to let agents play, talk, negotiate, and make structured trades through one protocol. Native games and external adapters will use the same commands and observations.
 
-The current simulator supports the regular three-player and four-player board, initial placement, production, building, maritime and domestic trade, robber theft, development cards, Longest Road, Largest Army, scoring, and game completion. The harness runs bounded public or directed negotiation rounds with offers, counteroffers, messages, promises, and atomic trade settlement. The local web app can submit game actions, inspect accepted-command history, and render projected negotiation timelines. A Pi agent harness can run complete scripted or model-driven games with isolated sessions and game-only tools. Pi negotiation tools and external adapters come later.
+The current simulator supports the regular three-player and four-player board, initial placement, production, building, maritime and domestic trade, robber theft, development cards, Longest Road, Largest Army, scoring, and game completion. The harness runs bounded public or directed negotiation rounds with offers, counteroffers, messages, promises, and atomic trade settlement. The local web app can submit game actions, inspect accepted-command history, and render projected negotiation timelines. A Pi agent harness can run complete scripted or model-driven games with isolated sessions and structured game-action and negotiation tools. External adapters come later.
 
 ## Start the web app
 
@@ -35,7 +35,7 @@ OPENAI_API_KEY=... HF_TOKEN=... npm run play:pi -- \
   --seed=42
 ```
 
-Four seats receive the models in round-robin order. The command runs 16 setup decisions by default. Add `--decisions=17` to include the first dice roll or use a larger bound to continue through normal turns, robber resolution, and development-card effects. It limits requests and output tokens, prints a cost estimate before the first request, and uses the first legal action if a model fails. Add `--output=path.json` to save the full result outside the repository.
+Four seats receive the models in round-robin order. The command runs 16 setup decisions by default. Add `--decisions=17` to include the first dice roll or use a larger bound to continue through normal turns, negotiation, robber resolution, and development-card effects. Negotiation uses one round per turn by default. Set `--negotiation-rounds=0` to disable it or select a larger bounded value. The command limits requests and output tokens, prints a conservative cost estimate before the first request, and uses deterministic fallbacks if a model fails. Add `--output=path.json` to save the full result outside the repository.
 
 Use `npm run probe:pi -- --model=provider/model-id` for one live model decision. Live model commands are opt-in and are not part of the normal quality gate.
 

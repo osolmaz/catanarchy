@@ -78,15 +78,15 @@ Each seat uses one in-memory Pi session. The integration uses these documented S
 - `SettingsManager.inMemory`
 - `createExtensionRuntime`
 - `defineTool`
-- `session.prompt`, `session.subscribe`, `session.abort`, and `session.dispose`
+- `session.prompt`, `session.abort`, and `session.dispose`
 
-The resource loader returns no extensions, skills, prompt templates, themes, or `AGENTS.md` files. The session gets a game-specific system prompt and only the `choose_action` tool. Read, shell, edit, write, web, and other coding tools are disabled.
+The resource loader returns no extensions, skills, prompt templates, themes, or `AGENTS.md` files. The session gets a game-specific system prompt and only the `choose_action` and `choose_negotiation` tools. Read, shell, edit, write, web, and other coding tools are disabled.
 
 The integration does not use or change Pi internals. It does not write normal Pi session files or settings. Model authentication stays in the user's existing provider stores or process environment. The harness never writes credentials to match traces.
 
 ## Prompt and tool
 
-The system prompt tells the model that it controls one Catan seat, must use only visible state, and must call `choose_action` exactly once. The decision prompt contains a compact JSON document derived from the seat observation. It includes:
+The system prompt tells the model that it controls one Catan seat, must use only visible state, and must call the one tool for the current request exactly once. A game decision uses `choose_action`. Its prompt contains a compact JSON document derived from the seat observation. It includes:
 
 - phase and active seat
 - public player summaries
@@ -96,7 +96,7 @@ The system prompt tells the model that it controls one Catan seat, must use only
 - legal road locations with endpoint IDs
 - roll, development-card purchase, maritime trade, and end-turn actions
 
-The tool input is:
+The game-action tool input is:
 
 ```json
 {
@@ -105,7 +105,9 @@ The tool input is:
 }
 ```
 
-The tool validates the ID against the current decision. Every call terminates the Pi turn, which limits one harness attempt to one provider generation. A valid call returns the selected action. An invalid or duplicate call poisons the complete decision attempt and returns a terminating tool error. Text in the same response cannot recover a poisoned attempt. The harness then controls the next bounded attempt or deterministic fallback.
+A negotiation request contains the authorized observation, complete visible negotiation transcript, current open offers, promises, evidence, and operation rules. The `choose_negotiation` tool accepts one typed operation with the fields needed for messages, offers, counteroffers, replies, withdrawal, promises, or evidence. Providers without tool-call support can return one exact `NegotiationAction` JSON object. The protocol decoder and harness validate it before it can affect the negotiation session.
+
+The active tool validates the selection against the current request. Every call terminates the Pi turn, which limits one harness attempt to one provider generation. A valid call returns the selected action or operation. A call to the wrong tool, an invalid selection, or a duplicate call poisons the complete decision attempt and returns a terminating tool error. Text in the same response cannot recover a poisoned attempt. The harness then controls the next bounded attempt or deterministic fallback.
 
 ## Traces
 
@@ -164,9 +166,9 @@ Deterministic tests cover these cases:
 - a complete deterministic game with exact event replay
 - terminal games with no further agent request
 - stable event and trace order
-- Pi tool termination and usage extraction through a fake Pi session boundary
+- Pi game and negotiation tool termination and usage extraction through a fake Pi session boundary
 
-A focused live smoke test then proves that each requested model can call the game tool in the real Pi SDK and that a mixed-model setup match reaches `turn.roll`.
+A focused live smoke test then proves that each requested model can call the tools in the real Pi SDK and that a model-driven match can reach negotiation without crossing seat boundaries.
 
 ## Live validation
 
@@ -180,3 +182,14 @@ The first mixed-model validation completed on 2026-09-09 with Pi SDK 0.85.1 and 
 - Model catalog revisions and the Hugging Face provider's selected serving backend were not exposed by this Pi SDK path. The run therefore records no model revision or inferred backend claim. Speculative decoding was not requested and was not reported.
 
 The detailed result stayed outside the repository at `/tmp/catanarchy-pi-live-4096.json`. It contains no credentials. It is test evidence, not a committed benchmark artifact.
+
+A focused negotiation validation completed on 2026-09-10 with the same Pi SDK and seed.
+
+- All four seats used `huggingface/deepseek-ai/DeepSeek-V4-Flash` through Hugging Face Inference Providers.
+- The bounded match ran 19 game decisions through setup, a seven, robber movement, one negotiation window, and the first end-turn action.
+- All four negotiation decisions used `choose_negotiation` successfully. Each seat passed, so the window closed early with `all-passed`.
+- No game or negotiation decision failed, and no deterministic fallback ran.
+- The run reported 99,490 input tokens, 21,798 output tokens, 401,352 total tokens including cache accounting, and $0.02003204 total cost.
+- The result is outside the repository at `/home/onur/scratch/catanarchy-ds4-negotiation-seed42-19.json`. It contains no credential fields.
+
+This proves the live negotiation tool boundary. It is not a complete match or a model-quality benchmark.
