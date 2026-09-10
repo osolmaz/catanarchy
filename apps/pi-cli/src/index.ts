@@ -10,6 +10,7 @@ import {
   createPiAgentFactory,
   ModelRuntime,
   parseModelReference,
+  type PiAgentFactoryOptions,
   type PiModelReference,
 } from "@catanarchy/pi-agent";
 import type { GameConfig } from "@catanarchy/protocol";
@@ -32,10 +33,28 @@ const integerArgument = (
   return value;
 };
 
+const numberArgument = (name: string, defaultValue: number): number => {
+  const value = Number(argument(name) ?? defaultValue);
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new Error(`--${name} must be a positive number.`);
+  }
+  return value;
+};
+
+const thinkingArgument = (): NonNullable<PiAgentFactoryOptions["thinkingLevel"]> => {
+  const value = argument("thinking") ?? "low";
+  const levels = new Set(["off", "minimal", "low", "medium", "high", "xhigh"]);
+  if (!levels.has(value)) throw new Error("--thinking is not a supported thinking level.");
+  return value as NonNullable<PiAgentFactoryOptions["thinkingLevel"]>;
+};
+
 const seed = integerArgument("seed", 42, 0, 0xffff_ffff);
 const timeoutMs = integerArgument("timeout-ms", 90_000, 1, 0x7fff_ffff);
 const maxAttempts = integerArgument("max-attempts", 1, 1);
 const maxOutputTokens = integerArgument("max-output-tokens", 4_096, 1);
+const contextWindowTokens = integerArgument("context-window-tokens", 131_072, 32_768);
+const costCeilingUsd = numberArgument("cost-ceiling-usd", 5);
+const thinkingLevel = thinkingArgument();
 const maxDecisions = integerArgument("decisions", 16, 1);
 const negotiationRounds = integerArgument("negotiation-rounds", 1, 0, 10);
 const maxMessageLength = integerArgument("max-message-length", 500, 1, 10_000);
@@ -70,6 +89,7 @@ const maximumNegotiationWindows = Math.max(0, Math.floor((maxDecisions - setupDe
 const maximumRequests =
   maxDecisions * maxAttempts +
   maximumNegotiationWindows * config.players.length * negotiationRounds * maxAttempts;
+const maximumProviderCalls = maximumRequests * 2;
 
 interface Estimate {
   readonly lowUsd: number;
@@ -121,12 +141,18 @@ const estimateCost = (
     ...references.map((reference) => {
       const model = runtime.getModel(reference.provider, reference.modelId);
       if (model === undefined) throw new Error("The model disappeared during cost estimation.");
-      return modelCost(runtime, reference, model.contextWindow, maxOutputTokens, true);
+      return modelCost(
+        runtime,
+        reference,
+        Math.min(model.contextWindow, contextWindowTokens),
+        maxOutputTokens,
+        true,
+      );
     }),
   );
   return {
     lowUsd: maximumRequests * lowPerRequest,
-    highUsd: maximumRequests * highPerRequest,
+    highUsd: maximumProviderCalls * highPerRequest,
   };
 };
 
@@ -182,10 +208,9 @@ const main = async (): Promise<void> => {
   await assertModelsAvailable(runtime, modelReferences);
 
   const estimate = estimateCost(runtime, modelReferences);
-  const fallbackCeilingUsd = 5;
-  if (estimate.highUsd >= fallbackCeilingUsd) {
+  if (estimate.highUsd >= costCeilingUsd) {
     throw new Error(
-      `The conservative cost estimate $${estimate.highUsd.toFixed(4)} is not below the $${fallbackCeilingUsd.toFixed(2)} live-test ceiling.`,
+      `The conservative cost estimate $${estimate.highUsd.toFixed(4)} is not below the $${costCeilingUsd.toFixed(2)} cost ceiling.`,
     );
   }
   console.error(
@@ -193,9 +218,12 @@ const main = async (): Promise<void> => {
       event: "live-test-budget",
       lowUsd: Number(estimate.lowUsd.toFixed(6)),
       highUsd: Number(estimate.highUsd.toFixed(6)),
-      ceilingUsd: fallbackCeilingUsd,
+      ceilingUsd: costCeilingUsd,
       maximumRequests,
+      maximumProviderCalls,
       maxOutputTokens,
+      contextWindowTokens,
+      thinkingLevel,
       negotiationRounds,
       note: "The providers do not expose an immutable per-run billing cap. The fixed request and token limits bound this smoke test.",
     }),
@@ -224,8 +252,9 @@ const main = async (): Promise<void> => {
         createAgent: createPiAgentFactory({
           models: modelReferences,
           modelRuntime: runtime,
-          thinkingLevel: "low",
+          thinkingLevel,
           maxOutputTokens,
+          contextWindowTokens,
           sessionDirectory: recorder.sessionsDirectory,
           onSessionCreated: async (player, session) =>
             recorder.registerPiSession(player.id, session),
