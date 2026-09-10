@@ -669,15 +669,19 @@ export const buildDecisionPrompt = (request: AgentDecisionRequest): string =>
 const MAX_NEGOTIATION_PROMPT_EVENTS = 128;
 const MAX_NEGOTIATION_PROMPT_PROMISES = 32;
 const MAX_NEGOTIATION_PROMPT_EVIDENCE = 64;
+const MAX_NEGOTIATION_PROMPT_BYTES = 24_576;
+const utf8Encoder = new TextEncoder();
 
-const negotiationForPrompt = (
-  negotiation: AgentNegotiationRequest["negotiation"],
-): AgentNegotiationRequest["negotiation"] => {
+type PromptNegotiation = AgentNegotiationRequest["negotiation"];
+
+const initialNegotiationForPrompt = (negotiation: PromptNegotiation): PromptNegotiation => {
   const promises = negotiation.promises.slice(-MAX_NEGOTIATION_PROMPT_PROMISES);
   const promiseIds = new Set(promises.map(({ id }) => id));
+  const events = negotiation.events.slice(-MAX_NEGOTIATION_PROMPT_EVENTS);
   return {
     ...negotiation,
-    events: negotiation.events.slice(-MAX_NEGOTIATION_PROMPT_EVENTS),
+    sequence: events.length,
+    events,
     promises,
     evidence: negotiation.evidence
       .filter(({ promiseId }) => promiseIds.has(promiseId))
@@ -685,38 +689,74 @@ const negotiationForPrompt = (
   };
 };
 
-export const buildNegotiationPrompt = (request: AgentNegotiationRequest): string =>
-  JSON.stringify(
-    {
-      task: "Choose one negotiation operation and call choose_negotiation.",
-      fallback:
-        "If tool calls are unavailable, return only one JSON object that matches NegotiationAction.",
-      matchId: request.matchId,
-      gameSequence: request.gameSequence,
-      playerId: request.playerId,
-      turnPlayerId: request.turnPlayerId,
-      round: request.round,
-      phase: request.observation.phase,
-      players: request.observation.players,
-      awards: request.observation.awards,
-      ownVictoryPoints: request.observation.ownVictoryPoints,
-      ownResources: request.observation.ownResources,
-      ownDevelopmentCards: request.observation.ownDevelopmentCards,
-      occupiedBuildings: request.observation.occupancy.buildings,
-      occupiedRoads: request.observation.occupancy.roads,
-      negotiation: negotiationForPrompt(request.negotiation),
-      rules: [
-        "Passing is always allowed.",
-        "Only the active turn player can make a new offer.",
-        "Only an open offer target can counter, accept, or reject it.",
-        "Only an open offer proposer can withdraw it.",
-        "Offers must exchange at least one resource each way and cannot exchange the same resource type both ways.",
-        "Messages and promises can be public or directed. Promises are nonbinding.",
-      ],
-    },
-    undefined,
-    2,
-  );
+const trimNegotiationPromptHistory = (
+  negotiation: PromptNegotiation,
+): PromptNegotiation | undefined => {
+  if (negotiation.events.length > 0) {
+    const events = negotiation.events.slice(1);
+    return { ...negotiation, sequence: events.length, events };
+  }
+  if (negotiation.evidence.length > 0) {
+    return { ...negotiation, evidence: negotiation.evidence.slice(1) };
+  }
+  if (negotiation.promises.length > 0) {
+    const promises = negotiation.promises.slice(1);
+    const promiseIds = new Set(promises.map(({ id }) => id));
+    return {
+      ...negotiation,
+      promises,
+      evidence: negotiation.evidence.filter(({ promiseId }) => promiseIds.has(promiseId)),
+    };
+  }
+  if (negotiation.offers.length > 0) {
+    return { ...negotiation, offers: negotiation.offers.slice(1) };
+  }
+  return undefined;
+};
+
+const negotiationPromptPayload = (
+  request: AgentNegotiationRequest,
+  negotiation: PromptNegotiation,
+): Readonly<Record<string, unknown>> => ({
+  task: "Choose one negotiation operation and call choose_negotiation.",
+  fallback:
+    "If tool calls are unavailable, return only one JSON object that matches NegotiationAction.",
+  matchId: request.matchId,
+  gameSequence: request.gameSequence,
+  playerId: request.playerId,
+  turnPlayerId: request.turnPlayerId,
+  round: request.round,
+  phase: request.observation.phase,
+  players: request.observation.players,
+  awards: request.observation.awards,
+  ownVictoryPoints: request.observation.ownVictoryPoints,
+  ownResources: request.observation.ownResources,
+  ownDevelopmentCards: request.observation.ownDevelopmentCards,
+  occupiedBuildings: request.observation.occupancy.buildings,
+  occupiedRoads: request.observation.occupancy.roads,
+  negotiation,
+  rules: [
+    "Passing is always allowed.",
+    "Only the active turn player can make a new offer.",
+    "Only an open offer target can counter, accept, or reject it.",
+    "Only an open offer proposer can withdraw it.",
+    "Offers must exchange at least one resource each way and cannot exchange the same resource type both ways.",
+    "Messages and promises can be public or directed. Promises are nonbinding.",
+  ],
+});
+
+export const buildNegotiationPrompt = (request: AgentNegotiationRequest): string => {
+  let negotiation = initialNegotiationForPrompt(request.negotiation);
+  for (;;) {
+    const prompt = JSON.stringify(negotiationPromptPayload(request, negotiation), undefined, 2);
+    if (utf8Encoder.encode(prompt).byteLength <= MAX_NEGOTIATION_PROMPT_BYTES) return prompt;
+    const trimmed = trimNegotiationPromptHistory(negotiation);
+    if (trimmed === undefined) {
+      throw new AgentDecisionError({ message: "The negotiation prompt exceeds its byte limit." });
+    }
+    negotiation = trimmed;
+  }
+};
 
 export const createPiSeatAgent = (
   model: PiModelReference,
