@@ -514,6 +514,16 @@ describe("Pi model setup", () => {
       contextWindowTokens: 16_384,
     });
     await expect(invalidContextFactory(player)).rejects.toThrow("contextWindowTokens");
+
+    const invalidOutputBudgetFactory = createPiAgentFactory({
+      models: [{ provider: "openai", modelId: "gpt-5.6-luna" }],
+      modelRuntime: runtime,
+      contextWindowTokens: 32_768,
+      maxOutputTokens: 32_768,
+    });
+    await expect(invalidOutputBudgetFactory(player)).rejects.toThrow(
+      "smaller than the effective context window",
+    );
   });
 
   it("loads supported credentials from process environment without persistence", async () => {

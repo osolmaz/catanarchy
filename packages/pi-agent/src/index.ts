@@ -739,11 +739,12 @@ const boundedModel = (options: PiAgentFactoryOptions, model: PiModel): PiModel =
   if (!Number.isSafeInteger(contextWindowTokens) || contextWindowTokens < 32_768) {
     throw new Error("contextWindowTokens must be an integer of at least 32768.");
   }
-  return {
-    ...model,
-    contextWindow: Math.min(model.contextWindow, contextWindowTokens),
-    maxTokens: Math.min(model.maxTokens, maxOutputTokens),
-  };
+  const contextWindow = Math.min(model.contextWindow, contextWindowTokens);
+  const maxTokens = Math.min(model.maxTokens, maxOutputTokens);
+  if (maxTokens >= contextWindow) {
+    throw new Error("maxOutputTokens must be smaller than the effective context window.");
+  }
+  return { ...model, contextWindow, maxTokens };
 };
 
 const modelForSeat = (
