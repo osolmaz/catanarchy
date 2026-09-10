@@ -9,6 +9,7 @@ import {
   assertModelsAvailable,
   buildDecisionPrompt,
   buildNegotiationPrompt,
+  compactionSettingsForContext,
   createPiAgentFactory,
   createPiSeatAgent,
   extractAssistantText,
@@ -95,11 +96,13 @@ describe("Pi action selection", () => {
   it("accepts one legal action and terminates the tool turn", () => {
     const gate = new ActionSelectionGate();
     gate.begin(["settlement:v:0:0"]);
+    expect(gate.isComplete()).toBe(false);
 
     expect(gate.choose("settlement:v:0:0", "Strong numbers.")).toMatchObject({
       details: { accepted: true },
       terminate: true,
     });
+    expect(gate.isComplete()).toBe(true);
     expect(resolveSelection(gate, "", ["settlement:v:0:0"])).toEqual({
       selection: {
         actionId: "settlement:v:0:0",
@@ -107,6 +110,7 @@ describe("Pi action selection", () => {
       },
       selectionMode: "tool",
     });
+    expect(gate.isComplete()).toBe(false);
   });
 
   it("accepts an action without a reason", () => {
@@ -127,6 +131,7 @@ describe("Pi action selection", () => {
       terminate: true,
       details: { accepted: false },
     });
+    expect(gate.isComplete()).toBe(true);
     expect(gate.choose("road:e:1")).toMatchObject({ isError: true, terminate: true });
     expect(resolveSelection(gate, "I choose road:e:1.", ["road:e:1"]).selection).toBeUndefined();
 
@@ -178,9 +183,11 @@ describe("Pi action selection", () => {
     });
     expect(secondInspection).not.toHaveProperty("terminate");
     expect(gate.inspect("status")).toMatchObject({ isError: true, terminate: true });
+    expect(gate.isComplete()).toBe(true);
 
     budget.begin("turn:2");
     gate.begin({ status: { phase: "turn.roll" } }, budget);
+    expect(gate.isComplete()).toBe(false);
     expect(gate.inspect("negotiation")).toMatchObject({ isError: true });
     expect(gate.inspect("status")).toMatchObject({ details: { accepted: true } });
     gate.disable();
@@ -268,6 +275,26 @@ describe("Pi action selection", () => {
     expect(buildDecisionPrompt(makeRequest())).toContain('"type": "end-turn"');
   });
 
+  it("describes unknown graph IDs without exposing engine state", () => {
+    const current = request();
+    const action = current.legalActions[0];
+    if (action === undefined || action.command.command.type !== "place-initial-settlement") {
+      throw new Error("Expected an initial settlement action.");
+    }
+    const malformedAction = {
+      ...action,
+      command: {
+        ...action.command,
+        command: { ...action.command.command, vertexId: "v:999:999" as const },
+      },
+    };
+    const prompt = buildDecisionPrompt({ ...current, legalActions: [malformedAction] });
+
+    expect(prompt).toContain('"vertexId": "v:999:999"');
+    expect(prompt).toContain('"adjacentHexes": []');
+    expect(prompt).toContain('"harbors": []');
+  });
+
   it("describes a legal road after a settlement", () => {
     const created = Effect.runSync(createGame(config));
     const settlement = legalActions(created.state)[0];
@@ -284,6 +311,20 @@ describe("Pi action selection", () => {
     };
 
     expect(buildDecisionPrompt(roadRequest)).toContain('"endpoints"');
+    const road = roadRequest.legalActions[0];
+    if (road === undefined || road.command.command.type !== "place-initial-road") {
+      throw new Error("Expected an initial road action.");
+    }
+    const malformedRoad = {
+      ...road,
+      command: {
+        ...road.command,
+        command: { ...road.command.command, edgeId: "e:v:999:999|v:998:998" as const },
+      },
+    };
+    expect(buildDecisionPrompt({ ...roadRequest, legalActions: [malformedRoad] })).toContain(
+      '"endpoints": []',
+    );
   });
 
   it("adapts a Pi decision channel to the generic seat interface", async () => {
@@ -319,13 +360,16 @@ describe("Pi action selection", () => {
 describe("Pi negotiation selection", () => {
   it("accepts one structured operation and rejects duplicate selection", () => {
     const gate = new NegotiationSelectionGate();
+    expect(gate.isComplete()).toBe(false);
     expect(gate.choose({ type: "pass" })).toMatchObject({ isError: true, terminate: true });
+    expect(gate.isComplete()).toBe(true);
     gate.begin();
 
     expect(gate.choose({ type: "pass" }, "No useful trade.")).toMatchObject({
       details: { accepted: true, actionType: "pass" },
       terminate: true,
     });
+    expect(gate.isComplete()).toBe(true);
     expect(gate.choose({ type: "pass" })).toMatchObject({ isError: true, terminate: true });
     expect(gate.take()).toBeUndefined();
 
@@ -339,6 +383,7 @@ describe("Pi negotiation selection", () => {
   });
 
   it("builds protocol actions from negotiation tool input", () => {
+    expect(negotiationActionFromToolInput({ operation: "pass" })).toEqual({ type: "pass" });
     expect(
       negotiationActionFromToolInput({
         operation: "make-offer",
@@ -367,6 +412,25 @@ describe("Pi negotiation selection", () => {
     ).toEqual({ type: "send-message", scope: { type: "public" }, text: "Ore is scarce." });
     expect(
       negotiationActionFromToolInput({
+        operation: "counter-offer",
+        offerId: "offer:1",
+        scope: "direct",
+        scopePlayerId: "red",
+        give: { lumber: 0, brick: 1, wool: 0, grain: 0, ore: 0 },
+        receive: { lumber: 1, brick: 0, wool: 0, grain: 0, ore: 0 },
+      }),
+    ).toMatchObject({ type: "counter-offer", offerId: "offer:1" });
+    expect(
+      negotiationActionFromToolInput({ operation: "accept-offer", offerId: "offer:1" }),
+    ).toEqual({ type: "accept-offer", offerId: "offer:1" });
+    expect(
+      negotiationActionFromToolInput({ operation: "reject-offer", offerId: "offer:1" }),
+    ).toEqual({ type: "reject-offer", offerId: "offer:1" });
+    expect(
+      negotiationActionFromToolInput({ operation: "withdraw-offer", offerId: "offer:1" }),
+    ).toEqual({ type: "withdraw-offer", offerId: "offer:1" });
+    expect(
+      negotiationActionFromToolInput({
         operation: "record-promise",
         beneficiaryPlayerId: "blue",
         scope: "public",
@@ -380,6 +444,27 @@ describe("Pi negotiation selection", () => {
       text: "I will return one grain.",
       relatedOfferId: "offer:1",
     });
+    expect(
+      negotiationActionFromToolInput({
+        operation: "record-promise",
+        beneficiaryPlayerId: "blue",
+        scope: "public",
+        text: "No linked offer.",
+      }),
+    ).toMatchObject({ type: "record-promise", relatedOfferId: null });
+    expect(
+      negotiationActionFromToolInput({
+        operation: "record-promise-evidence",
+        promiseId: "promise:1",
+        gameSequence: 8,
+        text: "The road was built.",
+      }),
+    ).toEqual({
+      type: "record-promise-evidence",
+      promiseId: "promise:1",
+      gameSequence: 8,
+      text: "The road was built.",
+    });
   });
 
   it("accepts negotiation JSON from text-only providers", () => {
@@ -389,6 +474,7 @@ describe("Pi negotiation selection", () => {
       type: "accept-offer",
       offerId: "offer:1",
     });
+    expect(selectNegotiationFromText('{"action":{"type":"pass"}}')).toEqual({ type: "pass" });
     expect(selectNegotiationFromText("No operation selected.")).toBeUndefined();
   });
 
@@ -464,6 +550,19 @@ describe("Pi negotiation selection", () => {
 });
 
 describe("Pi model setup", () => {
+  it("scales compaction history to the effective context window", () => {
+    expect(compactionSettingsForContext(32_768)).toEqual({
+      enabled: true,
+      reserveTokens: 16_384,
+      keepRecentTokens: 8_192,
+    });
+    expect(compactionSettingsForContext(131_072)).toEqual({
+      enabled: true,
+      reserveTokens: 16_384,
+      keepRecentTokens: 20_000,
+    });
+  });
+
   it("parses provider and slash-bearing model IDs", () => {
     expect(parseModelReference("huggingface/deepseek-ai/DeepSeek-V4-Flash")).toEqual({
       provider: "huggingface",
@@ -640,6 +739,12 @@ describe("Pi model setup", () => {
 
     const agent = await factory(player);
     await agent.dispose();
+    const inMemoryAgent = await createPiAgentFactory({
+      models: [{ provider: "openai", modelId: "gpt-5.6-luna" }],
+      modelRuntime: runtime,
+      thinkingLevel: "medium",
+    })(player);
+    await inMemoryAgent.dispose();
 
     if (sessionFile === undefined) throw new Error("Expected a Pi session path.");
     expect(resolve(sessionFile, "..")).toBe(sessionDirectory);

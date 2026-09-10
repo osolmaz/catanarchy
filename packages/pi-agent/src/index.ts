@@ -139,6 +139,10 @@ export class ActionSelectionGate {
     return this.failed;
   }
 
+  isComplete(): boolean {
+    return this.failed || this.selection !== undefined;
+  }
+
   take(): Selection | undefined {
     const selection = this.failed ? undefined : this.selection;
     this.selection = undefined;
@@ -201,6 +205,10 @@ export class NegotiationSelectionGate {
 
   isPoisoned(): boolean {
     return this.failed;
+  }
+
+  isComplete(): boolean {
+    return this.failed || this.selection !== undefined;
   }
 
   take(): NegotiationSelection | undefined {
@@ -297,17 +305,24 @@ export class InspectionGate {
   private sections: InspectionSections = {};
   private budget: TurnBudget | undefined;
   private active = false;
+  private complete = false;
 
   begin(sections: InspectionSections, budget: TurnBudget): void {
     this.sections = sections;
     this.budget = budget;
     this.active = true;
+    this.complete = false;
   }
 
   disable(): void {
     this.sections = {};
     this.budget = undefined;
     this.active = false;
+    this.complete = false;
+  }
+
+  isComplete(): boolean {
+    return this.complete;
   }
 
   inspect(section: InspectionSection): ToolResult {
@@ -319,6 +334,7 @@ export class InspectionGate {
       };
     }
     if (!this.budget.takePlanningStep()) {
+      this.complete = true;
       return {
         content: [{ type: "text", text: "The planning-message limit is complete. Select now." }],
         details: { section, accepted: false },
@@ -645,6 +661,13 @@ class SdkDecisionChannel implements PiDecisionChannel {
       phase === "exploration"
         ? this.#turnBudget.warningDelays().map(({ thresholdMs, delayMs }) =>
             setTimeout(() => {
+              if (
+                this.#actionGate.isComplete() ||
+                this.#negotiationGate.isComplete() ||
+                this.#inspectionGate.isComplete()
+              ) {
+                return;
+              }
               this.#turnBudget.markWarning(thresholdMs);
               this.#session.clearQueue();
               const seconds = Math.max(
@@ -828,6 +851,21 @@ class SdkDecisionChannel implements PiDecisionChannel {
   }
 }
 
+export const compactionSettingsForContext = (
+  contextWindow: number,
+): {
+  readonly enabled: true;
+  readonly reserveTokens: number;
+  readonly keepRecentTokens: number;
+} => {
+  const reserveTokens = Math.min(16_384, Math.floor(contextWindow / 2));
+  return {
+    enabled: true,
+    reserveTokens,
+    keepRecentTokens: Math.min(20_000, Math.floor((contextWindow - reserveTokens) / 2)),
+  };
+};
+
 const createSdkDecisionChannel = async ({
   player,
   model,
@@ -842,6 +880,11 @@ const createSdkDecisionChannel = async ({
   const negotiationGate = new NegotiationSelectionGate();
   const inspectionGate = new InspectionGate();
   const turnBudget = new TurnBudget(turnTimeMs, finalizationGraceMs, maxPlanningSteps);
+  let sdkSession: AgentSession | undefined;
+  const clearQueueOnTermination = (result: ToolResult): ToolResult => {
+    if (result.terminate === true) sdkSession?.clearQueue();
+    return result;
+  };
   const chooseAction = defineTool({
     name: "choose_action",
     label: "Choose action",
@@ -855,7 +898,7 @@ const createSdkDecisionChannel = async ({
       reason: Type.Optional(Type.String({ description: "One short strategic reason" })),
     }),
     execute: async (_toolCallId, parameters) =>
-      actionGate.choose(parameters.actionId, parameters.reason),
+      clearQueueOnTermination(actionGate.choose(parameters.actionId, parameters.reason)),
   });
   const chooseNegotiation = defineTool({
     name: "choose_negotiation",
@@ -870,7 +913,9 @@ const createSdkDecisionChannel = async ({
     ],
     parameters: NegotiationToolParameters,
     execute: async (_toolCallId, parameters) =>
-      negotiationGate.choose(negotiationActionFromToolInput(parameters), parameters.reason),
+      clearQueueOnTermination(
+        negotiationGate.choose(negotiationActionFromToolInput(parameters), parameters.reason),
+      ),
   });
   const inspectGame = defineTool({
     name: "inspect_game",
@@ -883,7 +928,8 @@ const createSdkDecisionChannel = async ({
       "Inspection does not select an action or negotiation operation.",
     ],
     parameters: Type.Object({ section: StringEnum(INSPECTION_SECTIONS) }),
-    execute: async (_toolCallId, parameters) => inspectionGate.inspect(parameters.section),
+    execute: async (_toolCallId, parameters) =>
+      clearQueueOnTermination(inspectionGate.inspect(parameters.section)),
   });
   const cwd = process.cwd();
   const { session } = await createAgentSession({
@@ -899,10 +945,11 @@ const createSdkDecisionChannel = async ({
         ? SessionManager.inMemory(cwd)
         : SessionManager.create(cwd, sessionDirectory),
     settingsManager: SettingsManager.inMemory({
-      compaction: { enabled: true },
+      compaction: compactionSettingsForContext(model.contextWindow),
       retry: { enabled: false },
     }),
   });
+  sdkSession = session;
   const channel = new SdkDecisionChannel(
     session,
     actionGate,
