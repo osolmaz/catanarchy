@@ -24,8 +24,18 @@ const manifest = (status: "partial" | "completed" | "failed" | "cancelled") => (
   runId: "live-run",
   matchId: config.matchId,
   status,
+  initialStateOrigin: {
+    type: "generated",
+    generatorId: "catanarchy.standard-board.v1",
+    seed: config.seed,
+  },
   seats: [],
 });
+
+const verification = {
+  generatorMatch: "matches-current",
+  commandVerification: "exact",
+} as const;
 
 const runRecord = (index: number, offsetMs: number, kind: string, payload: unknown) => ({
   schema: "catanarchy.run-record.v1",
@@ -57,7 +67,7 @@ class FakeEventSource {
   emit(record: unknown, currentManifest: unknown): void {
     this.onmessage?.(
       new MessageEvent("message", {
-        data: JSON.stringify({ manifest: currentManifest, record }),
+        data: JSON.stringify({ manifest: currentManifest, record, verification }),
       }),
     );
   }
@@ -94,7 +104,7 @@ describe("live run viewer", () => {
         sequence: event.sequence,
       }),
     ];
-    const snapshot = { manifest: manifest("partial"), records };
+    const snapshot = { manifest: manifest("partial"), records, verification };
     const fetch = vi.fn<typeof globalThis.fetch>(async () =>
       Promise.resolve(new Response(JSON.stringify(snapshot), { status: 200 })),
     );
@@ -131,7 +141,7 @@ describe("live run viewer", () => {
 
     render(
       <LiveRunViewer
-        initialSnapshot={{ manifest: manifest("failed"), records }}
+        initialSnapshot={{ manifest: manifest("failed"), records, verification }}
         initialRun={null}
       />,
     );
@@ -146,7 +156,7 @@ describe("live run viewer", () => {
     const started = runRecord(0, 0, "run.started", { config });
     render(
       <LiveRunViewer
-        initialSnapshot={{ manifest: manifest("partial"), records: [started] }}
+        initialSnapshot={{ manifest: manifest("partial"), records: [started], verification }}
         initialRun={null}
       />,
     );
