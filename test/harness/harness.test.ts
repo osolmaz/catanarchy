@@ -6,6 +6,7 @@ import {
   runInitialPlacement,
   type AgentDecisionRequest,
   type AgentNegotiationRequest,
+  type MatchActivity,
   type SeatAgent,
 } from "@catanarchy/harness";
 import type {
@@ -353,6 +354,69 @@ describe("agent harness", () => {
     expect(result.state.occupancy.roads).toHaveLength(count * 2);
     expect(result.decisions).toHaveLength(count * 4);
     expect(result.decisions.every(({ outcome }) => outcome === "selected")).toBe(true);
+  });
+
+  it("reports requests, decisions, and complete game-event batches in order", async () => {
+    const activities: MatchActivity[] = [];
+    const result = await Effect.runPromise(
+      runGameSteps({
+        config: config(3),
+        maxDecisions: 1,
+        createAgent: async () => createFirstLegalAgent(),
+        onActivity(activity) {
+          activities.push(activity);
+        },
+      }),
+    );
+
+    expect(activities.map(({ kind }) => kind)).toEqual([
+      "game.event",
+      "game.command-completed",
+      "game.agent-requested",
+      "game.decision",
+      "game.event",
+      "game.command-completed",
+    ]);
+    expect(activities.find(({ kind }) => kind === "game.agent-requested")).toMatchObject({
+      payload: { attempt: 1, request: { playerId: "red", sequence: 0 } },
+    });
+    expect(
+      activities.filter(({ kind }) => kind === "game.event").map(({ payload }) => payload),
+    ).toEqual(result.events);
+  });
+
+  it("reports each negotiation request, decision, and event as it happens", async () => {
+    const activities: MatchActivity[] = [];
+    await Effect.runPromise(
+      runGameSteps({
+        config: config(4),
+        maxDecisions: 19,
+        negotiationPolicy: { maxRounds: 1, maxMessageLength: 100, maxOpenOffers: 2 },
+        createAgent: async () => createFirstLegalAgent(),
+        onActivity(activity) {
+          activities.push(activity);
+        },
+      }),
+    );
+
+    expect(
+      activities.filter(({ kind }) => kind.startsWith("negotiation.")).map(({ kind }) => kind),
+    ).toEqual([
+      "negotiation.event",
+      "negotiation.agent-requested",
+      "negotiation.decision",
+      "negotiation.event",
+      "negotiation.agent-requested",
+      "negotiation.decision",
+      "negotiation.event",
+      "negotiation.agent-requested",
+      "negotiation.decision",
+      "negotiation.event",
+      "negotiation.agent-requested",
+      "negotiation.decision",
+      "negotiation.event",
+      "negotiation.event",
+    ]);
   });
 
   it("records model identity, reasons, and usage", async () => {

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { writeFile } from "node:fs/promises";
+import { resolve } from "node:path";
 import { runGameSteps, type AgentUsage, type MatchRunResult } from "@catanarchy/harness";
 import {
   applyEnvironmentAuthentication,
@@ -11,6 +12,7 @@ import {
   type PiModelReference,
 } from "@catanarchy/pi-agent";
 import type { GameConfig } from "@catanarchy/protocol";
+import { RunRecorder } from "@catanarchy/run-log";
 import { Effect } from "effect";
 
 const argument = (name: string): string | undefined =>
@@ -56,6 +58,11 @@ const config: GameConfig = {
     { id: "orange", name: "Orange", color: "orange" },
   ],
 };
+
+const runStartedAt = new Date().toISOString().replaceAll(/[:.]/gu, "-");
+const runId = argument("run-id") ?? `${config.matchId}-${runStartedAt}`;
+const runDirectory = resolve(argument("run-dir") ?? `runs/${runId}`);
+const piVersion = "0.85.1";
 
 const setupDecisionCount = config.players.length * 4;
 const maximumNegotiationWindows = Math.max(0, Math.floor((maxDecisions - setupDecisionCount) / 2));
@@ -193,31 +200,58 @@ const main = async (): Promise<void> => {
     }),
   );
 
-  const result = await Effect.runPromise(
-    runGameSteps({
-      config,
-      maxDecisions,
-      createAgent: createPiAgentFactory({
-        models: modelReferences,
-        modelRuntime: runtime,
-        thinkingLevel: "low",
-        maxOutputTokens,
+  const recorder = await RunRecorder.create({
+    directory: runDirectory,
+    runId,
+    config,
+    piVersion,
+    seats: config.players.map((player, index) => ({
+      seatId: player.id,
+      agentType: "pi" as const,
+      model: modelReferences[index % modelReferences.length] ?? null,
+    })),
+  });
+  console.error(JSON.stringify({ event: "run-created", runId, runDirectory }));
+
+  let result: MatchRunResult | null = null;
+  try {
+    result = await Effect.runPromise(
+      runGameSteps({
+        config,
+        maxDecisions,
+        createAgent: createPiAgentFactory({
+          models: modelReferences,
+          modelRuntime: runtime,
+          thinkingLevel: "low",
+          maxOutputTokens,
+          sessionDirectory: recorder.sessionsDirectory,
+          onSessionCreated: async (player, session) =>
+            recorder.registerPiSession(player.id, session),
+        }),
+        decisionTimeoutMs: timeoutMs,
+        maxAttempts,
+        onActivity: async (activity) => recorder.recordActivity(activity),
+        ...(negotiationRounds === 0
+          ? {}
+          : {
+              negotiationPolicy: {
+                maxRounds: negotiationRounds,
+                maxMessageLength,
+                maxOpenOffers,
+              },
+            }),
       }),
-      decisionTimeoutMs: timeoutMs,
-      maxAttempts,
-      ...(negotiationRounds === 0
-        ? {}
-        : {
-            negotiationPolicy: {
-              maxRounds: negotiationRounds,
-              maxMessageLength,
-              maxOpenOffers,
-            },
-          }),
-    }),
-  );
+    );
+    await recorder.complete(result);
+  } catch (error) {
+    if (recorder.manifest.status === "partial") {
+      await recorder.fail(result, "The Pi match failed.");
+    }
+    throw error;
+  }
+
   const summary = summarize(result);
-  console.log(JSON.stringify(summary, undefined, 2));
+  console.log(JSON.stringify({ ...summary, runDirectory }, undefined, 2));
   if (outputPath !== undefined) {
     await writeFile(outputPath, `${JSON.stringify({ summary, result }, undefined, 2)}\n`, {
       encoding: "utf8",

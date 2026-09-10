@@ -1,3 +1,3 @@
 /// <reference types="vite/client" />
 
-declare const __CATANARCHY_RUN_REPORT__: boolean;
+declare const __CATANARCHY_RUN_SOURCE__: "report" | "package" | null;

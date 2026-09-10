@@ -10,6 +10,7 @@ export default defineConfig({
       "@catanarchy/harness": fromRoot("packages/harness/src/index.ts"),
       "@catanarchy/pi-agent": fromRoot("packages/pi-agent/src/index.ts"),
       "@catanarchy/protocol": fromRoot("packages/protocol/src/index.ts"),
+      "@catanarchy/run-log": fromRoot("packages/run-log/src/index.ts"),
     },
   },
   test: {
@@ -21,6 +22,7 @@ export default defineConfig({
         "packages/harness/src/**/*.ts",
         "packages/pi-agent/src/**/*.ts",
         "packages/protocol/src/**/*.ts",
+        "packages/run-log/src/**/*.ts",
       ],
       reporter: ["text", "json", "html"],
       thresholds: {

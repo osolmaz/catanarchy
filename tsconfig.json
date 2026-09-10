@@ -7,7 +7,8 @@
       "@catanarchy/engine": ["./packages/engine/src/index.ts"],
       "@catanarchy/harness": ["./packages/harness/src/index.ts"],
       "@catanarchy/pi-agent": ["./packages/pi-agent/src/index.ts"],
-      "@catanarchy/protocol": ["./packages/protocol/src/index.ts"]
+      "@catanarchy/protocol": ["./packages/protocol/src/index.ts"],
+      "@catanarchy/run-log": ["./packages/run-log/src/index.ts"]
     },
     "lib": ["ES2023", "DOM", "DOM.Iterable"],
     "jsx": "react-jsx",

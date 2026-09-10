@@ -5,7 +5,7 @@ import type { GameConfig } from "@catanarchy/protocol";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { Effect } from "effect";
 import { afterEach, describe, expect, it } from "vitest";
-import { loadRunReport } from "../../apps/web/src/RunReport.js";
+import { loadRunPackage, loadRunReport } from "../../apps/web/src/RunReport.js";
 import { SavedRunViewer } from "../../apps/web/src/SavedRunViewer.js";
 
 const config: GameConfig = {
@@ -79,7 +79,7 @@ describe("saved run viewer", () => {
       "?mode=play",
     );
     expect(screen.getByText("1 / 2")).toBeTruthy();
-    expect(screen.getByText("model · 1 calls · 12 tok · $0.0010")).toBeTruthy();
+    expect(screen.queryByText("model · 1 calls · 12 tok · $0.0010")).toBeNull();
     expect(screen.queryByText("red (public): I need brick.")).toBeNull();
     expect(screen.queryByText("Strong production.")).toBeNull();
     expect(run.frameDurationsMs).toEqual([12]);
@@ -90,6 +90,7 @@ describe("saved run viewer", () => {
     expect(screen.getByText("2 / 2")).toBeTruthy();
     expect(screen.getByText("red (public): I need brick.")).toBeTruthy();
     expect(screen.getByText("red: settlement:v:0:0")).toBeTruthy();
+    expect(screen.getByText("model · 1 calls · 12 tok · $0.0010")).toBeTruthy();
     expect(screen.getByText("model · 12 tok · $0.0010 · 12 ms")).toBeTruthy();
     expect(screen.getByText("Strong production.")).toBeTruthy();
     expect(screen.getByText("recorded model time")).toBeTruthy();
@@ -104,6 +105,86 @@ describe("saved run viewer", () => {
     for (let step = 0; step < 4; step += 1) fireEvent.click(speed);
     expect(speed.textContent).toBe("20×");
     expect(screen.getByText("2 / 2")).toBeTruthy();
+  });
+
+  it("loads exact record timing and native Pi session links from a run package", async () => {
+    const created = Effect.runSync(createGame(config));
+    const action = legalActions(created.state)[0];
+    if (action === undefined) throw new Error("Expected one setup action.");
+    const handled = Effect.runSync(handleCommand(created.state, action.command));
+    const decision = {
+      sequence: created.state.sequence,
+      playerId: "red",
+      attempt: 1,
+      outcome: "selected",
+      actionId: action.id,
+      elapsedMs: 10,
+    } as const;
+    const message = {
+      schema: "catanarchy.negotiation-event.v1",
+      matchId: config.matchId,
+      sequence: 0,
+      gameSequence: created.state.sequence,
+      event: {
+        type: "negotiation.message-sent",
+        round: 1,
+        playerId: "red",
+        scope: { type: "public" },
+        text: "Trade?",
+      },
+    } as const;
+    const values = [
+      ["run.started", { config }],
+      ["game.event", created.events[0]],
+      [
+        "game.command-completed",
+        { matchId: config.matchId, commandId: created.events[0]?.commandId, sequence: 0 },
+      ],
+      ["game.decision", decision],
+      ["negotiation.event", message],
+      ["game.event", handled.events[0]],
+      [
+        "game.command-completed",
+        { matchId: config.matchId, commandId: handled.events[0]?.commandId, sequence: 1 },
+      ],
+      ["run.completed", { gameSequence: 1, negotiationSequence: 0, winnerPlayerId: null }],
+    ] as const;
+    const offsets = [0, 1, 2, 12, 13, 19, 20, 21];
+    const run = await loadRunPackage({
+      manifest: {
+        schema: "catanarchy.run-manifest.v1",
+        runId: "run-package-test",
+        matchId: config.matchId,
+        status: "completed",
+        seats: [
+          {
+            seatId: "red",
+            sessionFile: "sessions/red.jsonl",
+          },
+        ],
+      },
+      records: values.map(([kind, payload], index) => ({
+        schema: "catanarchy.run-record.v1",
+        runId: "run-package-test",
+        index,
+        offsetMs: offsets[index],
+        recordedAt: new Date(0).toISOString(),
+        visibility: "referee",
+        kind,
+        payload,
+      })),
+    });
+
+    expect(run.frames).toHaveLength(4);
+    expect(run.frameDurationsMs).toEqual([10, 1, 7]);
+    expect(run.timingSource).toBe("recorded-time");
+    expect(run.state).toEqual(handled.state);
+    expect(run.sessionSeatIds).toEqual(["red"]);
+
+    render(<SavedRunViewer run={run} />);
+    expect(screen.getByRole("link", { name: "Pi session" }).getAttribute("href")).toBe(
+      "/__catanarchy/session/red",
+    );
   });
 
   it("replays multi-event commands only at atomic command boundaries", async () => {
@@ -126,7 +207,7 @@ describe("saved run viewer", () => {
     const run = await loadRunReport({ result: { state, events } });
 
     expect(events.length).toBeGreaterThan(commandCount);
-    expect(run.states).toHaveLength(commandCount);
+    expect(run.frames).toHaveLength(commandCount);
     expect(run.state).toEqual(state);
     expect(run.timingSource).toBe("synthetic");
     expect(run.frameDurationsMs.every((duration) => duration === 1_000)).toBe(true);

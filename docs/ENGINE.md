@@ -498,7 +498,7 @@ interface GameState {
 }
 ```
 
-The state does not contain its event history. The local caller owns the append-only event log. A snapshot contains `GameState` at a known sequence and can be replaced by replay at any time. A durable match store will be added with the harness.
+The state does not contain its event history. The local caller owns the append-only event log. A snapshot contains `GameState` at a known sequence and can be replaced by replay at any time. The harness writes match records to a run directory.
 
 Resource counts and supporting state use fixed records:
 
@@ -599,7 +599,7 @@ interface CommandEnvelope<TCommand> {
 
 Milestone 1 adds `place-initial-settlement` and `place-initial-road`. Effect Schema decodes the version, match identity, actor, sequence, and tagged payload before command dispatch.
 
-`matchId` rejects cross-match routing mistakes, and `expectedSequence` rejects stale work. A future durable event store will keep a command-ID index so a retry can return its original result without applying the command twice.
+`matchId` rejects cross-match routing mistakes, and `expectedSequence` rejects stale work. A future match store will keep a command-ID index so a retry can return its original result without applying the command twice.
 
 ### Events
 
@@ -741,7 +741,7 @@ The suites also verify:
 - Wrong-player, wrong-phase, unknown-location, occupied-location, distance, and road-anchor errors have stable codes.
 - Resuming from every accepted-command prefix reaches the same final setup state and event stream.
 
-Command-ID deduplication and durable atomic appends belong to the future match store. Setup commands do not draw random values.
+Command-ID deduplication and atomic appends that survive restarts belong to the future match store. Setup commands do not draw random values.
 
 ### State invariant tests
 
