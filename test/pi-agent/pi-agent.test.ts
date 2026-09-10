@@ -335,7 +335,12 @@ describe("Pi model setup", () => {
       { provider: "openai", modelId: "gpt-5.6-luna" },
       { provider: "huggingface", modelId: "deepseek-ai/DeepSeek-V4-Flash" },
     ];
-    const assigned: Array<{ player: string; modelId: string; maxTokens: number }> = [];
+    const assigned: Array<{
+      player: string;
+      modelId: string;
+      maxTokens: number;
+      contextWindow: number;
+    }> = [];
     const channel: PiDecisionChannel = {
       async run() {
         return { actionId: "unused" };
@@ -350,8 +355,14 @@ describe("Pi model setup", () => {
       models: references,
       modelRuntime: runtime,
       maxOutputTokens: 128,
+      contextWindowTokens: 65_536,
       createChannel: async ({ player, model }) => {
-        assigned.push({ player: player.id, modelId: model.id, maxTokens: model.maxTokens });
+        assigned.push({
+          player: player.id,
+          modelId: model.id,
+          maxTokens: model.maxTokens,
+          contextWindow: model.contextWindow,
+        });
         return channel;
       },
     });
@@ -364,10 +375,30 @@ describe("Pi model setup", () => {
       agents.push(await factory(player));
     }
     expect(assigned).toEqual([
-      { player: "red", modelId: "gpt-5.6-luna", maxTokens: 128 },
-      { player: "blue", modelId: "deepseek-ai/DeepSeek-V4-Flash", maxTokens: 128 },
-      { player: "white", modelId: "gpt-5.6-luna", maxTokens: 128 },
-      { player: "orange", modelId: "deepseek-ai/DeepSeek-V4-Flash", maxTokens: 128 },
+      {
+        player: "red",
+        modelId: "gpt-5.6-luna",
+        maxTokens: 128,
+        contextWindow: 65_536,
+      },
+      {
+        player: "blue",
+        modelId: "deepseek-ai/DeepSeek-V4-Flash",
+        maxTokens: 128,
+        contextWindow: 65_536,
+      },
+      {
+        player: "white",
+        modelId: "gpt-5.6-luna",
+        maxTokens: 128,
+        contextWindow: 65_536,
+      },
+      {
+        player: "orange",
+        modelId: "deepseek-ai/DeepSeek-V4-Flash",
+        maxTokens: 128,
+        contextWindow: 65_536,
+      },
     ]);
     expect(agents.map(({ model }) => model)).toEqual([
       references[0],
@@ -476,6 +507,13 @@ describe("Pi model setup", () => {
       maxOutputTokens: 0,
     });
     await expect(invalidCapFactory(player)).rejects.toThrow("maxOutputTokens");
+
+    const invalidContextFactory = createPiAgentFactory({
+      models: [{ provider: "openai", modelId: "gpt-5.6-luna" }],
+      modelRuntime: runtime,
+      contextWindowTokens: 16_384,
+    });
+    await expect(invalidContextFactory(player)).rejects.toThrow("contextWindowTokens");
   });
 
   it("loads supported credentials from process environment without persistence", async () => {

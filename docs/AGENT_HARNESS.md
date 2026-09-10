@@ -142,16 +142,18 @@ npm run play:pi -- \
   --models=openai/gpt-5.6-luna,huggingface/deepseek-ai/DeepSeek-V4-Flash \
   --seed=42 \
   --decisions=17 \
-  --timeout-ms=90000
+  --timeout-ms=90000 \
+  --context-window-tokens=131072 \
+  --cost-ceiling-usd=5
 ```
 
-Four seats receive models in round-robin order. The runner rejects unknown models and missing provider authentication before it creates a game. `--decisions` defaults to 16, which completes four-player setup. A larger value continues into normal turns and stops safely at the robber boundary. `--max-attempts` defaults to one. `--output` is optional.
+Four seats receive models in round-robin order. The runner rejects unknown models and missing provider authentication before it creates a game. `--decisions` defaults to 16, which completes four-player setup. A larger value continues into normal turns and stops safely at the robber boundary. `--max-attempts` defaults to one. `--thinking` defaults to `low`. `--context-window-tokens` defaults to 131,072 and must be at least 32,768. Pi compacts long seat sessions within that limit. `--cost-ceiling-usd` defaults to $5 and applies to the complete run. `--output` is optional.
 
 ## Live-test limit
 
 Live model tests are opt-in and are not part of `npm run check`. A normal repository check uses fake agents and makes no network request.
 
-The first live validation is limited to one initial-placement match, 16 decisions, one attempt for each decision, 4,096 output tokens for each request, and no automatic paid retry. The output allowance gives reasoning models enough room to reach the required action. The run uses low model reasoning. Before the run, the operator must inspect model availability and pricing metadata. The high estimate uses the highest listed pricing tier and charges the full input bound once as uncached input, once as cache reads, and once as cache writes. If exact prices are not available, the operator must keep the run below the project's $5 fallback ceiling through the fixed request count and conservative token limits. The test must stop if authentication, routing, or cost evidence differs from the approved configuration.
+The default live validation is limited to one initial-placement match, 16 decisions, one attempt for each decision, 4,096 output tokens for each request, and no automatic paid retry. The output allowance gives reasoning models enough room to reach the required action. The run uses low model reasoning. Before the run, the operator must inspect model availability and pricing metadata. The high estimate uses the highest listed pricing tier, the configured context and output limits, the fixed request count, and up to one Pi compaction call for every normal request. If exact prices are not available, the operator must keep the run below the project's $5 fallback ceiling through the fixed request count and token limits. A higher cumulative ceiling requires direct approval. The test must stop if authentication, routing, or cost evidence differs from the approved configuration.
 
 ## Test plan
 

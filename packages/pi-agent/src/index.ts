@@ -38,6 +38,7 @@ export interface PiAgentFactoryOptions {
   readonly modelRuntime: ModelRuntime;
   readonly thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
   readonly maxOutputTokens?: number;
+  readonly contextWindowTokens?: number;
   readonly sessionDirectory?: string;
   readonly onSessionCreated?: (
     player: PlayerConfig,
@@ -574,7 +575,7 @@ const createSdkDecisionChannel = async ({
         ? SessionManager.inMemory(cwd)
         : SessionManager.create(cwd, sessionDirectory),
     settingsManager: SettingsManager.inMemory({
-      compaction: { enabled: false },
+      compaction: { enabled: true },
       retry: { enabled: false },
     }),
   });
@@ -729,6 +730,22 @@ export const parseModelReference = (reference: string): PiModelReference => {
   return { provider: reference.slice(0, separator), modelId: reference.slice(separator + 1) };
 };
 
+const boundedModel = (options: PiAgentFactoryOptions, model: PiModel): PiModel => {
+  const maxOutputTokens = options.maxOutputTokens ?? 4_096;
+  if (!Number.isSafeInteger(maxOutputTokens) || maxOutputTokens < 1) {
+    throw new Error("maxOutputTokens must be a positive integer.");
+  }
+  const contextWindowTokens = options.contextWindowTokens ?? model.contextWindow;
+  if (!Number.isSafeInteger(contextWindowTokens) || contextWindowTokens < 32_768) {
+    throw new Error("contextWindowTokens must be an integer of at least 32768.");
+  }
+  return {
+    ...model,
+    contextWindow: Math.min(model.contextWindow, contextWindowTokens),
+    maxTokens: Math.min(model.maxTokens, maxOutputTokens),
+  };
+};
+
 const modelForSeat = (
   options: PiAgentFactoryOptions,
   seatIndex: number,
@@ -739,14 +756,7 @@ const modelForSeat = (
   if (model === undefined) {
     throw new Error(`Unknown Pi model: ${reference.provider}/${reference.modelId}`);
   }
-  const maxOutputTokens = options.maxOutputTokens ?? 4_096;
-  if (!Number.isSafeInteger(maxOutputTokens) || maxOutputTokens < 1) {
-    throw new Error("maxOutputTokens must be a positive integer.");
-  }
-  return {
-    reference,
-    model: { ...model, maxTokens: Math.min(model.maxTokens, maxOutputTokens) },
-  };
+  return { reference, model: boundedModel(options, model) };
 };
 
 const createChannelForSeat = async (
