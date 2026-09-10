@@ -9,7 +9,7 @@ The agent harness lets scripted agents and Pi model agents use the same game pro
 The implementation has three modules.
 
 - `packages/harness` schedules decisions, gives each seat an authorized observation, validates the selected action, applies the command through the engine, and reports each request, decision, negotiation event, and complete game-event batch.
-- `packages/pi-agent` adapts one Pi `AgentSession` to the harness agent interface. It owns model lookup, the seat system prompt, the `choose_action` tool, timeout cancellation, usage collection, and session disposal.
+- `packages/pi-agent` adapts one Pi `AgentSession` to the harness agent interface. It owns model lookup, the seat system prompt, read-only inspection, selection tools, turn clocks, usage collection, and session disposal.
 - `packages/run-log` writes the harness records, run status, timing, and Pi session references to a run directory.
 
 The engine stays deterministic and has no Pi dependency. The Pi tool selects an action but does not change game state. Only the harness can pass the selected command to the engine.
@@ -81,13 +81,19 @@ Each seat uses one in-memory Pi session. The integration uses these documented S
 - `defineTool`
 - `session.prompt`, `session.abort`, and `session.dispose`
 
-The resource loader returns no extensions, skills, prompt templates, themes, or `AGENTS.md` files. The session gets a game-specific system prompt and only the `choose_action` and `choose_negotiation` tools. Read, shell, edit, write, web, and other coding tools are disabled.
+The resource loader returns no extensions, skills, prompt templates, themes, or `AGENTS.md` files. The session gets a game-specific system prompt and only the `inspect_game`, `choose_action`, and `choose_negotiation` tools. File, shell, web, and other coding tools are disabled.
 
 The integration does not use or change Pi internals. A normal Pi match uses `SessionManager.create(cwd, sessionDirectory)` to write one native session file for each seat. Tests and callers that do not request saved sessions still use `SessionManager.inMemory(cwd)`. Settings remain in memory. Model authentication stays in the user's existing provider stores or process environment. The harness never writes credentials to match records.
 
 ## Prompt and tool
 
-The system prompt tells the model that it controls one Catan seat, must use only visible state, and must call the one tool for the current request exactly once. A game decision uses `choose_action`. Its prompt contains a compact JSON document derived from the seat observation. It includes:
+The system prompt tells the model that it controls one Catan seat and must use only visible state. A seat can call the read-only `inspect_game` tool several times before it selects an action or negotiation operation. Each inspection returns one section of the current seat-scoped request. It never returns authoritative hidden state.
+
+The seat uses one exploration clock for all model messages and action decisions in the current game turn. Setup settlement and road placement for one seat use one setup clock. The Pi adapter sends time warnings while exploration remains. When the exploration clock or planning-message limit ends, inspection is disabled and Pi gets a separate finalization prompt. The finalization phase accepts only the current selection tool. If the finalization grace period ends without a valid selection, the harness records the failure and applies its legal fallback.
+
+The generic harness also keeps an outer wall-clock limit for an agent call and its cancellation. Its default is 180 seconds. The Pi CLI sets this limit to the 90-second turn time plus the 30-second finalization grace and a 60-second cancellation margin.
+
+A game decision uses `choose_action`. Its prompt contains a compact JSON document derived from the seat observation. It includes:
 
 - phase and active seat
 - public player summaries
@@ -107,7 +113,9 @@ The game-action tool input is:
 
 A negotiation request contains the authorized observation, the current window's visible transcript and offers, promises, evidence, and operation rules. Earlier window events stay in the run record and the seat's Pi session, but the harness does not repeat them in each new request. The model prompt keeps at most the latest 128 current-window events, 32 visible promises, and 64 evidence records. It then removes the oldest negotiation records until the complete prompt is no larger than 24,576 UTF-8 bytes. These limits prevent negotiation context from growing for the complete match, including when the policy permits long messages. The `choose_negotiation` tool accepts one typed operation with the fields needed for messages, offers, counteroffers, replies, withdrawal, promises, or evidence. Providers without tool-call support can return one exact `NegotiationAction` JSON object. The protocol decoder and harness validate it before it can affect the negotiation session.
 
-The active tool validates the selection against the current request. Every call terminates the Pi turn, which limits one harness attempt to one provider generation. A valid call returns the selected action or operation. A call to the wrong tool, an invalid selection, or a duplicate call poisons the complete decision attempt and returns a terminating tool error. Text in the same response cannot recover a poisoned attempt. The harness then controls the next bounded attempt or deterministic fallback.
+The active selection tool validates the result against the current request and terminates that action decision. Inspection calls do not terminate the decision, so Pi can receive several assistant and tool-result messages before selection. A valid selection returns the action or operation. A call to the wrong selection tool, an invalid selection, or a duplicate selection poisons the complete decision attempt and returns a terminating tool error. Text in the same response cannot recover a poisoned attempt. The harness then controls the next bounded attempt or deterministic fallback.
+
+The normal model call uses the effective output capacity supplied by Pi's model catalog and the configured context window. The CLI can apply an explicit lower output limit, but the harness has no low default output cap. Time, planning-message, context, request, and campaign cost limits remain separate controls.
 
 ## Run records
 
@@ -141,18 +149,20 @@ npm run play:pi -- \
   --models=openai/gpt-5.6-luna,huggingface/deepseek-ai/DeepSeek-V4-Flash \
   --seed=42 \
   --decisions=17 \
-  --timeout-ms=90000 \
+  --turn-time-ms=90000 \
+  --finalization-grace-ms=30000 \
+  --max-planning-steps=8 \
   --context-window-tokens=131072 \
   --cost-ceiling-usd=5
 ```
 
-Four seats receive models in round-robin order. The runner rejects unknown models and missing provider authentication before it creates a game. `--decisions` defaults to 16, which completes four-player setup. A larger value continues into normal turns and stops safely at the robber boundary. `--max-attempts` defaults to one. `--thinking` defaults to `low`. `--context-window-tokens` defaults to 131,072 and must be at least 32,768. Pi compacts long seat sessions within that limit. `--cost-ceiling-usd` defaults to $5 and applies to the complete run. `--output` is optional.
+Four seats receive models in round-robin order. The runner rejects unknown models and missing provider authentication before it creates a game. `--decisions` defaults to 16, which completes four-player setup. A larger value continues into normal turns and stops safely at the robber boundary. `--max-attempts` defaults to one. `--thinking` defaults to `high`. `--turn-time-ms` defaults to 90 seconds of exploration for each seat and game turn. `--finalization-grace-ms` defaults to 30 seconds. `--max-planning-steps` defaults to eight inspection calls for each seat and game turn. `--context-window-tokens` defaults to 131,072 and must be at least 32,768. Pi compacts long seat sessions within that limit. `--max-output-tokens` is an optional operator limit. When omitted, the effective output limit is the smaller of the model limit and the configured context window. `--cost-ceiling-usd` defaults to $5 and applies to the complete run. `--output` is optional.
 
 ## Live-test limit
 
 Live model tests are opt-in and are not part of `npm run check`. A normal repository check uses fake agents and makes no network request.
 
-The default live validation is limited to one initial-placement match, 16 decisions, one attempt for each decision, 4,096 output tokens for each request, and no automatic paid retry. The output allowance gives reasoning models enough room to reach the required action. The run uses low model reasoning. Before the run, the operator must inspect model availability and pricing metadata. The high estimate uses the highest listed pricing tier, the configured context and output limits, and the fixed request count. For every normal request, it allows the original provider call, two split-turn overflow-compaction calls, one recovery retry, and two post-recovery compaction calls. If exact prices are not available, the operator must keep the run below the project's $5 fallback ceiling through the fixed request count and token limits. A higher cumulative ceiling requires direct approval. The test must stop if authentication, routing, or cost evidence differs from the approved configuration.
+The default live validation is limited to one initial-placement match, 16 decisions, one attempt for each decision, and no automatic paid retry. The run uses high model reasoning and the effective model output capacity unless the operator supplies a lower limit. Before the run, the operator must inspect model availability and pricing metadata. The high estimate uses the highest listed pricing tier, the configured context and effective output limits, the fixed request count, and the planning-message limit. For every model message, it allows the original provider call, two split-turn overflow-compaction calls, one recovery retry, and two post-recovery compaction calls. If exact prices are not available, the operator must keep the run below the project's $5 fallback ceiling through the fixed request count and token limits. A higher cumulative ceiling requires direct approval. The test must stop if authentication, routing, or cost evidence differs from the approved configuration.
 
 ## Test plan
 

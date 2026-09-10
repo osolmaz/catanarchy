@@ -329,6 +329,7 @@ describe("agent harness", () => {
   it.each([3, 4])("completes setup with one persistent agent per %i seats", async (count) => {
     const createdPlayers: string[] = [];
     const calls = new Map<string, number>();
+    const turnKeys = new Map<string, string[]>();
     const disposed: string[] = [];
 
     const result = await Effect.runPromise(
@@ -339,6 +340,7 @@ describe("agent harness", () => {
           return {
             async decide(request) {
               calls.set(player.id, (calls.get(player.id) ?? 0) + 1);
+              turnKeys.set(player.id, [...(turnKeys.get(player.id) ?? []), request.turnKey]);
               expect(request.playerId).toBe(player.id);
               expect(request.observation.ownResources).not.toBeNull();
               expect(request.observation.ownDevelopmentCards).not.toBeNull();
@@ -358,6 +360,14 @@ describe("agent harness", () => {
     expect(createdPlayers).toEqual(config(count).players.map(({ id }) => id));
     expect(disposed.toSorted()).toEqual(createdPlayers.toSorted());
     expect([...calls.values()]).toEqual(Array.from({ length: count }, () => 4));
+    for (const [playerIndex, player] of config(count).players.entries()) {
+      expect(turnKeys.get(player.id)).toEqual([
+        `setup:forward:${String(playerIndex)}`,
+        `setup:forward:${String(playerIndex)}`,
+        `setup:reverse:${String(playerIndex)}`,
+        `setup:reverse:${String(playerIndex)}`,
+      ]);
+    }
     expect(result.state.phase.tag).toBe("turn.roll");
     expect(result.state.occupancy.buildings).toHaveLength(count * 2);
     expect(result.state.occupancy.roads).toHaveLength(count * 2);
@@ -387,7 +397,10 @@ describe("agent harness", () => {
       "game.command-completed",
     ]);
     expect(activities.find(({ kind }) => kind === "game.agent-requested")).toMatchObject({
-      payload: { attempt: 1, request: { playerId: "red", sequence: 0 } },
+      payload: {
+        attempt: 1,
+        request: { playerId: "red", sequence: 0, turnKey: "setup:forward:0" },
+      },
     });
     expect(
       activities.filter(({ kind }) => kind === "game.event").map(({ payload }) => payload),
@@ -408,9 +421,8 @@ describe("agent harness", () => {
       }),
     );
 
-    expect(
-      activities.filter(({ kind }) => kind.startsWith("negotiation.")).map(({ kind }) => kind),
-    ).toEqual([
+    const negotiationActivities = activities.filter(({ kind }) => kind.startsWith("negotiation."));
+    expect(negotiationActivities.map(({ kind }) => kind)).toEqual([
       "negotiation.event",
       "negotiation.agent-requested",
       "negotiation.decision",
@@ -426,6 +438,10 @@ describe("agent harness", () => {
       "negotiation.event",
       "negotiation.event",
     ]);
+    const negotiationTurnKeys = negotiationActivities.flatMap((activity) =>
+      activity.kind === "negotiation.agent-requested" ? [activity.payload.request.turnKey] : [],
+    );
+    expect(new Set(negotiationTurnKeys)).toEqual(new Set(["turn:1"]));
   });
 
   it("records model identity, reasons, and usage", async () => {
@@ -732,6 +748,7 @@ describe("agent harness", () => {
         matchId: "empty",
         sequence: 0,
         playerId: "red",
+        turnKey: "sequence:0",
         observation: {} as AgentDecisionRequest["observation"],
         legalActions: [],
         signal: new AbortController().signal,

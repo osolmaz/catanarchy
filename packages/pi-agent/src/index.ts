@@ -39,6 +39,9 @@ export interface PiAgentFactoryOptions {
   readonly thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
   readonly maxOutputTokens?: number;
   readonly contextWindowTokens?: number;
+  readonly turnTimeMs?: number;
+  readonly finalizationGraceMs?: number;
+  readonly maxPlanningSteps?: number;
   readonly sessionDirectory?: string;
   readonly onSessionCreated?: (
     player: PlayerConfig,
@@ -64,6 +67,9 @@ export interface PiDecisionChannelContext {
   readonly model: PiModel;
   readonly modelRuntime: ModelRuntime;
   readonly thinkingLevel: PiAgentFactoryOptions["thinkingLevel"];
+  readonly turnTimeMs: number;
+  readonly finalizationGraceMs: number;
+  readonly maxPlanningSteps: number;
   readonly sessionDirectory?: string;
 }
 
@@ -208,14 +214,131 @@ export class NegotiationSelectionGate {
 
 export interface PiDecisionChannel {
   readonly session?: PiSessionReference;
-  run(
-    prompt: string,
-    legalActionIds: ReadonlyArray<string>,
-    signal: AbortSignal,
-  ): Promise<AgentDecision>;
-  negotiate(prompt: string, signal: AbortSignal): Promise<AgentNegotiationDecision>;
+  run(request: AgentDecisionRequest): Promise<AgentDecision>;
+  negotiate(request: AgentNegotiationRequest): Promise<AgentNegotiationDecision>;
   cancel(): Promise<void>;
   dispose(): Promise<void>;
+}
+
+const INSPECTION_SECTIONS = [
+  "status",
+  "board",
+  "players",
+  "inventory",
+  "legal-actions",
+  "negotiation",
+] as const;
+type InspectionSection = (typeof INSPECTION_SECTIONS)[number];
+type InspectionSections = Readonly<Partial<Record<InspectionSection, unknown>>>;
+
+type TurnPhase = "exploration" | "finalization";
+
+export class TurnBudget {
+  private turnKey: string | undefined;
+  private explorationUsedMs = 0;
+  private finalizationUsedMs = 0;
+  private planningSteps = 0;
+  private readonly sentWarnings = new Set<number>();
+
+  constructor(
+    readonly explorationLimitMs: number,
+    readonly finalizationLimitMs: number,
+    readonly planningStepLimit: number,
+  ) {}
+
+  begin(turnKey: string): void {
+    if (this.turnKey === turnKey) return;
+    this.turnKey = turnKey;
+    this.explorationUsedMs = 0;
+    this.finalizationUsedMs = 0;
+    this.planningSteps = 0;
+    this.sentWarnings.clear();
+  }
+
+  remaining(phase: TurnPhase): number {
+    const used = phase === "exploration" ? this.explorationUsedMs : this.finalizationUsedMs;
+    const limit = phase === "exploration" ? this.explorationLimitMs : this.finalizationLimitMs;
+    return Math.max(0, limit - used);
+  }
+
+  consume(phase: TurnPhase, elapsedMs: number): void {
+    if (phase === "exploration") this.explorationUsedMs += elapsedMs;
+    else this.finalizationUsedMs += elapsedMs;
+  }
+
+  takePlanningStep(): boolean {
+    if (this.planningSteps >= this.planningStepLimit) return false;
+    this.planningSteps += 1;
+    return true;
+  }
+
+  warningDelays(): ReadonlyArray<{ readonly thresholdMs: number; readonly delayMs: number }> {
+    const used = this.explorationUsedMs;
+    const thresholds = [
+      Math.round(this.explorationLimitMs / 2),
+      Math.max(0, this.explorationLimitMs - 10_000),
+    ];
+    return [...new Set(thresholds)]
+      .filter(
+        (thresholdMs) =>
+          thresholdMs > used &&
+          thresholdMs < this.explorationLimitMs &&
+          !this.sentWarnings.has(thresholdMs),
+      )
+      .map((thresholdMs) => ({ thresholdMs, delayMs: thresholdMs - used }));
+  }
+
+  markWarning(thresholdMs: number): void {
+    this.sentWarnings.add(thresholdMs);
+  }
+}
+
+export class InspectionGate {
+  private sections: InspectionSections = {};
+  private budget: TurnBudget | undefined;
+  private active = false;
+
+  begin(sections: InspectionSections, budget: TurnBudget): void {
+    this.sections = sections;
+    this.budget = budget;
+    this.active = true;
+  }
+
+  disable(): void {
+    this.sections = {};
+    this.budget = undefined;
+    this.active = false;
+  }
+
+  inspect(section: InspectionSection): ToolResult {
+    if (!this.active || this.budget === undefined) {
+      return {
+        content: [{ type: "text", text: "Inspection is unavailable during finalization." }],
+        details: { section, accepted: false },
+        isError: true,
+      };
+    }
+    if (!this.budget.takePlanningStep()) {
+      return {
+        content: [{ type: "text", text: "The planning-message limit is complete. Select now." }],
+        details: { section, accepted: false },
+        isError: true,
+        terminate: true,
+      };
+    }
+    const value = this.sections[section];
+    if (value === undefined) {
+      return {
+        content: [{ type: "text", text: `Section ${section} is unavailable for this request.` }],
+        details: { section, accepted: false },
+        isError: true,
+      };
+    }
+    return {
+      content: [{ type: "text", text: JSON.stringify(value) }],
+      details: { section, accepted: true },
+    };
+  }
 }
 
 export const selectActionFromText = (
@@ -230,10 +353,12 @@ export const resolveSelection = (
   gate: ActionSelectionGate,
   responseText: string,
   legalActionIds: ReadonlyArray<string>,
+  allowText = true,
 ): { readonly selection: Selection | undefined; readonly selectionMode: "tool" | "text" } => {
   const poisoned = gate.isPoisoned();
   const toolSelection = gate.take();
-  const textSelection = poisoned ? undefined : selectActionFromText(responseText, legalActionIds);
+  const textSelection =
+    poisoned || !allowText ? undefined : selectActionFromText(responseText, legalActionIds);
   return {
     selection: toolSelection ?? textSelection,
     selectionMode: toolSelection === undefined ? "text" : "tool",
@@ -413,104 +538,285 @@ const systemPromptFor = (
 ): string => `You control the ${player.name} seat in a Catan game.
 Use only information in the current request and prior authorized messages in this session.
 Choose strategically, but do not invent hidden state, commands, offers, or resource cards.
-For a game-action request, call choose_action exactly once with one listed actionId.
-For a negotiation request, call choose_negotiation exactly once with one valid operation.
-Do not call the other tool. The reason is optional and must be one short sentence.`;
+You may call inspect_game several times while planning. Each inspection uses turn time.
+For a game-action request, finish by calling choose_action exactly once with one listed actionId.
+For a negotiation request, finish by calling choose_negotiation exactly once with one valid operation.
+Do not call the other selection tool. The reason is optional and must be one short sentence.`;
 
-interface PromptResult {
+interface PromptPhaseResult {
   readonly responseText: string;
-  readonly usage: AgentUsage;
+  readonly timedOut: boolean;
 }
+
+interface ResolvedGamePhase {
+  readonly resolved: ReturnType<typeof resolveSelection>;
+  readonly poisoned: boolean;
+}
+
+const resolveGamePhase = (
+  actionGate: ActionSelectionGate,
+  negotiationGate: NegotiationSelectionGate,
+  phase: PromptPhaseResult,
+  legalActionIds: ReadonlyArray<string>,
+): ResolvedGamePhase => {
+  const wrongTool = negotiationGate.isPoisoned();
+  negotiationGate.take();
+  const poisoned = actionGate.isPoisoned() || wrongTool;
+  if (wrongTool) {
+    actionGate.take();
+    return {
+      resolved: { selection: undefined, selectionMode: "text" },
+      poisoned,
+    };
+  }
+  return {
+    resolved: resolveSelection(actionGate, phase.responseText, legalActionIds, !phase.timedOut),
+    poisoned,
+  };
+};
+
+interface ResolvedNegotiationPhase {
+  readonly selection: NegotiationSelection | undefined;
+  readonly selectionMode: "tool" | "text";
+  readonly poisoned: boolean;
+}
+
+const resolveNegotiationPhase = (
+  actionGate: ActionSelectionGate,
+  negotiationGate: NegotiationSelectionGate,
+  phase: PromptPhaseResult,
+): ResolvedNegotiationPhase => {
+  const wrongTool = actionGate.isPoisoned();
+  actionGate.take();
+  const poisoned = negotiationGate.isPoisoned() || wrongTool;
+  const toolSelection = negotiationGate.take();
+  const textSelection =
+    wrongTool || poisoned || phase.timedOut
+      ? undefined
+      : selectNegotiationFromText(phase.responseText);
+  return {
+    selection:
+      toolSelection ?? (textSelection === undefined ? undefined : { action: textSelection }),
+    selectionMode: toolSelection === undefined ? "text" : "tool",
+    poisoned,
+  };
+};
+
+const decisionErrorMessage = (error: unknown): string =>
+  error instanceof Error ? error.message : "The model request failed.";
+
+const noSelectionError = (
+  phase: PromptPhaseResult,
+  timedOutMessage: string,
+  settledMessage: string,
+): Error => new Error(phase.timedOut ? timedOutMessage : settledMessage);
 
 class SdkDecisionChannel implements PiDecisionChannel {
   readonly #session: AgentSession;
   readonly #actionGate: ActionSelectionGate;
   readonly #negotiationGate: NegotiationSelectionGate;
+  readonly #inspectionGate: InspectionGate;
+  readonly #turnBudget: TurnBudget;
 
   constructor(
     session: AgentSession,
     actionGate: ActionSelectionGate,
     negotiationGate: NegotiationSelectionGate,
+    inspectionGate: InspectionGate,
+    turnBudget: TurnBudget,
   ) {
     this.#session = session;
     this.#actionGate = actionGate;
     this.#negotiationGate = negotiationGate;
+    this.#inspectionGate = inspectionGate;
+    this.#turnBudget = turnBudget;
   }
 
-  async #prompt(prompt: string, signal: AbortSignal): Promise<PromptResult> {
-    const before = this.#session.getSessionStats();
-    const abort = async (): Promise<void> => this.#session.abort();
+  async #promptPhase(
+    prompt: string,
+    signal: AbortSignal,
+    phase: TurnPhase,
+  ): Promise<PromptPhaseResult> {
+    const remainingMs = this.#turnBudget.remaining(phase);
+    if (remainingMs === 0) return { responseText: "", timedOut: true };
+
+    signal.throwIfAborted();
+    const warningTimers =
+      phase === "exploration"
+        ? this.#turnBudget.warningDelays().map(({ thresholdMs, delayMs }) =>
+            setTimeout(() => {
+              this.#turnBudget.markWarning(thresholdMs);
+              this.#session.clearQueue();
+              const seconds = Math.max(
+                0,
+                Math.ceil((this.#turnBudget.explorationLimitMs - thresholdMs) / 1_000),
+              );
+              void this.#session
+                .steer(`[Turn clock] ${String(seconds)} seconds remain. Select soon.`)
+                .catch(() => undefined);
+            }, delayMs),
+          )
+        : [];
+    const startedAt = performance.now();
+    let timer: NodeJS.Timeout | undefined;
+    let consumed = false;
+    const timeout = new Promise<{ readonly kind: "timeout" }>((resolve) => {
+      timer = setTimeout(() => resolve({ kind: "timeout" }), remainingMs);
+    });
+    const promptRun = this.#session.prompt(prompt, { expandPromptTemplates: false }).then(
+      () => ({ kind: "settled" as const }),
+      (error: unknown) => ({ kind: "failed" as const, error }),
+    );
+    const abort = (): void => {
+      void this.#session.abort();
+    };
     signal.addEventListener("abort", abort, { once: true });
     try {
-      await this.#session.prompt(prompt, { expandPromptTemplates: false });
+      const outcome = await Promise.race([promptRun, timeout]);
+      this.#turnBudget.consume(phase, performance.now() - startedAt);
+      consumed = true;
+      if (outcome.kind === "failed") throw outcome.error;
+      if (outcome.kind === "timeout") {
+        await this.#session.abort();
+        await this.#session.waitForIdle();
+      }
+      return {
+        responseText: extractAssistantText(this.#session.messages),
+        timedOut: outcome.kind === "timeout",
+      };
+    } finally {
+      if (!consumed) this.#turnBudget.consume(phase, performance.now() - startedAt);
+      if (timer !== undefined) clearTimeout(timer);
+      for (const warningTimer of warningTimers) clearTimeout(warningTimer);
+      signal.removeEventListener("abort", abort);
+    }
+  }
+
+  async run(request: AgentDecisionRequest): Promise<AgentDecision> {
+    const before = this.#session.getSessionStats();
+    const legalActionIds = request.legalActions.map(({ id }) => id);
+    this.#turnBudget.begin(request.turnKey);
+    this.#actionGate.begin(legalActionIds);
+    this.#negotiationGate.disable();
+    this.#inspectionGate.begin(inspectionSections(request), this.#turnBudget);
+    try {
+      const exploration = await this.#promptPhase(
+        buildDecisionPrompt(request),
+        request.signal,
+        "exploration",
+      );
+      const explorationResult = resolveGamePhase(
+        this.#actionGate,
+        this.#negotiationGate,
+        exploration,
+        legalActionIds,
+      );
+      if (explorationResult.resolved.selection !== undefined) {
+        return {
+          ...explorationResult.resolved.selection,
+          selectionMode: explorationResult.resolved.selectionMode,
+          usage: usageDifference(before, this.#session.getSessionStats()),
+        };
+      }
+      if (explorationResult.poisoned) {
+        throw new Error("The model called an invalid selection tool.");
+      }
+
+      this.#inspectionGate.disable();
+      this.#actionGate.begin(legalActionIds);
+      const finalization = await this.#promptPhase(
+        gameFinalizationPrompt(legalActionIds, exploration.timedOut),
+        request.signal,
+        "finalization",
+      );
+      const finalized = resolveGamePhase(
+        this.#actionGate,
+        this.#negotiationGate,
+        finalization,
+        legalActionIds,
+      ).resolved;
+      if (finalized.selection === undefined) {
+        throw noSelectionError(
+          finalization,
+          "The game-action finalization time expired.",
+          "The model did not select a legal action during finalization.",
+        );
+      }
+      return {
+        ...finalized.selection,
+        selectionMode: finalized.selectionMode,
+        usage: usageDifference(before, this.#session.getSessionStats()),
+      };
     } catch (error) {
       throw new AgentDecisionError({
-        message: error instanceof Error ? error.message : "The model request failed.",
+        message: decisionErrorMessage(error),
         usage: usageDifference(before, this.#session.getSessionStats()),
       });
     } finally {
-      signal.removeEventListener("abort", abort);
+      this.#inspectionGate.disable();
     }
-    return {
-      responseText: extractAssistantText(this.#session.messages),
-      usage: usageDifference(before, this.#session.getSessionStats()),
-    };
   }
 
-  async run(
-    prompt: string,
-    legalActionIds: ReadonlyArray<string>,
-    signal: AbortSignal,
-  ): Promise<AgentDecision> {
-    this.#actionGate.begin(legalActionIds);
-    this.#negotiationGate.disable();
-    const { responseText, usage } = await this.#prompt(prompt, signal);
-    const wrongTool = this.#negotiationGate.isPoisoned();
-    this.#negotiationGate.take();
-    const resolved = wrongTool
-      ? { selection: undefined, selectionMode: "text" as const }
-      : resolveSelection(this.#actionGate, responseText, legalActionIds);
-    const selection = resolved.selection;
-    if (selection === undefined) {
-      const preview = responseText.replaceAll(/\s+/g, " ").trim().slice(0, 300);
-      throw new AgentDecisionError({
-        message:
-          preview.length === 0
-            ? "The model did not select a legal action and returned no text."
-            : `The model did not select a legal action. Response: ${preview}`,
-        usage,
-      });
-    }
-    return { ...selection, selectionMode: resolved.selectionMode, usage };
-  }
-
-  async negotiate(prompt: string, signal: AbortSignal): Promise<AgentNegotiationDecision> {
+  async negotiate(request: AgentNegotiationRequest): Promise<AgentNegotiationDecision> {
+    const before = this.#session.getSessionStats();
+    this.#turnBudget.begin(request.turnKey);
     this.#actionGate.disable();
     this.#negotiationGate.begin();
-    const { responseText, usage } = await this.#prompt(prompt, signal);
-    const wrongTool = this.#actionGate.isPoisoned();
-    this.#actionGate.take();
-    const toolPoisoned = this.#negotiationGate.isPoisoned();
-    const toolSelection = this.#negotiationGate.take();
-    const textSelection =
-      wrongTool || toolPoisoned ? undefined : selectNegotiationFromText(responseText);
-    const selection =
-      toolSelection ?? (textSelection === undefined ? undefined : { action: textSelection });
-    if (selection === undefined) {
-      const preview = responseText.replaceAll(/\s+/g, " ").trim().slice(0, 300);
+    this.#inspectionGate.begin(inspectionSections(request), this.#turnBudget);
+    try {
+      const exploration = await this.#promptPhase(
+        buildNegotiationPrompt(request),
+        request.signal,
+        "exploration",
+      );
+      const explorationResult = resolveNegotiationPhase(
+        this.#actionGate,
+        this.#negotiationGate,
+        exploration,
+      );
+      if (explorationResult.selection !== undefined) {
+        return {
+          ...explorationResult.selection,
+          selectionMode: explorationResult.selectionMode,
+          usage: usageDifference(before, this.#session.getSessionStats()),
+        };
+      }
+      if (explorationResult.poisoned) {
+        throw new Error("The model called an invalid selection tool.");
+      }
+
+      this.#inspectionGate.disable();
+      this.#negotiationGate.begin();
+      const finalization = await this.#promptPhase(
+        negotiationFinalizationPrompt(exploration.timedOut),
+        request.signal,
+        "finalization",
+      );
+      const finalized = resolveNegotiationPhase(
+        this.#actionGate,
+        this.#negotiationGate,
+        finalization,
+      );
+      if (finalized.selection === undefined) {
+        throw noSelectionError(
+          finalization,
+          "The negotiation finalization time expired.",
+          "The model did not select a negotiation operation during finalization.",
+        );
+      }
+      return {
+        ...finalized.selection,
+        selectionMode: finalized.selectionMode,
+        usage: usageDifference(before, this.#session.getSessionStats()),
+      };
+    } catch (error) {
       throw new AgentDecisionError({
-        message:
-          preview.length === 0
-            ? "The model did not select a negotiation operation and returned no text."
-            : `The model did not select a negotiation operation. Response: ${preview}`,
-        usage,
+        message: decisionErrorMessage(error),
+        usage: usageDifference(before, this.#session.getSessionStats()),
       });
+    } finally {
+      this.#inspectionGate.disable();
     }
-    return {
-      ...selection,
-      selectionMode: toolSelection === undefined ? "text" : "tool",
-      usage,
-    };
   }
 
   async cancel(): Promise<void> {
@@ -527,10 +833,15 @@ const createSdkDecisionChannel = async ({
   model,
   modelRuntime,
   thinkingLevel,
+  turnTimeMs,
+  finalizationGraceMs,
+  maxPlanningSteps,
   sessionDirectory,
 }: PiDecisionChannelContext): Promise<PiDecisionChannel> => {
   const actionGate = new ActionSelectionGate();
   const negotiationGate = new NegotiationSelectionGate();
+  const inspectionGate = new InspectionGate();
+  const turnBudget = new TurnBudget(turnTimeMs, finalizationGraceMs, maxPlanningSteps);
   const chooseAction = defineTool({
     name: "choose_action",
     label: "Choose action",
@@ -561,15 +872,28 @@ const createSdkDecisionChannel = async ({
     execute: async (_toolCallId, parameters) =>
       negotiationGate.choose(negotiationActionFromToolInput(parameters), parameters.reason),
   });
+  const inspectGame = defineTool({
+    name: "inspect_game",
+    label: "Inspect game",
+    description:
+      "Read one seat-visible part of the current Catan request without ending the decision.",
+    promptSnippet: "Inspect one seat-visible part of the current Catan request",
+    promptGuidelines: [
+      "Use inspect_game only while planning and only when the requested section helps the decision.",
+      "Inspection does not select an action or negotiation operation.",
+    ],
+    parameters: Type.Object({ section: StringEnum(INSPECTION_SECTIONS) }),
+    execute: async (_toolCallId, parameters) => inspectionGate.inspect(parameters.section),
+  });
   const cwd = process.cwd();
   const { session } = await createAgentSession({
     cwd,
     model,
     modelRuntime,
-    thinkingLevel: thinkingLevel ?? "low",
+    thinkingLevel: thinkingLevel ?? "high",
     resourceLoader: emptyResourceLoader(systemPromptFor(player)),
-    tools: ["choose_action", "choose_negotiation"],
-    customTools: [chooseAction, chooseNegotiation],
+    tools: ["inspect_game", "choose_action", "choose_negotiation"],
+    customTools: [inspectGame, chooseAction, chooseNegotiation],
     sessionManager:
       sessionDirectory === undefined
         ? SessionManager.inMemory(cwd)
@@ -579,7 +903,13 @@ const createSdkDecisionChannel = async ({
       retry: { enabled: false },
     }),
   });
-  const channel = new SdkDecisionChannel(session, actionGate, negotiationGate);
+  const channel = new SdkDecisionChannel(
+    session,
+    actionGate,
+    negotiationGate,
+    inspectionGate,
+    turnBudget,
+  );
   return session.sessionFile === undefined
     ? channel
     : Object.assign(channel, {
@@ -640,6 +970,49 @@ const describeAction = (
   }
   return { actionId: action.id, ...command };
 };
+
+const inspectionSections = (
+  request: AgentDecisionRequest | AgentNegotiationRequest,
+): InspectionSections => ({
+  status: {
+    matchId: request.matchId,
+    sequence: "sequence" in request ? request.sequence : request.gameSequence,
+    playerId: request.playerId,
+    turnKey: request.turnKey,
+    phase: request.observation.phase,
+    activePlayerId: request.observation.activePlayerId,
+    result: request.observation.result,
+    ...("round" in request ? { round: request.round, turnPlayerId: request.turnPlayerId } : {}),
+  },
+  board: {
+    topology: request.observation.topology,
+    layout: request.observation.layout,
+    occupancy: request.observation.occupancy,
+  },
+  players: {
+    players: request.observation.players,
+    awards: request.observation.awards,
+    result: request.observation.result,
+  },
+  inventory: {
+    ownVictoryPoints: request.observation.ownVictoryPoints,
+    ownResources: request.observation.ownResources,
+    ownDevelopmentCards: request.observation.ownDevelopmentCards,
+  },
+  ...("legalActions" in request
+    ? {
+        "legal-actions": request.legalActions.map((action) =>
+          describeAction(action, request.observation),
+        ),
+      }
+    : { negotiation: negotiationForPrompt(request) }),
+});
+
+const gameFinalizationPrompt = (legalActionIds: ReadonlyArray<string>, timedOut: boolean): string =>
+  `${timedOut ? "The exploration time expired." : "Exploration ended without a selection."} Inspection is now disabled. Call choose_action immediately with exactly one of these action IDs and no more analysis: ${legalActionIds.join(", ")}`;
+
+const negotiationFinalizationPrompt = (timedOut: boolean): string =>
+  `${timedOut ? "The exploration time expired." : "Exploration ended without a selection."} Inspection is now disabled. Call choose_negotiation immediately with one valid operation and no more analysis.`;
 
 export const buildDecisionPrompt = (request: AgentDecisionRequest): string =>
   JSON.stringify(
@@ -749,11 +1122,11 @@ const negotiationPromptPayload = (
   ],
 });
 
-export const buildNegotiationPrompt = (request: AgentNegotiationRequest): string => {
+const negotiationForPrompt = (request: AgentNegotiationRequest): PromptNegotiation => {
   let negotiation = initialNegotiationForPrompt(request.negotiation);
   for (;;) {
     const prompt = JSON.stringify(negotiationPromptPayload(request, negotiation), undefined, 2);
-    if (utf8Encoder.encode(prompt).byteLength <= MAX_NEGOTIATION_PROMPT_BYTES) return prompt;
+    if (utf8Encoder.encode(prompt).byteLength <= MAX_NEGOTIATION_PROMPT_BYTES) return negotiation;
     const trimmed = trimNegotiationPromptHistory(negotiation);
     if (trimmed === undefined) {
       throw new AgentDecisionError({ message: "The negotiation prompt exceeds its byte limit." });
@@ -762,20 +1135,19 @@ export const buildNegotiationPrompt = (request: AgentNegotiationRequest): string
   }
 };
 
+export const buildNegotiationPrompt = (request: AgentNegotiationRequest): string =>
+  JSON.stringify(negotiationPromptPayload(request, negotiationForPrompt(request)), undefined, 2);
+
 export const createPiSeatAgent = (
   model: PiModelReference,
   channel: PiDecisionChannel,
 ): SeatAgent => ({
   model,
   async decide(request) {
-    return channel.run(
-      buildDecisionPrompt(request),
-      request.legalActions.map(({ id }) => id),
-      request.signal,
-    );
+    return channel.run(request);
   },
   async negotiate(request) {
-    return channel.negotiate(buildNegotiationPrompt(request), request.signal);
+    return channel.negotiate(request);
   },
   async cancel() {
     await channel.cancel();
@@ -793,17 +1165,27 @@ export const parseModelReference = (reference: string): PiModelReference => {
   return { provider: reference.slice(0, separator), modelId: reference.slice(separator + 1) };
 };
 
-const boundedModel = (options: PiAgentFactoryOptions, model: PiModel): PiModel => {
-  const maxOutputTokens = options.maxOutputTokens ?? 4_096;
-  if (!Number.isSafeInteger(maxOutputTokens) || maxOutputTokens < 1) {
+const validateModelLimits = (
+  maxOutputTokens: number | undefined,
+  contextWindowTokens: number,
+): void => {
+  if (
+    maxOutputTokens !== undefined &&
+    (!Number.isSafeInteger(maxOutputTokens) || maxOutputTokens < 1)
+  ) {
     throw new Error("maxOutputTokens must be a positive integer.");
   }
-  const contextWindowTokens = options.contextWindowTokens ?? model.contextWindow;
   if (!Number.isSafeInteger(contextWindowTokens) || contextWindowTokens < 32_768) {
     throw new Error("contextWindowTokens must be an integer of at least 32768.");
   }
+};
+
+const boundedModel = (options: PiAgentFactoryOptions, model: PiModel): PiModel => {
+  const contextWindowTokens = options.contextWindowTokens ?? model.contextWindow;
+  validateModelLimits(options.maxOutputTokens, contextWindowTokens);
   const contextWindow = Math.min(model.contextWindow, contextWindowTokens);
-  const maxTokens = Math.min(model.maxTokens, maxOutputTokens);
+  const requestedMaxTokens = options.maxOutputTokens ?? contextWindow - 1;
+  const maxTokens = Math.min(model.maxTokens, requestedMaxTokens);
   if (maxTokens >= contextWindow) {
     throw new Error("maxOutputTokens must be smaller than the effective context window.");
   }
@@ -823,6 +1205,22 @@ const modelForSeat = (
   return { reference, model: boundedModel(options, model) };
 };
 
+const DEFAULT_TURN_TIME_MS = 90_000;
+const DEFAULT_FINALIZATION_GRACE_MS = 30_000;
+const DEFAULT_MAX_PLANNING_STEPS = 8;
+
+const boundedPositiveInteger = (
+  value: number | undefined,
+  fallback: number,
+  name: string,
+): number => {
+  const bounded = value ?? fallback;
+  if (!Number.isSafeInteger(bounded) || bounded < 1 || bounded > 0x7fff_ffff) {
+    throw new Error(`${name} must be a positive integer no larger than 2147483647.`);
+  }
+  return bounded;
+};
+
 const createChannelForSeat = async (
   options: PiAgentFactoryOptions,
   player: PlayerConfig,
@@ -833,6 +1231,17 @@ const createChannelForSeat = async (
     model,
     modelRuntime: options.modelRuntime,
     thinkingLevel: options.thinkingLevel,
+    turnTimeMs: boundedPositiveInteger(options.turnTimeMs, DEFAULT_TURN_TIME_MS, "turnTimeMs"),
+    finalizationGraceMs: boundedPositiveInteger(
+      options.finalizationGraceMs,
+      DEFAULT_FINALIZATION_GRACE_MS,
+      "finalizationGraceMs",
+    ),
+    maxPlanningSteps: boundedPositiveInteger(
+      options.maxPlanningSteps,
+      DEFAULT_MAX_PLANNING_STEPS,
+      "maxPlanningSteps",
+    ),
     ...(options.sessionDirectory === undefined
       ? {}
       : { sessionDirectory: options.sessionDirectory }),
@@ -858,6 +1267,13 @@ const registerChannelSession = async (
 
 export const createPiAgentFactory = (options: PiAgentFactoryOptions): SeatAgentFactory => {
   if (options.models.length === 0) throw new Error("At least one Pi model is required.");
+  boundedPositiveInteger(options.turnTimeMs, DEFAULT_TURN_TIME_MS, "turnTimeMs");
+  boundedPositiveInteger(
+    options.finalizationGraceMs,
+    DEFAULT_FINALIZATION_GRACE_MS,
+    "finalizationGraceMs",
+  );
+  boundedPositiveInteger(options.maxPlanningSteps, DEFAULT_MAX_PLANNING_STEPS, "maxPlanningSteps");
   let seatIndex = 0;
   return async (player) => {
     const { reference, model } = modelForSeat(options, seatIndex);

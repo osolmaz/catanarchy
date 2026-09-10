@@ -37,11 +37,10 @@ const state = (await Effect.runPromise(createGame(config))).state;
 const agent = await createPiAgentFactory({
   models: [reference],
   modelRuntime: runtime,
-  thinkingLevel: "low",
-  maxOutputTokens: 4_096,
+  thinkingLevel: "high",
 })(player);
 const controller = new AbortController();
-const timer = setTimeout(() => controller.abort(), 90_000);
+const timer = setTimeout(() => controller.abort(), 180_000);
 
 const sanitizedMessage = (error: unknown): string => {
   const message = error instanceof Error ? error.message : "Unknown model error.";
@@ -55,6 +54,7 @@ try {
     matchId: state.matchId,
     sequence: state.sequence,
     playerId: player.id,
+    turnKey: "setup:forward:0",
     observation: observe(state, { type: "player", playerId: player.id }),
     legalActions: legalActions(state),
     signal: controller.signal,

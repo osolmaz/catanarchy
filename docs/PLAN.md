@@ -278,19 +278,29 @@ Completion requires four scripted agents to conduct multi-round bargaining and f
 
 ### Milestone 7: Pi agents
 
-The Pi adapter connects isolated model sessions to normal game decisions and the negotiation protocol while preserving the harness deadline, fallback, trace, and information boundaries.
+The Pi adapter connects isolated model sessions to normal game decisions and the negotiation protocol while preserving the harness clock, fallback, trace, and information boundaries. It follows the same exploration and finalization pattern as pi-reviewer. A seat can use several model messages and read-only inspection calls before it commits one engine action.
 
 - [x] Define the seat-scoped Pi system prompt.
 - [x] Register the terminating `choose_action` tool through the Pi SDK.
-- [x] Create one isolated in-memory session per seat.
+- [x] Create one isolated session per seat.
 - [x] Route observations without hidden-state leakage.
 - [x] Add decision deadlines with cancellation and bounded retry.
 - [x] Add deterministic fallback behavior.
 - [x] Capture model and token data with latency, tool, and outcome traces.
 - [x] Run an opt-in mixed-model initial-placement smoke test.
 - [x] Route negotiation messages and offers through a structured Pi tool.
+- [x] Add a read-only state inspection tool that can be called several times before selection.
+- [x] Share one exploration clock across all messages and action decisions in a player turn.
+- [x] Warn the model while turn time remains, then disable inspection and request an immediate action.
+- [x] Give a nonselecting model the finalization grace period before the harness applies a legal fallback.
+- [x] Use the configured context window and the model's effective output capacity by default. Keep an explicit output cap as an operator override rather than a low harness default.
+- [x] Count planning messages, finalization, compaction, and recovery in the launch cost bound.
+- [ ] Test multi-message turns, clock rollover, finalization, fallback, hidden-state isolation, and legal engine application.
+- [ ] Run an opt-in DS4 test through setup and the first normal turns without token-limit failures.
 
-The first slice is complete when Pi and scripted agents can share an initial-placement match and the deterministic suite proves the session and information boundaries. The complete milestone still requires a mixed full game. The web viewer must be able to follow that match without access to Pi session state.
+Acceptance requires at least one test turn with several assistant messages before selection, no applied illegal command, no hidden-state leak, and no fallback caused by a harness output cap. The turn clock must reset only when the game turn changes. Setup placement pairs use one shared setup clock. The model can inspect and reason until the exploration clock or planning-message limit ends. Finalization then allows only the action tool for a separate grace period.
+
+The web viewer must be able to follow the match without access to Pi session state.
 
 ### Milestone 8: portable replay and board provenance
 
