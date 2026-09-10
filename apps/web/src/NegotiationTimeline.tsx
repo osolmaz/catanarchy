@@ -5,6 +5,7 @@ import type {
   NegotiationView,
   ResourceCounts,
 } from "@catanarchy/protocol";
+import type { FeedItem } from "./Feed.js";
 
 const RESOURCE_KEYS = ["lumber", "brick", "wool", "grain", "ore"] as const;
 
@@ -73,54 +74,36 @@ const domesticTradeText = (record: GameEvent): string | null => {
     : null;
 };
 
-export interface NegotiationTimelineProps {
-  readonly negotiation: NegotiationView;
-  readonly gameEvents: ReadonlyArray<GameEvent>;
-  readonly throughGameSequence?: number;
-}
-
-export const NegotiationTimeline = ({
-  negotiation,
-  gameEvents,
+/**
+ * Projected negotiation records and binding domestic trades as feed items.
+ * The projection decides what is visible; this never filters by scope itself.
+ */
+export const negotiationFeedItems = (
+  negotiation: NegotiationView,
+  gameEvents: ReadonlyArray<GameEvent>,
   throughGameSequence = Number.MAX_SAFE_INTEGER,
-}: NegotiationTimelineProps) => {
-  const records = [
-    ...negotiation.events
-      .filter(({ gameSequence }) => gameSequence <= throughGameSequence)
-      .map((event) => ({
-        key: `negotiation:${event.sequence}`,
-        gameSequence: event.gameSequence,
-        sequence: event.sequence,
-        kind: event.event.type === "trade.offer-accepted" ? "binding" : "speech",
-        label: negotiationEventText(event),
-      })),
-    ...gameEvents.flatMap((event) => {
-      const label = domesticTradeText(event);
-      return label === null || event.sequence > throughGameSequence
-        ? []
-        : [
-            {
-              key: `game:${event.sequence}`,
-              gameSequence: event.sequence,
-              sequence: Number.MAX_SAFE_INTEGER,
-              kind: "binding",
-              label: `Binding trade: ${label}`,
-            },
-          ];
-    }),
-  ].toSorted(
-    (left, right) => left.gameSequence - right.gameSequence || left.sequence - right.sequence,
-  );
-
-  if (records.length === 0) return <p className="timeline-empty">No negotiation records.</p>;
-  return (
-    <ol className="negotiation-timeline" aria-label="Negotiation timeline">
-      {records.map((record) => (
-        <li key={record.key} className={record.kind}>
-          <code>{record.gameSequence}</code>
-          <span>{record.label}</span>
-        </li>
-      ))}
-    </ol>
-  );
-};
+): ReadonlyArray<FeedItem> => [
+  ...negotiation.events
+    .filter(({ gameSequence }) => gameSequence <= throughGameSequence)
+    .map((event): FeedItem => ({
+      key: `negotiation:${event.sequence}`,
+      sequence: event.gameSequence,
+      order: event.sequence,
+      kind: event.event.type === "trade.offer-accepted" ? "binding" : "speech",
+      text: negotiationEventText(event),
+    })),
+  ...gameEvents.flatMap((event): ReadonlyArray<FeedItem> => {
+    const text = domesticTradeText(event);
+    return text === null || event.sequence > throughGameSequence
+      ? []
+      : [
+          {
+            key: `game:${event.sequence}`,
+            sequence: event.sequence,
+            order: Number.MAX_SAFE_INTEGER,
+            kind: "binding",
+            text: `Binding trade: ${text}`,
+          },
+        ];
+  }),
+];

@@ -14,7 +14,6 @@ describe("web simulator", () => {
   it("renders the standard board and starts with legal settlements", () => {
     const { container } = render(<App />);
 
-    expect(screen.getByRole("heading", { name: "Play a deterministic game" })).toBeTruthy();
     expect(screen.getByRole("group", { name: "Catan game board" })).toBeTruthy();
     expect(screen.getAllByRole("button", { name: /^Place settlement on / })).toHaveLength(54);
     expect(container.querySelectorAll("[data-hex-id]")).toHaveLength(19);
@@ -51,8 +50,9 @@ describe("web simulator", () => {
 
     expect(screen.getByText("Red: roll the dice (turn 1)")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Roll dice" })).toBeTruthy();
-    expect(screen.getAllByText(/2 visible VP/)).toHaveLength(4);
-    expect(screen.getByText("2", { selector: ".resource-line" })).toBeTruthy();
+    const victoryPoints = [...container.querySelectorAll(".players tbody td:first-of-type")];
+    expect(victoryPoints.map((cell) => cell.textContent)).toEqual(["2", "2", "2", "2"]);
+    expect(screen.getByText("2", { selector: ".hand b" })).toBeTruthy();
     expect(container.querySelectorAll("[data-building-vertex]")).toHaveLength(8);
     expect(container.querySelectorAll("[data-road-edge]")).toHaveLength(8);
     expect(firstLegalAction(container)).toBeNull();
@@ -91,15 +91,18 @@ describe("web simulator", () => {
     fireEvent.click(container.querySelector("[data-legal-vertex]")!);
     fireEvent.click(container.querySelector("[data-legal-edge]")!);
 
-    expect(screen.getByText("Frame 3 of 3")).toBeTruthy();
+    expect(screen.getByText("3 / 3")).toBeTruthy();
     expect(container.querySelectorAll("[data-road-edge]")).toHaveLength(1);
     fireEvent.click(screen.getByRole("button", { name: "Previous" }));
 
-    expect(screen.getByText("Frame 2 of 3")).toBeTruthy();
+    expect(screen.getByText("2 / 3")).toBeTruthy();
     expect(container.querySelectorAll("[data-road-edge]")).toHaveLength(0);
     expect(firstLegalAction(container)).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
     expect(container.querySelectorAll("[data-road-edge]")).toHaveLength(1);
+    fireEvent.change(screen.getByLabelText("Frame"), { target: { value: "0" } });
+    expect(screen.getByText("1 / 3")).toBeTruthy();
+    expect(container.querySelectorAll("[data-building-vertex]")).toHaveLength(0);
   });
 
   it("supports keyboard placement controls", () => {
@@ -113,13 +116,13 @@ describe("web simulator", () => {
   });
 
   it("starts a three-player game with the selected seed", () => {
-    render(<App />);
+    const { container } = render(<App />);
     fireEvent.change(screen.getByLabelText("Seed"), { target: { value: "99" } });
     fireEvent.change(screen.getByLabelText("Players"), { target: { value: "3" } });
     fireEvent.click(screen.getByRole("button", { name: "New game" }));
 
     expect(screen.getByText("local-99-3")).toBeTruthy();
-    expect(screen.getAllByText(/settlements ·/)).toHaveLength(3);
+    expect(container.querySelectorAll(".players tbody tr")).toHaveLength(3);
   });
 
   it("rejects an invalid seed without replacing the game", () => {
