@@ -7,6 +7,20 @@ export interface LiveRunViewerProps {
   readonly initialRun: LoadedRunReport | null;
 }
 
+type RunStatus = LoadedRunReport["status"];
+
+const runStatus = (snapshot: RunPackageSnapshot): RunStatus | null => {
+  const manifest = snapshot.manifest;
+  if (typeof manifest !== "object" || manifest === null || !("status" in manifest)) return null;
+  const status = manifest.status;
+  return status === "partial" ||
+    status === "completed" ||
+    status === "failed" ||
+    status === "cancelled"
+    ? status
+    : null;
+};
+
 const fetchSnapshot = async (): Promise<RunPackageSnapshot> => {
   const response = await fetch("/__catanarchy/run-snapshot", { cache: "no-store" });
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -15,6 +29,7 @@ const fetchSnapshot = async (): Promise<RunPackageSnapshot> => {
 
 export const LiveRunViewer = ({ initialSnapshot, initialRun }: LiveRunViewerProps) => {
   const [run, setRun] = useState(initialRun);
+  const [status, setStatus] = useState<RunStatus | null>(() => runStatus(initialSnapshot));
   const [connection, setConnection] = useState<"live" | "reconnecting">("live");
   const [error, setError] = useState<string | null>(null);
   const snapshot = useRef(initialSnapshot);
@@ -26,6 +41,7 @@ export const LiveRunViewer = ({ initialSnapshot, initialRun }: LiveRunViewerProp
       const currentGeneration = generation.current + 1;
       generation.current = currentGeneration;
       snapshot.current = next;
+      if (active) setStatus(runStatus(next));
       try {
         const loaded = await loadRunPackage(next);
         if (active && generation.current === currentGeneration) {
@@ -95,10 +111,13 @@ export const LiveRunViewer = ({ initialSnapshot, initialRun }: LiveRunViewerProp
   }, []);
 
   if (run === null) {
+    const ended = status !== null && status !== "partial";
     return (
       <main className="waiting">
-        <strong>Waiting for the first game state.</strong>
-        {error === null ? null : <p className="error">{error}</p>}
+        <strong>
+          {ended ? `The run ended with status: ${status}.` : "Waiting for the first game state."}
+        </strong>
+        {error === null || ended ? null : <p className="error">{error}</p>}
       </main>
     );
   }

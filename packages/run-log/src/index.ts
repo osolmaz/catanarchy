@@ -1,5 +1,5 @@
 import { mkdir, open, readFile, rename, writeFile, type FileHandle } from "node:fs/promises";
-import { isAbsolute, relative, resolve } from "node:path";
+import { isAbsolute, relative, resolve, sep as platformSeparator } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { replay } from "@catanarchy/engine";
 import type { AgentModelIdentity, MatchActivity, MatchRunResult } from "@catanarchy/harness";
@@ -208,6 +208,7 @@ export class RunRecorder {
     this.#assertOpen();
     const sessionFile = resolve(session.sessionFile);
     const relativeFile = relative(this.directory, sessionFile);
+    const packageSessionFile = relativeFile.split(platformSeparator).join("/");
     const relativeSessionFile = relative(this.sessionsDirectory, sessionFile);
     if (
       relativeSessionFile.length === 0 ||
@@ -221,7 +222,7 @@ export class RunRecorder {
       if (seat.seatId !== seatId) return seat;
       found = true;
       if (seat.agentType !== "pi") throw new Error(`Seat ${seatId} is not a Pi seat.`);
-      return { ...seat, sessionId: session.sessionId, sessionFile: relativeFile };
+      return { ...seat, sessionId: session.sessionId, sessionFile: packageSessionFile };
     });
     if (!found) throw new Error(`Run manifest has no seat ${seatId}.`);
     const manifest = { ...this.#manifest, seats };
