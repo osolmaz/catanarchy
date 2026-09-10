@@ -6,8 +6,10 @@ import type { AgentModelIdentity, MatchActivity, MatchRunResult } from "@catanar
 import {
   decodeGameConfig,
   decodeGameEventEnvelope,
+  decodeNegotiationEvent,
   type GameConfig,
   type GameEvent,
+  type NegotiationEvent,
   type PlayerId,
 } from "@catanarchy/protocol";
 import { Effect } from "effect";
@@ -483,6 +485,27 @@ const decodeRecordedGameEvent = async (payload: unknown): Promise<GameEvent> =>
     ),
   )) as GameEvent;
 
+const decodeRecordedNegotiationEvent = async (payload: unknown): Promise<NegotiationEvent> =>
+  (await Effect.runPromise(
+    decodeNegotiationEvent(payload).pipe(
+      Effect.mapError(() => new Error("The run timeline contains a malformed negotiation event.")),
+    ),
+  )) as NegotiationEvent;
+
+const assertEventIdentity = (
+  event: { readonly matchId: string; readonly sequence: number },
+  manifest: RunManifest,
+  label: string,
+): void => {
+  if (
+    event.matchId !== manifest.matchId ||
+    !Number.isSafeInteger(event.sequence) ||
+    event.sequence < 0
+  ) {
+    throw new Error(`The run timeline contains an invalid ${label} identity.`);
+  }
+};
+
 const assertCommandMarker = (
   record: RunRecord,
   batch: ReadonlyArray<GameEvent>,
@@ -509,6 +532,7 @@ interface GameTimelineValidation {
   readonly events: GameEvent[];
   readonly rawEvents: unknown[];
   completedEventCount: number;
+  negotiationSequence: number;
 }
 
 const consumeGameRecord = async (
@@ -517,8 +541,23 @@ const consumeGameRecord = async (
   record: RunRecord,
 ): Promise<void> => {
   if (record.kind === "game.event") {
-    validation.events.push(await decodeRecordedGameEvent(record.payload));
+    const event = await decodeRecordedGameEvent(record.payload);
+    assertEventIdentity(event, manifest, "game event");
+    validation.events.push(event);
     validation.rawEvents.push(record.payload);
+    return;
+  }
+  if (record.kind === "negotiation.event") {
+    const event = await decodeRecordedNegotiationEvent(record.payload);
+    assertEventIdentity(event, manifest, "negotiation event");
+    if (
+      !Number.isSafeInteger(event.gameSequence) ||
+      event.gameSequence < 0 ||
+      event.sequence !== validation.negotiationSequence + 1
+    ) {
+      throw new Error("The run timeline negotiation event sequence is invalid.");
+    }
+    validation.negotiationSequence = event.sequence;
     return;
   }
   if (record.kind !== "game.command-completed") return;
@@ -526,12 +565,17 @@ const consumeGameRecord = async (
   validation.completedEventCount = validation.events.length;
 };
 
-const validateGameTimeline = async (
+const validateEventTimeline = async (
   manifest: RunManifest,
   records: ReadonlyArray<RunRecord>,
 ): Promise<void> => {
   const config = await decodeStartedConfig(manifest, records[0]);
-  const validation: GameTimelineValidation = { events: [], rawEvents: [], completedEventCount: 0 };
+  const validation: GameTimelineValidation = {
+    events: [],
+    rawEvents: [],
+    completedEventCount: 0,
+    negotiationSequence: -1,
+  };
   for (const record of records) await consumeGameRecord(validation, manifest, record);
   const first = validation.events[0];
   if (
@@ -564,6 +608,6 @@ export const readRunPackage = async (directory: string): Promise<RunPackage> => 
   const records = parseCompleteLines(timelineText);
   validateTimelineOrder(manifest, records);
   validateTerminalRecord(manifest, records);
-  await validateGameTimeline(manifest, records);
+  await validateEventTimeline(manifest, records);
   return { manifest, records };
 };

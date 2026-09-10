@@ -138,6 +138,7 @@ describe("live run viewer", () => {
 
     expect(screen.getByText("The run ended with status: failed.")).toBeTruthy();
     expect(screen.queryByText("Waiting for the first game state.")).toBeNull();
+    expect(FakeEventSource.current).toBeUndefined();
   });
 
   it("waits for the first command and then follows streamed records", async () => {
@@ -186,5 +187,6 @@ describe("live run viewer", () => {
     });
 
     await waitFor(() => expect(screen.queryByText("live")).toBeNull());
+    expect(source.closed).toBe(true);
   });
 });

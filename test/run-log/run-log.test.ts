@@ -235,7 +235,7 @@ describe("run log", () => {
       payload: { ...payload, matchId: "another-match" },
     });
     await writeRecords(wrongMatch);
-    await expect(readRunPackage(directory)).rejects.toThrow("atomic command batch");
+    await expect(readRunPackage(directory)).rejects.toThrow("invalid game event identity");
 
     if (event["type"] !== "settlement.placed") {
       throw new Error("The test run did not end with a settlement placement.");
@@ -262,10 +262,83 @@ describe("run log", () => {
       manifestPath,
       `${JSON.stringify({ ...manifest, status: "partial", finishedAt: null })}\n`,
     );
+    const foreignTail = partialRecords.with(eventIndex, {
+      ...eventRecord,
+      index: eventIndex,
+      payload: { ...payload, matchId: "another-match" },
+    });
+    await writeRecords(foreignTail);
+    await expect(readRunPackage(directory)).rejects.toThrow("invalid game event identity");
+
     await writeRecords(partialRecords);
     await expect(readRunPackage(directory)).resolves.toMatchObject({
       manifest: { status: "partial" },
     });
+  });
+
+  it("validates negotiation event payloads, identities, and sequences", async () => {
+    const directory = await temporaryRunDirectory();
+    const recorder = await RunRecorder.create({
+      directory,
+      runId: "run-negotiation-validation",
+      config,
+      seats: config.players.map(({ id }) => ({
+        seatId: id,
+        agentType: "scripted" as const,
+        model: null,
+      })),
+      clock: clock(),
+    });
+    await recorder.recordActivity({
+      kind: "negotiation.event",
+      payload: {
+        schema: "catanarchy.negotiation-event.v1",
+        matchId: config.matchId,
+        sequence: 0,
+        gameSequence: 0,
+        event: {
+          type: "negotiation.window-opened",
+          windowId: "window-1",
+          turn: 1,
+          turnPlayerId: "red",
+          maxRounds: 1,
+        },
+      },
+    });
+    await recorder.cancel(null, "test finished");
+    await expect(readRunPackage(directory)).resolves.toMatchObject({
+      manifest: { status: "cancelled" },
+    });
+
+    const timelinePath = resolve(directory, "timeline.jsonl");
+    const records = (await readFile(timelinePath, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    const eventIndex = records.findIndex(({ kind }) => kind === "negotiation.event");
+    const eventRecord = records[eventIndex];
+    if (eventRecord === undefined || typeof eventRecord["payload"] !== "object") {
+      throw new Error("The test run has no negotiation event.");
+    }
+    const payload = eventRecord["payload"] as Record<string, unknown>;
+    const writeRecords = async (next: ReadonlyArray<Record<string, unknown>>): Promise<void> =>
+      writeFile(timelinePath, `${next.map((record) => JSON.stringify(record)).join("\n")}\n`);
+
+    await writeRecords(
+      records.with(eventIndex, {
+        ...eventRecord,
+        payload: { ...payload, matchId: "another-match" },
+      }),
+    );
+    await expect(readRunPackage(directory)).rejects.toThrow("invalid negotiation event identity");
+
+    await writeRecords(
+      records.with(eventIndex, {
+        ...eventRecord,
+        payload: { ...payload, event: { type: "unknown-event" } },
+      }),
+    );
+    await expect(readRunPackage(directory)).rejects.toThrow("malformed negotiation event");
   });
 
   it("ignores an incomplete final line while a writer is appending", async () => {
