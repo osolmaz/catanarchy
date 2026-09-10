@@ -1119,6 +1119,118 @@ export interface NegotiationEvent {
   readonly event: NegotiationEventPayload;
 }
 
+const TradeOfferSchema = Schema.Struct({
+  id: Schema.String,
+  parentOfferId: Schema.NullOr(Schema.String),
+  round: Schema.Number,
+  gameSequence: Schema.Number,
+  proposerPlayerId: Schema.String,
+  targetPlayerId: Schema.String,
+  scope: NegotiationScopeSchema,
+  give: ResourceCountsSchema,
+  receive: ResourceCountsSchema,
+  status: Schema.Union(
+    Schema.Literal("open"),
+    Schema.Literal("accepted"),
+    Schema.Literal("rejected"),
+    Schema.Literal("withdrawn"),
+    Schema.Literal("countered"),
+    Schema.Literal("expired"),
+    Schema.Literal("failed"),
+  ),
+});
+
+const NegotiationPromiseSchema = Schema.Struct({
+  id: Schema.String,
+  round: Schema.Number,
+  playerId: Schema.String,
+  beneficiaryPlayerId: Schema.String,
+  scope: NegotiationScopeSchema,
+  text: Schema.String,
+  relatedOfferId: Schema.NullOr(Schema.String),
+});
+
+const PromiseEvidenceSchema = Schema.Struct({
+  id: Schema.String,
+  round: Schema.Number,
+  playerId: Schema.String,
+  promiseId: Schema.String,
+  gameSequence: Schema.Number,
+  text: Schema.String,
+});
+
+const NegotiationEventPayloadSchema = Schema.Union(
+  Schema.Struct({
+    type: Schema.Literal("negotiation.window-opened"),
+    windowId: Schema.String,
+    turn: Schema.Number,
+    turnPlayerId: Schema.String,
+    maxRounds: Schema.Number,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("negotiation.message-sent"),
+    round: Schema.Number,
+    playerId: Schema.String,
+    scope: NegotiationScopeSchema,
+    text: Schema.String,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("negotiation.player-passed"),
+    round: Schema.Number,
+    playerId: Schema.String,
+  }),
+  Schema.Struct({ type: Schema.Literal("trade.offer-created"), offer: TradeOfferSchema }),
+  Schema.Struct({
+    type: Schema.Literal("trade.offer-closed"),
+    offerId: Schema.String,
+    playerId: Schema.NullOr(Schema.String),
+    status: Schema.Union(
+      Schema.Literal("rejected"),
+      Schema.Literal("withdrawn"),
+      Schema.Literal("countered"),
+      Schema.Literal("expired"),
+    ),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("trade.offer-accepted"),
+    offerId: Schema.String,
+    playerId: Schema.String,
+    gameEventSequence: Schema.Number,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("trade.offer-failed"),
+    offerId: Schema.String,
+    playerId: Schema.String,
+    reason: Schema.Union(Schema.Literal("invalid"), Schema.Literal("stale")),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("negotiation.promise-recorded"),
+    promise: NegotiationPromiseSchema,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("negotiation.promise-evidence-recorded"),
+    evidence: PromiseEvidenceSchema,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("negotiation.window-closed"),
+    windowId: Schema.String,
+    reason: Schema.Union(
+      Schema.Literal("all-passed"),
+      Schema.Literal("round-limit"),
+      Schema.Literal("game-ended"),
+    ),
+  }),
+);
+
+export const NegotiationEventSchema = Schema.Struct({
+  schema: Schema.Literal("catanarchy.negotiation-event.v1"),
+  matchId: Schema.String.pipe(Schema.minLength(1)),
+  sequence: Schema.Number,
+  gameSequence: Schema.Number,
+  event: NegotiationEventPayloadSchema,
+});
+export const decodeNegotiationEvent = Schema.decodeUnknown(NegotiationEventSchema);
+
 export interface NegotiationView {
   readonly schema: "catanarchy.negotiation-view.v1";
   readonly matchId: string;

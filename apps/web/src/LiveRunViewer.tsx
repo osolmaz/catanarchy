@@ -37,11 +37,23 @@ export const LiveRunViewer = ({ initialSnapshot, initialRun }: LiveRunViewerProp
 
   useEffect(() => {
     let active = true;
+    if (runStatus(snapshot.current) !== "partial") {
+      return () => {
+        active = false;
+      };
+    }
+    const after = snapshot.current.records.length - 1;
+    const source = new EventSource(`/__catanarchy/run-stream?after=${after}`);
+    const updateStatus = (next: RunPackageSnapshot): void => {
+      const nextStatus = runStatus(next);
+      if (active) setStatus(nextStatus);
+      if (nextStatus !== null && nextStatus !== "partial") source.close();
+    };
     const publish = async (next: RunPackageSnapshot): Promise<void> => {
       const currentGeneration = generation.current + 1;
       generation.current = currentGeneration;
       snapshot.current = next;
-      if (active) setStatus(runStatus(next));
+      updateStatus(next);
       try {
         const loaded = await loadRunPackage(next);
         if (active && generation.current === currentGeneration) {
@@ -63,8 +75,6 @@ export const LiveRunViewer = ({ initialSnapshot, initialRun }: LiveRunViewerProp
         }
       }
     };
-    const after = snapshot.current.records.length - 1;
-    const source = new EventSource(`/__catanarchy/run-stream?after=${after}`);
     source.onopen = () => {
       if (active) setConnection("live");
     };
