@@ -225,7 +225,7 @@ describe("agent harness", () => {
     let sawPriorTranscript = false;
     const result = await Effect.runPromise(
       runGameSteps({
-        config: { ...config(4), seed: 42, matchId: "harness-complete-game" },
+        config: { ...config(4), seed: 43, matchId: "harness-complete-game" },
         maxDecisions: 2_000,
         negotiationPolicy: { maxRounds: 3, maxMessageLength: 160, maxOpenOffers: 4 },
         createAgent: async () => ({
@@ -608,6 +608,49 @@ describe("agent harness", () => {
       ),
     ).toHaveLength(4);
     expect(result.state.phase.tag).toBe("turn.roll");
+  });
+
+  it("quarantines an agent when negotiation cancellation rejects", async () => {
+    const cancel = vi.fn<SeatAgent["cancel"]>(async () => {
+      throw new Error("cancel failed");
+    });
+    const negotiate = vi.fn<NonNullable<SeatAgent["negotiate"]>>(
+      async (request) =>
+        new Promise((resolve) => {
+          request.signal.addEventListener("abort", () => resolve({ action: { type: "pass" } }), {
+            once: true,
+          });
+        }),
+    );
+    const result = await Effect.runPromise(
+      runGameSteps({
+        config: config(3),
+        maxDecisions: 30,
+        decisionTimeoutMs: 10,
+        maxAttempts: 2,
+        negotiationPolicy: { maxRounds: 1, maxMessageLength: 160, maxOpenOffers: 4 },
+        createAgent: async (player) =>
+          player.id === "red"
+            ? {
+                async decide(request) {
+                  return { actionId: firstAction(request).id };
+                },
+                negotiate,
+                cancel,
+                async dispose() {},
+              }
+            : createFirstLegalAgent(),
+      }),
+    );
+
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(negotiate).toHaveBeenCalledOnce();
+    const redTraces = result.negotiationDecisions.filter(({ playerId }) => playerId === "red");
+    expect(redTraces[0]).toMatchObject({
+      outcome: "failed",
+      failure: "cancellation-timeout",
+    });
+    expect(redTraces.slice(1).every(({ outcome }) => outcome === "fallback")).toBe(true);
   });
 
   it("disposes agents that were created before factory failure", async () => {
