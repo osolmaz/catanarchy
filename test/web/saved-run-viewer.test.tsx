@@ -72,6 +72,9 @@ describe("saved run viewer", () => {
     render(<SavedRunViewer run={run} />);
 
     expect(screen.getByRole("heading", { name: "Inspect saved-run-test" })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Play a new game" }).getAttribute("href")).toBe(
+      "?mode=play",
+    );
     expect(screen.getByText("red (public): I need brick.")).toBeTruthy();
     expect(screen.getByText("test/model")).toBeTruthy();
     expect(screen.getByText("Strong production.")).toBeTruthy();

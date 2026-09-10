@@ -21,6 +21,9 @@ export const SavedRunViewer = ({ run }: SavedRunViewerProps) => {
             traces.
           </p>
         </div>
+        <a className="viewer-link" href="?mode=play">
+          Play a new game
+        </a>
       </header>
 
       <section className="status-card" aria-live="polite">
