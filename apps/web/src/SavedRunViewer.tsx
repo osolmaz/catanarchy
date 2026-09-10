@@ -164,7 +164,7 @@ export const SavedRunViewer = ({ run, live = false }: SavedRunViewerProps) => {
             <a href="?mode=play">play locally</a>
           </small>
           <small>
-            {originNote(run)} · {generatorNote(run.generatorMatch)} ·{" "}
+            replay valid · {originNote(run)} · {generatorNote(run.generatorMatch)} ·{" "}
             {commandNote(run.commandVerification)}
           </small>
         </header>
