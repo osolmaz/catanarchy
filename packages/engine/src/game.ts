@@ -68,6 +68,7 @@ import {
   visibleVictoryPoints,
 } from "./awards.js";
 import { ReplayViolation, RuleViolation } from "./errors.js";
+import { checkInitialStateInvariants, checkInvariants } from "./invariants.js";
 import { generateGameMaterials } from "./layout.js";
 import { deriveRandomState, nextInt } from "./random.js";
 import { STANDARD_TOPOLOGY } from "./topology.js";
@@ -2320,42 +2321,138 @@ const commandFromEvent = (state: GameState, envelope: GameEvent): GameCommand | 
 
 const replayFailure = (message: string): ReplayViolation => new ReplayViolation({ message });
 
-export const replay = (events: ReadonlyArray<unknown>): Effect.Effect<GameState, ReplayViolation> =>
+const initialReplayState = (first: GameEvent): Effect.Effect<GameState, ReplayViolation> => {
+  if (first.sequence !== 0 || first.event.type !== "game.created") {
+    return Effect.fail(replayFailure("A replay must start with game.created at sequence zero."));
+  }
+  const state = first.event.state;
+  if (first.matchId !== state.matchId || state.matchId !== state.config.matchId) {
+    return Effect.fail(replayFailure("The initial replay match IDs do not agree."));
+  }
+  const violations = checkInitialStateInvariants(state);
+  return violations.length === 0
+    ? Effect.succeed(state)
+    : Effect.fail(replayFailure(`The initial game state is invalid: ${violations.join(", ")}.`));
+};
+
+const decodeReplayEvent = (value: unknown): Effect.Effect<GameEvent, ReplayViolation> =>
+  decodeGameEventEnvelope(value).pipe(
+    Effect.map((event) => event as unknown as GameEvent),
+    Effect.mapError(() => replayFailure("A replay event is malformed.")),
+  );
+
+const assertReplayEventOrder = (
+  state: GameState,
+  event: GameEvent,
+): Effect.Effect<void, ReplayViolation> => {
+  if (
+    event.matchId !== state.matchId ||
+    event.sequence !== state.sequence + 1 ||
+    event.event.type === "game.created"
+  ) {
+    return Effect.fail(replayFailure("A replay event has an invalid identity or sequence."));
+  }
+  return Effect.void;
+};
+
+const reduceReplayBatch = (
+  state: GameState,
+  events: ReadonlyArray<unknown>,
+  index: number,
+): Effect.Effect<{ readonly state: GameState; readonly nextIndex: number }, ReplayViolation> =>
+  Effect.gen(function* () {
+    const first = yield* decodeReplayEvent(events[index]);
+    if (commandFromEvent(state, first) === null) {
+      return yield* Effect.fail(replayFailure("A replay event cannot start a valid command."));
+    }
+    let nextState = state;
+    let nextIndex = index;
+    while (nextIndex < events.length) {
+      const event = yield* decodeReplayEvent(events[nextIndex]);
+      if (event.commandId !== first.commandId) break;
+      yield* assertReplayEventOrder(nextState, event);
+      const reduced = applyEvent(nextState, event);
+      if (reduced.sequence !== event.sequence) {
+        return yield* Effect.fail(replayFailure("A replay event cannot apply to the game state."));
+      }
+      nextState = reduced;
+      nextIndex += 1;
+    }
+    const violations = checkInvariants(nextState);
+    if (violations.length > 0) {
+      return yield* Effect.fail(
+        replayFailure(`A replay event batch breaks state invariants: ${violations.join(", ")}.`),
+      );
+    }
+    return { state: nextState, nextIndex };
+  });
+
+const verifyNativeBatch = (
+  state: GameState,
+  events: ReadonlyArray<unknown>,
+  index: number,
+): Effect.Effect<{ readonly state: GameState; readonly nextIndex: number }, ReplayViolation> =>
+  Effect.gen(function* () {
+    const decoded = yield* decodeReplayEvent(events[index]);
+    const command = commandFromEvent(state, decoded);
+    if (command === null) {
+      return yield* Effect.fail(replayFailure("A replay event cannot start a valid command."));
+    }
+    const expected = yield* decide(state, command).pipe(
+      Effect.mapError(() => replayFailure("A replay event violates the game rules.")),
+    );
+    const actual = events.slice(index, index + expected.length);
+    if (!sameCanonicalValue(expected, actual)) {
+      return yield* Effect.fail(replayFailure("A replay event batch is invalid."));
+    }
+    const nextState = expected.reduce((current, event) => applyEvent(current, event), state);
+    const violations = checkInvariants(nextState);
+    if (violations.length > 0) {
+      return yield* Effect.fail(
+        replayFailure(`A replay event batch breaks state invariants: ${violations.join(", ")}.`),
+      );
+    }
+    return { state: nextState, nextIndex: index + expected.length };
+  });
+
+const runReplay = (
+  events: ReadonlyArray<unknown>,
+  replayBatch: (
+    state: GameState,
+    events: ReadonlyArray<unknown>,
+    index: number,
+  ) => Effect.Effect<{ readonly state: GameState; readonly nextIndex: number }, ReplayViolation>,
+): Effect.Effect<GameState, ReplayViolation> =>
   Effect.gen(function* () {
     const first = yield* decodeGameEventEnvelope(events[0]).pipe(
       Effect.mapError(() => replayFailure("The first replay event is malformed.")),
     );
-    if (first.sequence !== 0 || first.event.type !== "game.created") {
-      return yield* Effect.fail(
-        replayFailure("A replay must start with game.created at sequence zero."),
-      );
-    }
-    const created = yield* createGame(first.event.state.config).pipe(
-      Effect.mapError(() => replayFailure("The initial game configuration is invalid.")),
-    );
-    if (!sameCanonicalValue(created.events[0], events[0])) {
-      return yield* Effect.fail(replayFailure("The initial game event is invalid."));
-    }
-
-    let state = created.state;
+    const created = first as unknown as GameEvent;
+    let state = yield* initialReplayState(created);
     let index = 1;
+    const commandIds = new Set<string>([created.commandId]);
     while (index < events.length) {
-      const decoded = yield* decodeGameEventEnvelope(events[index]).pipe(
-        Effect.mapError(() => replayFailure("A replay event is malformed.")),
-      );
-      const command = commandFromEvent(state, decoded as unknown as GameEvent);
-      if (command === null) {
-        return yield* Effect.fail(replayFailure("A replay event cannot start a valid command."));
+      const event = yield* decodeReplayEvent(events[index]);
+      if (commandIds.has(event.commandId)) {
+        return yield* Effect.fail(replayFailure("A replay command batch is not contiguous."));
       }
-      const expected = yield* decide(state, command).pipe(
-        Effect.mapError(() => replayFailure("A replay event violates the game rules.")),
-      );
-      const actual = events.slice(index, index + expected.length);
-      if (!sameCanonicalValue(expected, actual)) {
-        return yield* Effect.fail(replayFailure("A replay event batch is invalid."));
-      }
-      state = expected.reduce((current, event) => applyEvent(current, event), state);
-      index += expected.length;
+      commandIds.add(event.commandId);
+      const batch = yield* replayBatch(state, events, index);
+      state = batch.state;
+      index = batch.nextIndex;
     }
     return state;
   });
+
+export const replay = (events: ReadonlyArray<unknown>): Effect.Effect<GameState, ReplayViolation> =>
+  runReplay(events, reduceReplayBatch);
+
+export const verifyNativeReplay = (
+  events: ReadonlyArray<unknown>,
+): Effect.Effect<GameState, ReplayViolation> => runReplay(events, verifyNativeBatch);
+
+export const matchesCurrentGenerator = (state: GameState): Effect.Effect<boolean> =>
+  createGame(state.config).pipe(
+    Effect.map(({ state: generated }) => sameCanonicalValue(generated, state)),
+    Effect.catchAll(() => Effect.succeed(false)),
+  );

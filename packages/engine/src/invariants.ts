@@ -1,12 +1,172 @@
-import type { GameState, ResourceCounts } from "@catanarchy/protocol";
+import {
+  RESOURCE_TYPES,
+  type DevelopmentCard,
+  type GameState,
+  type HarborKind,
+  type ResourceCounts,
+} from "@catanarchy/protocol";
 import {
   resolveLargestArmy,
   resolveLongestRoad,
   totalVictoryPoints,
   victoryPointCardCount,
 } from "./awards.js";
+import { standardHarborEdgeIds } from "./layout.js";
+import { STANDARD_TOPOLOGY } from "./topology.js";
 
-const RESOURCE_KEYS = ["lumber", "brick", "wool", "grain", "ore"] as const;
+const RESOURCE_KEYS = RESOURCE_TYPES;
+const EXPECTED_TERRAIN = {
+  forest: 4,
+  hill: 3,
+  pasture: 4,
+  field: 4,
+  mountain: 3,
+  desert: 1,
+} as const;
+const EXPECTED_NUMBERS: Readonly<Record<number, number>> = {
+  2: 1,
+  3: 2,
+  4: 2,
+  5: 2,
+  6: 2,
+  8: 2,
+  9: 2,
+  10: 2,
+  11: 2,
+  12: 1,
+};
+const EXPECTED_HARBORS: Readonly<Record<HarborKind, number>> = {
+  generic: 4,
+  lumber: 1,
+  brick: 1,
+  wool: 1,
+  grain: 1,
+  ore: 1,
+};
+const EXPECTED_DEVELOPMENT_CARDS: Readonly<Record<DevelopmentCard, number>> = {
+  knight: 14,
+  "road-building": 2,
+  "year-of-plenty": 2,
+  monopoly: 2,
+  "victory-point": 5,
+};
+
+const countValues = (values: ReadonlyArray<string | number>): Map<string, number> => {
+  const counts = new Map<string, number>();
+  for (const value of values) {
+    const key = String(value);
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return counts;
+};
+
+const hasExpectedCounts = (
+  values: ReadonlyArray<string | number>,
+  expected: Readonly<Record<string, number>>,
+): boolean => {
+  const counts = countValues(values);
+  return (
+    values.length === Object.values(expected).reduce((total, count) => total + count, 0) &&
+    Object.entries(expected).every(([value, count]) => counts.get(value) === count)
+  );
+};
+
+const sameOrderedValue = (left: unknown, right: unknown): boolean =>
+  JSON.stringify(left) === JSON.stringify(right);
+
+const validUnsignedInteger = (value: number): boolean =>
+  Number.isSafeInteger(value) && value >= 0 && value <= 0xffff_ffff;
+
+const topologyViolations = (state: GameState): ReadonlyArray<string> =>
+  sameOrderedValue(state.topology, STANDARD_TOPOLOGY) ? [] : ["standard-topology"];
+
+const validConfigPlayers = (state: GameState): boolean =>
+  state.config.players.length >= 3 &&
+  state.config.players.length <= 4 &&
+  !duplicateValues(state.config.players.map(({ id }) => id)) &&
+  !duplicateValues(state.config.players.map(({ color }) => color));
+
+const statePlayerOrderMatchesConfig = (state: GameState): boolean =>
+  sameOrderedValue(
+    state.players.map(({ id }) => id),
+    state.config.players.map(({ id }) => id),
+  );
+
+const configViolations = (state: GameState): ReadonlyArray<string> => [
+  ...(state.matchId === state.config.matchId ? [] : ["config-match"]),
+  ...(Number.isSafeInteger(state.sequence) && state.sequence >= 0 ? [] : ["state-sequence"]),
+  ...(validUnsignedInteger(state.config.seed) ? [] : ["config-seed"]),
+  ...(validConfigPlayers(state) ? [] : ["config-players"]),
+  ...(statePlayerOrderMatchesConfig(state) ? [] : ["state-player-order"]),
+];
+
+const validTerrainLayout = (state: GameState): boolean => {
+  const terrain = new Map(state.layout.terrain.map((item) => [item.hexId, item.terrain]));
+  const expectedHexIds = new Set(state.topology.hexes.map(({ id }) => id));
+  return (
+    terrain.size === state.layout.terrain.length &&
+    terrain.size === expectedHexIds.size &&
+    [...terrain.keys()].every((id) => expectedHexIds.has(id)) &&
+    hasExpectedCounts(
+      state.layout.terrain.map(({ terrain: value }) => value),
+      EXPECTED_TERRAIN,
+    )
+  );
+};
+
+const validNumberLayout = (state: GameState): boolean => {
+  const numbers = new Map(state.layout.numbers.map((item) => [item.hexId, item.number]));
+  const expectedHexIds = new Set(state.topology.hexes.map(({ id }) => id));
+  return (
+    numbers.size === state.layout.numbers.length &&
+    numbers.size === 18 &&
+    [...numbers.keys()].every((id) => expectedHexIds.has(id)) &&
+    hasExpectedCounts(
+      state.layout.numbers.map(({ number }) => number),
+      EXPECTED_NUMBERS,
+    )
+  );
+};
+
+const desertHexId = (state: GameState): string | undefined =>
+  state.layout.terrain.find(({ terrain }) => terrain === "desert")?.hexId;
+
+const validDesertLayout = (state: GameState): boolean => {
+  const desert = desertHexId(state);
+  return desert !== undefined && !state.layout.numbers.some(({ hexId }) => hexId === desert);
+};
+
+const validHarborLayout = (state: GameState): boolean => {
+  const expectedHarbors = new Set(standardHarborEdgeIds(state.topology));
+  const actualHarbors = new Set(state.layout.harbors.map(({ edgeId }) => edgeId));
+  return (
+    actualHarbors.size === state.layout.harbors.length &&
+    actualHarbors.size === expectedHarbors.size &&
+    [...actualHarbors].every((id) => expectedHarbors.has(id)) &&
+    hasExpectedCounts(
+      state.layout.harbors.map(({ kind }) => kind),
+      EXPECTED_HARBORS,
+    )
+  );
+};
+
+const layoutViolations = (state: GameState): ReadonlyArray<string> => [
+  ...(validTerrainLayout(state) ? [] : ["layout-terrain"]),
+  ...(validNumberLayout(state) ? [] : ["layout-numbers"]),
+  ...(validDesertLayout(state) ? [] : ["layout-desert"]),
+  ...(validHarborLayout(state) ? [] : ["layout-harbors"]),
+];
+
+const randomViolations = (state: GameState): ReadonlyArray<string> =>
+  Object.values(state.random).every(
+    ({ algorithm, value, draws }) =>
+      algorithm === "catanarchy-prng-v1" &&
+      validUnsignedInteger(value) &&
+      Number.isSafeInteger(draws) &&
+      draws >= 0,
+  )
+    ? []
+    : ["random-state"];
 
 const resourceValues = (resources: ResourceCounts): ReadonlyArray<number> =>
   RESOURCE_KEYS.map((resource) => resources[resource]);
@@ -22,10 +182,19 @@ const occupancyViolations = (state: GameState): ReadonlyArray<string> => {
     violations.push("duplicate-road");
   const vertexIds = new Set(state.topology.vertices.map(({ id }) => id));
   const edgeIds = new Set(state.topology.edges.map(({ id }) => id));
-  if (state.occupancy.buildings.some(({ vertexId }) => !vertexIds.has(vertexId)))
+  const playerIds = new Set(state.players.map(({ id }) => id));
+  if (state.occupancy.buildings.some(({ vertexId }) => !vertexIds.has(vertexId))) {
     violations.push("unknown-building");
-  if (state.occupancy.roads.some(({ edgeId }) => !edgeIds.has(edgeId)))
+  }
+  if (state.occupancy.roads.some(({ edgeId }) => !edgeIds.has(edgeId))) {
     violations.push("unknown-road");
+  }
+  if (state.occupancy.buildings.some(({ playerId }) => !playerIds.has(playerId))) {
+    violations.push("unknown-building-player");
+  }
+  if (state.occupancy.roads.some(({ playerId }) => !playerIds.has(playerId))) {
+    violations.push("unknown-road-player");
+  }
   return violations;
 };
 
@@ -81,17 +250,20 @@ const developmentCardViolations = (state: GameState): ReadonlyArray<string> => {
     }
     return playerViolations;
   });
-  const ownedCount = state.players.reduce(
-    (total, player) => total + player.developmentCards.length,
-    0,
-  );
   const playedKnightCount = state.players.reduce(
     (total, player) => total + player.playedKnights,
     0,
   );
-  const totalCount =
-    state.developmentDeck.length + state.developmentDiscard.length + ownedCount + playedKnightCount;
-  return totalCount === 25 ? violations : [...violations, "development-card-conservation"];
+  const cards = [
+    ...state.developmentDeck,
+    ...state.developmentDiscard,
+    ...state.players.flatMap(({ developmentCards }) => developmentCards.map(({ card }) => card)),
+    ...Array.from({ length: playedKnightCount }, () => "knight" as const),
+  ];
+  if (!hasExpectedCounts(cards, EXPECTED_DEVELOPMENT_CARDS)) {
+    violations.push("development-card-conservation");
+  }
+  return violations;
 };
 
 const supplyViolations = (state: GameState): ReadonlyArray<string> => [
@@ -226,11 +398,63 @@ const phaseViolations = (state: GameState): ReadonlyArray<string> => {
     : violations;
 };
 
-export const checkInvariants = (state: GameState): ReadonlyArray<string> => [
-  ...occupancyViolations(state),
-  ...distanceViolations(state),
-  ...supplyViolations(state),
-  ...awardViolations(state),
-  ...resultViolations(state),
-  ...phaseViolations(state),
+export const checkInvariants = (state: GameState): ReadonlyArray<string> => {
+  const topology = topologyViolations(state);
+  if (topology.length > 0) return topology;
+  const structure = [
+    ...configViolations(state),
+    ...layoutViolations(state),
+    ...randomViolations(state),
+  ];
+  if (structure.length > 0) return structure;
+  return [
+    ...occupancyViolations(state),
+    ...distanceViolations(state),
+    ...supplyViolations(state),
+    ...awardViolations(state),
+    ...resultViolations(state),
+    ...phaseViolations(state),
+  ];
+};
+
+const emptyResources = (resources: ResourceCounts): boolean =>
+  RESOURCE_KEYS.every((resource) => resources[resource] === 0);
+
+const fullBank = (resources: ResourceCounts): boolean =>
+  RESOURCE_KEYS.every((resource) => resources[resource] === 19);
+
+const validInitialOccupancy = (state: GameState): boolean =>
+  state.occupancy.buildings.length === 0 && state.occupancy.roads.length === 0;
+
+const validInitialResources = (state: GameState): boolean =>
+  fullBank(state.bank) && state.players.every(({ resources }) => emptyResources(resources));
+
+const validInitialDevelopmentCards = (state: GameState): boolean =>
+  state.developmentDiscard.length === 0 &&
+  state.players.every(
+    ({ developmentCards, playedKnights }) => developmentCards.length === 0 && playedKnights === 0,
+  );
+
+const validInitialResult = (state: GameState): boolean =>
+  state.awards.longestRoadPlayerId === null &&
+  state.awards.largestArmyPlayerId === null &&
+  state.result === null;
+
+const validInitialPhase = (state: GameState): boolean =>
+  state.phase.tag === "setup.settlement" &&
+  state.phase.direction === "forward" &&
+  state.phase.playerIndex === 0;
+
+const validInitialRobber = (state: GameState): boolean =>
+  state.layout.robberHexId === desertHexId(state);
+
+export const checkInitialStateInvariants = (state: GameState): ReadonlyArray<string> => [
+  ...checkInvariants(state),
+  ...(state.sequence === 0 ? [] : ["initial-sequence"]),
+  ...(validInitialOccupancy(state) ? [] : ["initial-occupancy"]),
+  ...(validInitialResources(state) ? [] : ["initial-resources"]),
+  ...(validInitialDevelopmentCards(state) ? [] : ["initial-development-cards"]),
+  ...(validInitialResult(state) ? [] : ["initial-result"]),
+  ...(validInitialPhase(state) ? [] : ["initial-phase"]),
+  ...(validInitialRobber(state) ? [] : ["initial-robber"]),
 ];

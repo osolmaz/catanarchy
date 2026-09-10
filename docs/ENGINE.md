@@ -558,10 +558,11 @@ The reader performs these steps in order:
 2. Require event sequence zero, state sequence zero, and matching event, state, config, and manifest match IDs.
 3. Require the canonical regular topology and a valid regular-board layout.
 4. Run the full state invariant checks before accepting the starting state.
-5. Reconstruct each later command from its first event, run the command against the reduced state, and require the complete expected event batch to match the stored batch.
-6. Run the state invariant checks after each accepted batch.
+5. Group later events into contiguous command batches and require matching IDs and consecutive event sequences.
+6. Apply each stored event in the batch and require the reducer to advance to that event sequence.
+7. Run the state invariant checks after each accepted batch.
 
-The first event is authoritative for replay and the generator is authoritative for creating a new native game. These are separate jobs. `createGame` still produces a deterministic state for a seed. Native replay still verifies every later command and random result exactly from the stored random cursors.
+The first event is authoritative for replay and the generator is authoritative for creating a new native game. These are separate jobs. `createGame` still produces a deterministic state for a seed. A separate native verifier reconstructs each command from its first event, runs the command against the reduced state, and requires the complete expected event batch to match the stored batch. This verifies every later native command and random result exactly from the stored random cursors.
 
 A generated run records the board generator ID and seed in its run manifest. A reader can generate a new state with the current recipe and report whether it matches the stored starting state. This comparison is information for evaluation and debugging. It does not decide whether replay succeeds.
 

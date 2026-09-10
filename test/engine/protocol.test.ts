@@ -1,7 +1,9 @@
+import { createGame } from "@catanarchy/engine";
 import {
   decodeGameCommand,
   decodeGameConfig,
   decodeGameEventEnvelope,
+  decodeGameState,
   decodeNegotiationAction,
   DEVELOPMENT_CARDS,
   GameConfigSchema,
@@ -32,6 +34,34 @@ describe("protocol boundaries", () => {
   it("rejects malformed configuration data", () => {
     const result = Effect.runSync(Effect.either(decodeGameConfig({ seed: "42" })));
     expect(Either.isLeft(result)).toBe(true);
+  });
+
+  it("decodes the complete stored starting state", () => {
+    const config = Effect.runSync(
+      decodeGameConfig({
+        schema: "catanarchy.game-config.v1",
+        matchId: "stored-state",
+        seed: 42,
+        players: [
+          { id: "red", name: "Red", color: "red" },
+          { id: "blue", name: "Blue", color: "blue" },
+          { id: "white", name: "White", color: "white" },
+        ],
+      }),
+    );
+    const created = Effect.runSync(createGame(config));
+    const event = created.events[0];
+    if (event?.event.type !== "game.created") throw new Error("Expected game.created.");
+    expect(Effect.runSync(decodeGameState(event.event.state))).toEqual(event.event.state);
+
+    const { layout: _layout, ...incompleteState } = event.event.state;
+    const incompleteEvent = {
+      ...event,
+      event: { ...event.event, state: incompleteState },
+    };
+    expect(
+      Either.isLeft(Effect.runSync(Effect.either(decodeGameEventEnvelope(incompleteEvent)))),
+    ).toBe(true);
   });
 
   it("decodes a versioned, match-scoped command envelope", () => {
