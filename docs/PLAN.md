@@ -292,7 +292,125 @@ The Pi adapter connects isolated model sessions to normal game decisions and the
 
 The first slice is complete when Pi and scripted agents can share an initial-placement match and the deterministic suite proves the session and information boundaries. The complete milestone still requires a mixed full game. The web viewer must be able to follow that match without access to Pi session state.
 
-### Milestone 8: batch simulation and training data
+### Milestone 8: portable replay and board provenance
+
+Saved model games must remain useful when the native board generator changes. Adapters must also be able to replay a valid board observed from Colonist without pretending that Catanarchy generated it from a seed.
+
+The complete `GameState` inside the first `game.created` event will become the authoritative replay starting point. Replay will decode that state, check its invariants, and then apply every later atomic event batch. A separate native verifier will reconstruct commands and compare their events. Replay will not regenerate the starting board with the current generator.
+
+This change separates four questions:
+
+1. Is the stored starting state structurally valid?
+2. Can the event reducer apply every later atomic batch while preserving engine invariants?
+3. For a native match, does command re-decision reproduce every later event exactly?
+4. Does the current native generator produce the same starting state from the recorded seed?
+
+The first two questions decide whether a log can be replayed. The last two produce verification and provenance information for native evaluations and the viewer. A mismatch with the current generator does not by itself make a valid stored game unreadable.
+
+#### Scope
+
+- [ ] Update the locked replay decision in [Engine design](ENGINE.md) before changing code.
+- [ ] Add a complete runtime schema for `GameState` and the full `game.created` payload.
+- [ ] Split starting-state loading and event reduction from native game generation.
+- [ ] Make replay initialize from the decoded `game.created` state.
+- [ ] Run the full engine invariant suite on the starting state and after each applied atomic batch.
+- [ ] Keep exact command re-decision and event-batch comparison as a native-match verifier.
+- [ ] Let adapter matches use the same reducer while reporting that native command reproduction does not apply.
+- [ ] Separate the match rules and players from the source of the initial board and random outcomes. An observed match must not need a fake generation seed.
+- [ ] Add a run-manifest origin field for a native generated board or an adapter-observed board.
+- [ ] Record the native generator identifier and seed for generated boards.
+- [ ] Calculate whether a native starting state matches the current generator and expose that result to the trusted viewer.
+- [ ] Keep the stored origin as a provenance claim. Do not present it as proof against deliberate file editing.
+- [ ] Update run-log validation so it uses the same starting-state decoder and invariant checks as engine replay.
+- [ ] Update the viewer to show board origin and current-generator match status without blocking replay.
+
+The run manifest will use one origin union in its existing `v1` contract:
+
+```ts
+type InitialStateOrigin =
+  | {
+      readonly type: "generated";
+      readonly generatorId: string;
+      readonly seed: number;
+    }
+  | {
+      readonly type: "observed";
+      readonly adapterId: string;
+    };
+```
+
+`generatorId` names the exact board-generation recipe, not the package release. `adapterId` names the adapter that observed the board. Credentials, external account IDs, and private service data do not belong in this field.
+
+The reader calculates separate results for generation and command verification:
+
+```ts
+type GeneratorMatch = "matches-current" | "differs-from-current" | "not-applicable";
+type CommandVerification = "exact" | "failed" | "not-applicable";
+```
+
+These values are derived when a run is read. They are not stored as authoritative data because the verifier can improve and the current generator can change. Native runs require `exact` command verification for evaluation use. Adapter runs use event reduction, invariant checks, and adapter evidence instead of claiming that Catanarchy produced external random outcomes.
+
+#### State validation
+
+The starting-state validator will check at least:
+
+- the schema ID, match ID, sequence zero, and `game.created` envelope
+- the canonical regular topology and every referenced topology ID
+- terrain, number-token, harbor, development-card, bank, and piece supplies
+- the desert, robber, token, harbor, occupancy, player, phase, score, and award invariants
+- random-stream labels and cursor values needed for later commands
+- empty initial occupancy, initial player holdings, and the initial-placement phase
+- consistency between the state, its config, and the run manifest
+
+Generator policy and state validity stay separate. A valid board can differ from the current shuffle while still passing state invariants. A board produced by a known engine defect remains invalid. The current scratch runs used the incorrect harbor phase and can be discarded rather than adding an exception for them.
+
+Replay and verification also stay separate. Replay reduces validated events from the stored starting state. The native verifier reconstructs commands and compares the events that the engine would produce, including random outcomes. An adapter verifier cannot honestly make that claim for dice or theft controlled by an external service. It records the adapter evidence and checks canonical transitions without labeling them as native reproduction.
+
+#### Non-goals
+
+This milestone will not retain the old board generator, add a fallback replay path, trust an unvalidated stored state, weaken later command checks, migrate the current scratch runs, or add cryptographic proof of who created a run. Public replay projection and long-term artifact signing remain separate work.
+
+#### Implementation order
+
+1. Commit the board orientation and harbor-phase correction as its own change.
+2. Update `ENGINE.md` with the new replay rule and the boundary between state validity and generator matching.
+3. Add the full state decoder and focused decoder tests.
+4. Extract an invariant-checked event reducer and initialize it from the stored state.
+5. Move command re-decision into the native verifier and remove board regeneration from replay.
+6. Separate native and externally controlled randomness in the protocol without adding a fake seed for observed games.
+7. Add generated and observed origin data to the run manifest in place.
+8. Add generator and command-verification results as report data.
+9. Show origin and verification status in the trusted viewer.
+10. Update old fixtures or remove scratch-only fixtures that came from the invalid harbor generator.
+11. Run all engine, run-log, viewer, property, and full-project checks.
+
+#### Acceptance criteria
+
+- A current native game replays to the same final state and passes exact command verification.
+- A valid stored starting state with a different shuffle replays without the old generator code.
+- A valid adapter-observed regular board replays without a generation seed.
+- A malformed or invariant-breaking starting state is rejected before later events run.
+- A changed, missing, reordered, or illegal later event batch is rejected.
+- A changed native random outcome fails exact command verification.
+- A generated run reports whether it matches the current generator.
+- An observed run reports generator and native command verification as `not-applicable`.
+- The viewer clearly separates replay validity, board origin, command verification, and current-generator matching.
+- Generated and observed games use one state-loading and event-reduction path.
+
+Focused verification will include:
+
+```text
+npx vitest run test/engine/replay.test.ts test/engine/invariants.test.ts
+npx vitest run test/run-log test/web
+npm run typecheck
+npm run lint
+npm run docs:check
+npm run check
+```
+
+Implementation is complete only when the focused cases and the full project check pass from a clean working tree.
+
+### Milestone 9: batch simulation and training data
 
 - [ ] Add bounded parallel match execution.
 - [ ] Add seat rotation and fixed seed sets.
@@ -308,7 +426,7 @@ The first slice is complete when Pi and scripted agents can share an initial-pla
 
 Completion requires a repeatable batch that produces byte-stable event logs for deterministic agents.
 
-### Milestone 9: adapters
+### Milestone 10: adapters
 
 - [ ] Publish the adapter capability contract.
 - [ ] Add a fake adapter for failure and resynchronization tests.
