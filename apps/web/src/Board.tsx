@@ -13,7 +13,7 @@ const SQRT_THREE = Math.sqrt(3);
 const SCALE = 42;
 const ORIGIN_X = 270;
 const ORIGIN_Y = 230;
-const VIEW_BOX = "40 0 460 460";
+const VIEW_BOX = "40 20 460 420";
 const TERRAIN_FILL: Readonly<Record<Terrain, string>> = {
   forest: "#4c7a58",
   hill: "#b8623f",
@@ -46,9 +46,14 @@ type Geometry = {
   readonly edgePoints: (id: EdgeId) => readonly [Point, Point];
 };
 
+/**
+ * Lattice to screen. The lattice is rotated a quarter turn so hexes are pointy-top
+ * in horizontal rows of 3, 4, 5, 4, 3 like the physical board. A rotation keeps the
+ * counterclockwise token spiral counterclockwise on screen.
+ */
 const point = (x: number, y: number): Point => ({
-  x: ORIGIN_X + (SCALE * x) / 2,
-  y: ORIGIN_Y + (SCALE * SQRT_THREE * y) / 2,
+  x: ORIGIN_X - (SCALE * SQRT_THREE * y) / 2,
+  y: ORIGIN_Y + (SCALE * x) / 2,
 });
 
 const geometry = (observation: GameObservation): Geometry => {

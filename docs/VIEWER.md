@@ -139,14 +139,14 @@ A canonical authoritative event log is not a viewer replay. Replay export projec
 
 ### Coordinate transform
 
-The viewer uses the engine's integer vertex lattice. For vertex `(x, y)` and visual hex radius `scale`, the SVG coordinates are:
+The viewer uses the engine's integer vertex lattice. The lattice has flat-top hexes in vertical columns. The viewer rotates it a quarter turn so the screen shows pointy-top hexes in horizontal rows of 3, 4, 5, 4, 3, the same as the physical board and Colonist. For vertex `(x, y)` and visual hex radius `scale`, the SVG coordinates are:
 
 ```text
-screenX = originX + scale * x / 2
-screenY = originY + scale * sqrt(3) * y / 2
+screenX = originX - scale * sqrt(3) * y / 2
+screenY = originY + scale * x / 2
 ```
 
-Positive engine `y` points down, which matches SVG. The viewer calculates a padded `viewBox` from the transformed topology bounds. Window size changes the rendered SVG size, not the underlying coordinates.
+The transform is a rotation, not a mirror, so the counterclockwise number-token spiral stays counterclockwise on screen. The viewer calculates a padded `viewBox` from the transformed topology bounds. Window size changes the rendered SVG size, not the underlying coordinates.
 
 Hex polygons use the six vertex IDs supplied by topology. The viewer does not recompute corner identity. Roads use edge endpoints. Buildings use vertex coordinates. This keeps every rendered piece attached to the same canonical IDs used by the engine.
 

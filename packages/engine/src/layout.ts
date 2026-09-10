@@ -142,16 +142,33 @@ const assignNumbers = (
   return orderedHexes.map((hexId, index) => ({ hexId, number: NUMBER_SEQUENCE[index]! }));
 };
 
+/**
+ * Ring index of the first corner-hex middle coastal edge. Both endpoints of such an
+ * edge touch only that corner hex. Starting the `3, 4, 3` pattern there reproduces the
+ * physical frame: three alternating corners and every side hex carry one harbor.
+ */
+const harborPatternStart = (topology: StandardTopology): number => {
+  const vertexById = new Map(topology.vertices.map((vertex) => [vertex.id, vertex]));
+  const edgeById = new Map(topology.edges.map((edge) => [edge.id, edge]));
+  const start = topology.coastalRing.findIndex((edgeId) =>
+    edgeById
+      .get(edgeId)!
+      .vertexIds.every((vertexId) => vertexById.get(vertexId)!.adjacentHexIds.length === 1),
+  );
+  if (start < 0) throw new Error("The standard board coastal ring has no corner hex.");
+  return start;
+};
+
 const assignHarbors = (
   topology: StandardTopology,
   state: RandomState,
 ): { readonly harbors: BoardLayout["harbors"]; readonly state: RandomState } => {
-  const offset = nextInt(state, topology.coastalRing.length);
-  const kinds = shuffle(HARBOR_SUPPLY, offset.state);
+  const start = harborPatternStart(topology);
+  const kinds = shuffle(HARBOR_SUPPLY, state);
   const edgeOrder = new Map(topology.edges.map((edge, index) => [edge.id, index]));
   return {
     harbors: HARBOR_RING_INDICES.map((index, kindIndex) => ({
-      edgeId: topology.coastalRing[(index + offset.value) % topology.coastalRing.length]!,
+      edgeId: topology.coastalRing[(index + start) % topology.coastalRing.length]!,
       kind: kinds.value[kindIndex]!,
     })).sort((left, right) => edgeOrder.get(left.edgeId)! - edgeOrder.get(right.edgeId)!),
     state: kinds.state,
