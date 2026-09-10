@@ -381,10 +381,26 @@ describe("run log", () => {
     await writeRecords(withoutLastMarker);
     await expect(readRunPackage(directory)).rejects.toThrow("inside an atomic command batch");
 
+    const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as Record<string, unknown>;
+    const failedRecords = withoutLastMarker.map((record): Record<string, unknown> =>
+      record["kind"] === "run.completed"
+        ? {
+            ...record,
+            kind: "run.failed",
+            payload: { ...(record["payload"] as object), reason: "activity write failed" },
+          }
+        : record,
+    );
+    await writeFile(manifestPath, `${JSON.stringify({ ...manifest, status: "failed" })}\n`);
+    await writeRecords(failedRecords);
+    await expect(readRunPackage(directory)).resolves.toMatchObject({
+      manifest: { status: "failed" },
+      verification: { commandVerification: "exact" },
+    });
+
     const partialRecords = withoutLastMarker
       .filter(({ kind }) => kind !== "run.completed")
       .map((record, index): Record<string, unknown> => ({ ...record, index }));
-    const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as Record<string, unknown>;
     await writeFile(
       manifestPath,
       `${JSON.stringify({ ...manifest, status: "partial", finishedAt: null })}\n`,
