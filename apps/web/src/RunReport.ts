@@ -36,6 +36,9 @@ export interface RunTrace {
 
 export interface LoadedRunReport {
   readonly state: GameState;
+  readonly states: ReadonlyArray<GameState>;
+  readonly frameDurationsMs: ReadonlyArray<number>;
+  readonly timingSource: "recorded-model-time" | "mixed" | "synthetic";
   readonly events: ReadonlyArray<GameEvent>;
   readonly negotiation: NegotiationView;
   readonly decisions: ReadonlyArray<RunTrace>;
@@ -73,6 +76,51 @@ const sessionArray = <T>(session: unknown, key: string): ReadonlyArray<T> =>
 const traceArray = (value: unknown): ReadonlyArray<RunTrace> =>
   Array.isArray(value) && value.every(isTrace) ? value : [];
 
+const commandBatchEnds = (events: ReadonlyArray<GameEvent>): ReadonlyArray<number> => {
+  const ends: number[] = [];
+  for (let index = 0; index < events.length; index += 1) {
+    if (events[index + 1]?.commandId !== events[index]?.commandId) ends.push(index + 1);
+  }
+  return ends;
+};
+
+const replayFrames = async (events: ReadonlyArray<GameEvent>): Promise<ReadonlyArray<GameState>> =>
+  Promise.all(
+    commandBatchEnds(events).map((end) => Effect.runPromise(replay(events.slice(0, end)))),
+  );
+
+const SYNTHETIC_FRAME_DURATION_MS = 1_000;
+
+const recordedDuration = (
+  gameSequence: number,
+  decisions: ReadonlyArray<RunTrace>,
+  negotiationDecisions: ReadonlyArray<RunTrace>,
+): number =>
+  [...decisions, ...negotiationDecisions]
+    .filter((trace) => trace.sequence === gameSequence || trace.gameSequence === gameSequence)
+    .reduce((total, trace) => total + trace.elapsedMs, 0);
+
+const replayTiming = (
+  states: ReadonlyArray<GameState>,
+  decisions: ReadonlyArray<RunTrace>,
+  negotiationDecisions: ReadonlyArray<RunTrace>,
+): Pick<LoadedRunReport, "frameDurationsMs" | "timingSource"> => {
+  let recordedFrames = 0;
+  const frameDurationsMs = states.slice(0, -1).map((state) => {
+    const duration = recordedDuration(state.sequence, decisions, negotiationDecisions);
+    if (duration <= 0) return SYNTHETIC_FRAME_DURATION_MS;
+    recordedFrames += 1;
+    return duration;
+  });
+  const timingSource =
+    recordedFrames === 0
+      ? "synthetic"
+      : recordedFrames === frameDurationsMs.length
+        ? "recorded-model-time"
+        : "mixed";
+  return { frameDurationsMs, timingSource };
+};
+
 export const loadRunReport = async (input: unknown): Promise<LoadedRunReport> => {
   if (!isRecord(input) || !isRecord(input["result"])) {
     throw new Error("The file is not a Catanarchy run report.");
@@ -81,12 +129,18 @@ export const loadRunReport = async (input: unknown): Promise<LoadedRunReport> =>
   if (!Array.isArray(result["events"])) {
     throw new Error("The run report has no game-event log.");
   }
-  const state = await Effect.runPromise(replay(result["events"]));
   const events = result["events"] as ReadonlyArray<GameEvent>;
+  const states = await replayFrames(events);
+  const state = states.at(-1);
+  if (state === undefined) throw new Error("The run report has an empty game-event log.");
   const negotiation = negotiationEvents(result["negotiations"], state.matchId);
   const session = result["negotiationSession"];
+  const decisions = traceArray(result["decisions"]);
+  const negotiationDecisions = traceArray(result["negotiationDecisions"]);
   return {
     state,
+    states,
+    ...replayTiming(states, decisions, negotiationDecisions),
     events,
     negotiation: {
       schema: "catanarchy.negotiation-view.v1",
@@ -97,7 +151,7 @@ export const loadRunReport = async (input: unknown): Promise<LoadedRunReport> =>
       promises: sessionArray<NegotiationPromise>(session, "promises"),
       evidence: sessionArray<PromiseEvidence>(session, "evidence"),
     },
-    decisions: traceArray(result["decisions"]),
-    negotiationDecisions: traceArray(result["negotiationDecisions"]),
+    decisions,
+    negotiationDecisions,
   };
 };

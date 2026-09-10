@@ -4,7 +4,9 @@
 
 The first web slice is implemented as a trusted local game client. It starts seeded three-player and four-player games, renders the standard board, submits commands to the native engine, shows public scores, award progress, and the active player's private state, and moves through accepted-command history. It supports native games from setup through a terminal winner.
 
-A trusted local report mode can load a Pi CLI result selected through `CATANARCHY_RUN_FILE`. It replays the authoritative game events, renders the final board and negotiation timeline, and shows saved model-call traces. Raw Pi session messages are not present because match sessions are ephemeral and disposed. Viewer-safe replay loading, timed playback, live streams, and negotiation transport remain planned. The `App` component accepts the current projected `NegotiationView` from such a transport and passes matching records to the implemented timeline. The timeline never decides trade legality. Remote and replay modes stay read-only and consume only viewer-safe data. The local setup client and local run report are deliberate trusted exceptions.
+A trusted local report mode can load a Pi CLI result selected through `CATANARCHY_RUN_FILE`. It validates and replays authoritative game events at complete command boundaries. It shows the board, negotiation timeline, and saved model-call traces for the selected frame. Controls support first, previous, play, pause, next, last, and 1×, 2×, 5×, 10×, or 20× playback. Old reports use recorded model-call durations and a one-second fallback because they do not contain exact chronological offsets. Raw Pi session messages are not present because those match sessions were ephemeral and were disposed.
+
+The [run log format](RUN_LOG.md) defines exact monotonic timing and native per-seat Pi session files for future runs. Viewer-safe package loading, live streams, and negotiation transport remain planned. The `App` component accepts the current projected `NegotiationView` from such a transport and passes matching records to the implemented timeline. The timeline never decides trade legality. Remote and replay modes stay read-only and consume only viewer-safe data. The local setup client and local run report are deliberate trusted exceptions.
 
 ## Goals
 
@@ -347,7 +349,7 @@ Complete for the standard board and setup pieces. The layered SVG uses canonical
 
 ### Step 4: replay viewer
 
-In progress. The local client records one complete state after each accepted command and supports first, previous, next, and live navigation. Historical frames cannot send actions. Replay-file loading, timed playback, direct seeking, and viewer-safe event payloads remain planned.
+In progress. The local client records one complete state after each accepted command and supports first, previous, next, and live navigation. Historical frames cannot send actions. Trusted report loading and timed sequential playback are implemented. Direct timeline seeking and viewer-safe run-package payloads remain planned.
 
 ### Step 5: live viewing
 

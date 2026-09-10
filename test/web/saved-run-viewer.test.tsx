@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 
-import { createGame } from "@catanarchy/engine";
+import { createGame, handleCommand, legalActions } from "@catanarchy/engine";
 import type { GameConfig } from "@catanarchy/protocol";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { Effect } from "effect";
 import { afterEach, describe, expect, it } from "vitest";
 import { loadRunReport } from "../../apps/web/src/RunReport.js";
@@ -24,16 +24,19 @@ afterEach(cleanup);
 describe("saved run viewer", () => {
   it("replays a saved report and shows negotiation and model traces", async () => {
     const created = Effect.runSync(createGame(config));
+    const action = legalActions(created.state)[0];
+    if (action === undefined) throw new Error("Expected one setup action.");
+    const handled = Effect.runSync(handleCommand(created.state, action.command));
     const run = await loadRunReport({
       result: {
-        state: created.state,
-        events: created.events,
+        state: handled.state,
+        events: [...created.events, ...handled.events],
         negotiations: [
           {
             schema: "catanarchy.negotiation-event.v1",
             matchId: config.matchId,
             sequence: 0,
-            gameSequence: 0,
+            gameSequence: created.state.sequence,
             event: {
               type: "negotiation.message-sent",
               round: 1,
@@ -46,7 +49,7 @@ describe("saved run viewer", () => {
         negotiationSession: { offers: [], promises: [], evidence: [] },
         decisions: [
           {
-            sequence: 0,
+            sequence: created.state.sequence,
             playerId: "red",
             attempt: 1,
             outcome: "selected",
@@ -71,14 +74,50 @@ describe("saved run viewer", () => {
 
     render(<SavedRunViewer run={run} />);
 
-    expect(screen.getByRole("heading", { name: "Inspect saved-run-test" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Replay saved-run-test" })).toBeTruthy();
     expect(screen.getByRole("link", { name: "Play a new game" }).getAttribute("href")).toBe(
       "?mode=play",
     );
+    expect(screen.getByText("1 of 2")).toBeTruthy();
+    expect(screen.queryByText("red (public): I need brick.")).toBeNull();
+    expect(screen.queryByText("test/model")).toBeNull();
+    expect(run.frameDurationsMs).toEqual([12]);
+    expect(run.timingSource).toBe("recorded-model-time");
+
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+
+    expect(screen.getByText("2 of 2")).toBeTruthy();
     expect(screen.getByText("red (public): I need brick.")).toBeTruthy();
     expect(screen.getByText("test/model")).toBeTruthy();
     expect(screen.getByText("Strong production.")).toBeTruthy();
     expect(screen.getByText(/Raw Pi message history was not saved/)).toBeTruthy();
+    expect(screen.getByRole("option", { name: "20×" })).toBeTruthy();
+  });
+
+  it("replays multi-event commands only at atomic command boundaries", async () => {
+    const created = Effect.runSync(createGame(config));
+    let state = created.state;
+    const events = [...created.events];
+    let commandCount = 1;
+    let foundMultiEventCommand = false;
+
+    while (!foundMultiEventCommand) {
+      const action = legalActions(state)[0];
+      if (action === undefined) throw new Error("Expected one setup action.");
+      const handled = Effect.runSync(handleCommand(state, action.command));
+      state = handled.state;
+      events.push(...handled.events);
+      commandCount += 1;
+      foundMultiEventCommand = handled.events.length > 1;
+    }
+
+    const run = await loadRunReport({ result: { state, events } });
+
+    expect(events.length).toBeGreaterThan(commandCount);
+    expect(run.states).toHaveLength(commandCount);
+    expect(run.state).toEqual(state);
+    expect(run.timingSource).toBe("synthetic");
+    expect(run.frameDurationsMs.every((duration) => duration === 1_000)).toBe(true);
   });
 
   it("rejects input without a game-event log", async () => {

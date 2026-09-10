@@ -6,7 +6,7 @@ Catanarchy will provide a deterministic Catan simulator and a multi-agent negoti
 
 The first rules target is the current three-player and four-player CATAN base game. Expansions and house rules remain outside the first release.
 
-The current implementation covers the regular board and native base-game rules from setup through victory, atomic domestic trade, bounded negotiation, a trusted local web client, and the Pi agent harness with structured game-action and negotiation tools. Remote viewing and adapters remain planned work.
+The current implementation covers the regular board and native base-game rules from setup through victory, atomic domestic trade, bounded negotiation, a trusted local web client, and the Pi agent harness with structured game-action and negotiation tools. The trusted viewer can replay saved reports at command boundaries. The [run log format](RUN_LOG.md) defines exact timing and native Pi session persistence for future runs. Remote viewing and adapters remain planned work.
 
 ## Product boundaries
 
@@ -253,7 +253,8 @@ The [web viewer design](VIEWER.md) is the detailed contract for this milestone.
 - [x] Render the regular board as layered SVG with canonical topology IDs.
 - [x] Add local accepted-command history navigation and event inspection.
 - [x] Add public player summaries and active-seat resource display for local hot-seat play.
-- [ ] Add saved replay bundle loading and timed playback.
+- [x] Add trusted local report replay at atomic command boundaries with timed controls.
+- [ ] Add viewer-safe saved replay package loading from the run log format.
 - [ ] Stream live frames through HTTP and server-sent events.
 - [ ] Add reconnect, sequence-gap, remote privacy, accessibility, and visual regression tests.
 
@@ -294,7 +295,9 @@ The first slice is complete when Pi and scripted agents can share an initial-pla
 
 - [ ] Add bounded parallel match execution.
 - [ ] Add seat rotation and fixed seed sets.
-- [ ] Export replay bundles and player-specific training examples.
+- [x] Specify the append-only run package, exact timing, privacy scopes, and native Pi session files.
+- [ ] Implement durable run-package recording and interrupted-run recovery.
+- [ ] Export viewer-safe replay bundles and player-specific training examples.
 - [ ] Add resumable batch manifests without mixing partial and final results.
 - [ ] Measure engine time separately from model time.
 - [ ] Add benchmark reports for throughput and memory.
