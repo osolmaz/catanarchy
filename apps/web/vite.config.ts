@@ -2,9 +2,9 @@ import { watchFile, unwatchFile } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { isAbsolute, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { RunManifest, RunPackage } from "@catanarchy/run-log";
 import react from "@vitejs/plugin-react";
 import { defineConfig, type Plugin } from "vite";
-import { readRunPackage } from "../../packages/run-log/src/index.js";
 
 const fromRoot = (path: string): string => fileURLToPath(new URL(`../../${path}`, import.meta.url));
 
@@ -40,11 +40,9 @@ const decodeSeatId = (value: string): string | null => {
   }
 };
 
-const sessionPathForSeat = (
-  root: string,
-  manifest: Awaited<ReturnType<typeof readRunPackage>>["manifest"],
-  seatId: string,
-): string | null => {
+type ReadRunPackage = (directory: string) => Promise<RunPackage>;
+
+const sessionPathForSeat = (root: string, manifest: RunManifest, seatId: string): string | null => {
   const sessionFile = manifest.seats.find(({ seatId: id }) => id === seatId)?.sessionFile;
   if (sessionFile === null || sessionFile === undefined) return null;
   const path = resolve(root, sessionFile);
@@ -65,6 +63,7 @@ const readPiSession = async (path: string): Promise<string | null> => {
 };
 
 const servePiSession = async (
+  readRunPackage: ReadRunPackage,
   root: string,
   encodedSeatId: string,
   response: import("node:http").ServerResponse,
@@ -109,6 +108,12 @@ const runPackagePlugin = (directory: string | undefined): Plugin => ({
   name: "catanarchy-local-run-package",
   configureServer(server) {
     if (directory === undefined) return;
+    const readRunPackage: ReadRunPackage = async (runDirectory) => {
+      const module = (await server.ssrLoadModule(fromRoot("packages/run-log/src/index.ts"))) as {
+        readonly readRunPackage: ReadRunPackage;
+      };
+      return module.readRunPackage(runDirectory);
+    };
     const root = resolve(directory);
     const timelinePath = resolve(root, "timeline.jsonl");
     const manifestPath = resolve(root, "manifest.json");
@@ -124,7 +129,7 @@ const runPackagePlugin = (directory: string | undefined): Plugin => ({
       }
       if (url.pathname.startsWith("/__catanarchy/session/")) {
         const encodedSeatId = url.pathname.slice("/__catanarchy/session/".length);
-        void servePiSession(root, encodedSeatId, response).catch((error: unknown) =>
+        void servePiSession(readRunPackage, root, encodedSeatId, response).catch((error: unknown) =>
           sendError(response, error),
         );
         return;
