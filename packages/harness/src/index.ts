@@ -55,6 +55,7 @@ export interface AgentDecisionRequest {
   readonly matchId: string;
   readonly sequence: number;
   readonly playerId: string;
+  readonly turnKey: string;
   readonly observation: GameObservation;
   readonly legalActions: ReadonlyArray<LegalAction>;
   readonly signal: AbortSignal;
@@ -71,6 +72,7 @@ export interface AgentNegotiationRequest {
   readonly matchId: string;
   readonly gameSequence: number;
   readonly playerId: string;
+  readonly turnKey: string;
   readonly turnPlayerId: string;
   readonly round: number;
   readonly observation: GameObservation;
@@ -588,6 +590,15 @@ const failedNegotiationTrace = (
     : {}),
 });
 
+const turnKeyForState = (state: GameState): string => {
+  const phase = state.phase;
+  if (phase.tag === "setup.settlement" || phase.tag === "setup.road") {
+    return `setup:${phase.direction}:${String(phase.playerIndex)}`;
+  }
+  if ("turn" in phase) return `turn:${String(phase.turn)}`;
+  return `sequence:${String(state.sequence)}`;
+};
+
 const applyNegotiationFallback = async (
   state: GameState,
   session: NegotiationSession,
@@ -616,6 +627,7 @@ const chooseNegotiationAction = async (
     matchId: state.matchId,
     gameSequence: state.sequence,
     playerId: player.id,
+    turnKey: turnKeyForState(state),
     turnPlayerId: session.turnPlayerId,
     round,
     observation: structuredClone(observe(state, { type: "player", playerId: player.id })),
@@ -842,7 +854,7 @@ const runWithAgents = async (
   shouldContinue: (state: GameState, decisionCount: number) => boolean,
   allowNoLegalActions: boolean,
 ): Promise<MatchRunResult> => {
-  const timeoutMs = options.decisionTimeoutMs ?? 90_000;
+  const timeoutMs = options.decisionTimeoutMs ?? 180_000;
   const maxAttempts = options.maxAttempts ?? 1;
   positiveInteger(timeoutMs, "decisionTimeoutMs", MAX_TIMER_DELAY_MS);
   positiveInteger(maxAttempts, "maxAttempts");
@@ -893,6 +905,7 @@ const runWithAgents = async (
         matchId: state.matchId,
         sequence: state.sequence,
         playerId: activePlayer.id,
+        turnKey: turnKeyForState(state),
         observation: structuredClone(observe(state, { type: "player", playerId: activePlayer.id })),
         legalActions: structuredClone(actions),
       },

@@ -33,6 +33,20 @@ const integerArgument = (
   return value;
 };
 
+const optionalIntegerArgument = (
+  name: string,
+  minimum: number,
+  maximum = Number.MAX_SAFE_INTEGER,
+): number | undefined => {
+  const rawValue = argument(name);
+  if (rawValue === undefined) return undefined;
+  const value = Number(rawValue);
+  if (!Number.isSafeInteger(value) || value < minimum || value > maximum) {
+    throw new Error(`--${name} must be an integer from ${minimum} through ${maximum}.`);
+  }
+  return value;
+};
+
 const numberArgument = (name: string, defaultValue: number): number => {
   const value = Number(argument(name) ?? defaultValue);
   if (!Number.isFinite(value) || value <= 0) {
@@ -42,16 +56,18 @@ const numberArgument = (name: string, defaultValue: number): number => {
 };
 
 const thinkingArgument = (): NonNullable<PiAgentFactoryOptions["thinkingLevel"]> => {
-  const value = argument("thinking") ?? "low";
+  const value = argument("thinking") ?? "high";
   const levels = new Set(["off", "minimal", "low", "medium", "high", "xhigh"]);
   if (!levels.has(value)) throw new Error("--thinking is not a supported thinking level.");
   return value as NonNullable<PiAgentFactoryOptions["thinkingLevel"]>;
 };
 
 const seed = integerArgument("seed", 42, 0, 0xffff_ffff);
-const timeoutMs = integerArgument("timeout-ms", 90_000, 1, 0x7fff_ffff);
+const turnTimeMs = integerArgument("turn-time-ms", 90_000, 1, 0x7fff_ffff);
+const finalizationGraceMs = integerArgument("finalization-grace-ms", 30_000, 1, 0x7fff_ffff);
+const maxPlanningSteps = integerArgument("max-planning-steps", 8, 1, 1_000);
 const maxAttempts = integerArgument("max-attempts", 1, 1);
-const maxOutputTokens = integerArgument("max-output-tokens", 4_096, 1);
+const maxOutputTokens = optionalIntegerArgument("max-output-tokens", 1);
 const contextWindowTokens = integerArgument("context-window-tokens", 131_072, 32_768);
 const costCeilingUsd = numberArgument("cost-ceiling-usd", 5);
 const thinkingLevel = thinkingArgument();
@@ -84,14 +100,20 @@ const runId = argument("run-id") ?? `${config.matchId}-${runStartedAt}`;
 const runDirectory = resolve(argument("run-dir") ?? `runs/${runId}`);
 const piVersion = "0.85.1";
 
+const outerDecisionTimeoutMs = turnTimeMs + finalizationGraceMs + 60_000;
+if (!Number.isSafeInteger(outerDecisionTimeoutMs) || outerDecisionTimeoutMs > 0x7fff_ffff) {
+  throw new Error("The turn time, finalization grace, and outer safety margin are too large.");
+}
+
 const setupDecisionCount = config.players.length * 4;
 const maximumNegotiationWindows = Math.max(0, Math.floor((maxDecisions - setupDecisionCount) / 2));
 const maximumRequests =
   maxDecisions * maxAttempts +
   maximumNegotiationWindows * config.players.length * negotiationRounds * maxAttempts;
-// Pi can make the original call, two overflow-compaction calls, one recovery retry,
+const maximumModelMessagesPerRequest = maxPlanningSteps + 2;
+// Each model message can make the original call, two overflow-compaction calls, one recovery retry,
 // and two post-recovery compaction calls.
-const maximumProviderCalls = maximumRequests * 6;
+const maximumProviderCalls = maximumRequests * maximumModelMessagesPerRequest * 6;
 
 interface Estimate {
   readonly lowUsd: number;
@@ -143,13 +165,12 @@ const estimateCost = (
     ...references.map((reference) => {
       const model = runtime.getModel(reference.provider, reference.modelId);
       if (model === undefined) throw new Error("The model disappeared during cost estimation.");
-      return modelCost(
-        runtime,
-        reference,
-        Math.min(model.contextWindow, contextWindowTokens),
-        maxOutputTokens,
-        true,
+      const contextWindow = Math.min(model.contextWindow, contextWindowTokens);
+      const effectiveMaxOutputTokens = Math.min(
+        model.maxTokens,
+        maxOutputTokens ?? contextWindow - 1,
       );
+      return modelCost(runtime, reference, contextWindow, effectiveMaxOutputTokens, true);
     }),
   );
   return {
@@ -222,10 +243,14 @@ const main = async (): Promise<void> => {
       highUsd: Number(estimate.highUsd.toFixed(6)),
       ceilingUsd: costCeilingUsd,
       maximumRequests,
+      maximumModelMessagesPerRequest,
       maximumProviderCalls,
-      maxOutputTokens,
+      maxOutputTokens: maxOutputTokens ?? null,
       contextWindowTokens,
       thinkingLevel,
+      turnTimeMs,
+      finalizationGraceMs,
+      maxPlanningSteps,
       negotiationRounds,
       note: "The providers do not expose an immutable per-run billing cap. The fixed request and token limits bound this smoke test.",
     }),
@@ -255,13 +280,16 @@ const main = async (): Promise<void> => {
           models: modelReferences,
           modelRuntime: runtime,
           thinkingLevel,
-          maxOutputTokens,
+          ...(maxOutputTokens === undefined ? {} : { maxOutputTokens }),
           contextWindowTokens,
+          turnTimeMs,
+          finalizationGraceMs,
+          maxPlanningSteps,
           sessionDirectory: recorder.sessionsDirectory,
           onSessionCreated: async (player, session) =>
             recorder.registerPiSession(player.id, session),
         }),
-        decisionTimeoutMs: timeoutMs,
+        decisionTimeoutMs: outerDecisionTimeoutMs,
         maxAttempts,
         onActivity: async (activity) => recorder.recordActivity(activity),
         ...(negotiationRounds === 0

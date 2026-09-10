@@ -12,6 +12,7 @@ import {
   createPiAgentFactory,
   createPiSeatAgent,
   extractAssistantText,
+  InspectionGate,
   ModelRuntime,
   NegotiationSelectionGate,
   negotiationActionFromToolInput,
@@ -19,6 +20,7 @@ import {
   resolveSelection,
   selectActionFromText,
   selectNegotiationFromText,
+  TurnBudget,
   type PiDecisionChannel,
   type PiModelReference,
   type PiSessionReference,
@@ -44,6 +46,7 @@ const request = (): AgentDecisionRequest => {
     matchId: state.matchId,
     sequence: state.sequence,
     playerId: "red",
+    turnKey: "setup:forward:0",
     observation: observe(state, { type: "player", playerId: "red" }),
     legalActions: legalActions(state),
     signal: new AbortController().signal,
@@ -56,6 +59,7 @@ const negotiationRequest = (): AgentNegotiationRequest => {
     matchId: decision.matchId,
     gameSequence: decision.sequence,
     playerId: decision.playerId,
+    turnKey: decision.turnKey,
     turnPlayerId: decision.playerId,
     round: 1,
     observation: decision.observation,
@@ -157,6 +161,58 @@ describe("Pi action selection", () => {
     ).toBe("first\nsecond");
   });
 
+  it("allows several nonterminating inspections in one turn", () => {
+    const budget = new TurnBudget(90_000, 30_000, 2);
+    const gate = new InspectionGate();
+    budget.begin("turn:1");
+    gate.begin({ status: { phase: "turn.action" }, inventory: { lumber: 1 } }, budget);
+
+    const firstInspection = gate.inspect("status");
+    expect(firstInspection).toMatchObject({
+      details: { section: "status", accepted: true },
+    });
+    expect(firstInspection).not.toHaveProperty("terminate");
+    const secondInspection = gate.inspect("inventory");
+    expect(secondInspection).toMatchObject({
+      details: { section: "inventory", accepted: true },
+    });
+    expect(secondInspection).not.toHaveProperty("terminate");
+    expect(gate.inspect("status")).toMatchObject({ isError: true, terminate: true });
+
+    budget.begin("turn:2");
+    gate.begin({ status: { phase: "turn.roll" } }, budget);
+    expect(gate.inspect("negotiation")).toMatchObject({ isError: true });
+    expect(gate.inspect("status")).toMatchObject({ details: { accepted: true } });
+    gate.disable();
+    expect(gate.inspect("status")).toMatchObject({ isError: true });
+  });
+
+  it("shares active time across requests in one turn and resets for the next turn", () => {
+    const budget = new TurnBudget(90_000, 30_000, 2);
+    budget.begin("turn:1");
+    expect(budget.warningDelays()).toEqual([
+      { thresholdMs: 45_000, delayMs: 45_000 },
+      { thresholdMs: 80_000, delayMs: 80_000 },
+    ]);
+    budget.markWarning(45_000);
+    expect(budget.warningDelays()).toEqual([{ thresholdMs: 80_000, delayMs: 80_000 }]);
+    budget.consume("exploration", 25_000);
+    budget.consume("finalization", 5_000);
+
+    budget.begin("turn:1");
+    expect(budget.remaining("exploration")).toBe(65_000);
+    expect(budget.remaining("finalization")).toBe(25_000);
+    expect(budget.warningDelays()).toEqual([{ thresholdMs: 80_000, delayMs: 55_000 }]);
+    expect(budget.takePlanningStep()).toBe(true);
+    expect(budget.takePlanningStep()).toBe(true);
+    expect(budget.takePlanningStep()).toBe(false);
+
+    budget.begin("turn:2");
+    expect(budget.remaining("exploration")).toBe(90_000);
+    expect(budget.remaining("finalization")).toBe(30_000);
+    expect(budget.takePlanningStep()).toBe(true);
+  });
+
   it("accepts one unambiguous action ID from text-only providers", () => {
     expect(selectActionFromText("I choose settlement:v:1:-3.", ["settlement:v:1:-3"])).toEqual({
       actionId: "settlement:v:1:-3",
@@ -169,6 +225,13 @@ describe("Pi action selection", () => {
     });
     expect(selectActionFromText("No exact ID.", ["settlement:v:1:-3"])).toBeUndefined();
     expect(selectActionFromText("Either road:a or road:b.", ["road:a", "road:b"])).toBeUndefined();
+
+    const timedOutGate = new ActionSelectionGate();
+    timedOutGate.begin(["road:a"]);
+    expect(resolveSelection(timedOutGate, "I considered road:a.", ["road:a"], false)).toEqual({
+      selection: undefined,
+      selectionMode: "text",
+    });
   });
 
   it("builds a seat-scoped prompt with described legal actions", () => {
@@ -194,6 +257,7 @@ describe("Pi action selection", () => {
       matchId: state.matchId,
       sequence: state.sequence,
       playerId: "red",
+      turnKey: "turn:1",
       observation: observe(state, { type: "player", playerId: "red" }),
       legalActions: legalActions(state),
       signal: new AbortController().signal,
@@ -213,6 +277,7 @@ describe("Pi action selection", () => {
       matchId: state.matchId,
       sequence: state.sequence,
       playerId: "red",
+      turnKey: "setup:forward:0",
       observation: observe(state, { type: "player", playerId: "red" }),
       legalActions: legalActions(state),
       signal: new AbortController().signal,
@@ -237,20 +302,13 @@ describe("Pi action selection", () => {
     const agent = createPiSeatAgent(model, { run, negotiate, cancel, dispose });
 
     await expect(agent.decide(current)).resolves.toMatchObject({ usage: { total: 12 } });
-    expect(run).toHaveBeenCalledWith(
-      expect.stringContaining('"playerId": "red"'),
-      current.legalActions.map(({ id }) => id),
-      current.signal,
-    );
+    expect(run).toHaveBeenCalledWith(current);
     const bargaining = negotiationRequest();
     await expect(agent.negotiate?.(bargaining)).resolves.toMatchObject({
       action: { type: "pass" },
       usage: { total: 9 },
     });
-    expect(negotiate).toHaveBeenCalledWith(
-      expect.stringContaining('"task": "Choose one negotiation operation'),
-      bargaining.signal,
-    );
+    expect(negotiate).toHaveBeenCalledWith(bargaining);
     await agent.cancel();
     await agent.dispose();
     expect(cancel).toHaveBeenCalledOnce();
@@ -261,6 +319,7 @@ describe("Pi action selection", () => {
 describe("Pi negotiation selection", () => {
   it("accepts one structured operation and rejects duplicate selection", () => {
     const gate = new NegotiationSelectionGate();
+    expect(gate.choose({ type: "pass" })).toMatchObject({ isError: true, terminate: true });
     gate.begin();
 
     expect(gate.choose({ type: "pass" }, "No useful trade.")).toMatchObject({
@@ -269,6 +328,14 @@ describe("Pi negotiation selection", () => {
     });
     expect(gate.choose({ type: "pass" })).toMatchObject({ isError: true, terminate: true });
     expect(gate.take()).toBeUndefined();
+
+    gate.begin();
+    expect(gate.choose(undefined)).toMatchObject({ isError: true, terminate: true });
+
+    const noReasonGate = new NegotiationSelectionGate();
+    noReasonGate.begin();
+    expect(noReasonGate.choose({ type: "pass" })).toMatchObject({ details: { accepted: true } });
+    expect(noReasonGate.take()).toEqual({ action: { type: "pass" } });
   });
 
   it("builds protocol actions from negotiation tool input", () => {
@@ -291,6 +358,28 @@ describe("Pi negotiation selection", () => {
     expect(
       negotiationActionFromToolInput({ operation: "send-message", scope: "direct", text: "Hi" }),
     ).toBeUndefined();
+    expect(
+      negotiationActionFromToolInput({
+        operation: "send-message",
+        scope: "public",
+        text: "Ore is scarce.",
+      }),
+    ).toEqual({ type: "send-message", scope: { type: "public" }, text: "Ore is scarce." });
+    expect(
+      negotiationActionFromToolInput({
+        operation: "record-promise",
+        beneficiaryPlayerId: "blue",
+        scope: "public",
+        text: "I will return one grain.",
+        relatedOfferId: "offer:1",
+      }),
+    ).toEqual({
+      type: "record-promise",
+      beneficiaryPlayerId: "blue",
+      scope: { type: "public" },
+      text: "I will return one grain.",
+      relatedOfferId: "offer:1",
+    });
   });
 
   it("accepts negotiation JSON from text-only providers", () => {
@@ -467,6 +556,70 @@ describe("Pi model setup", () => {
       references[0],
       references[1],
     ]);
+  });
+
+  it("uses the effective model output capacity when no output override is set", async () => {
+    const runtime = await ModelRuntime.create();
+    const reference = { provider: "openai", modelId: "gpt-5.6-luna" };
+    const nativeModel = runtime.getModel(reference.provider, reference.modelId);
+    if (nativeModel === undefined) throw new Error("Expected the Pi model.");
+    let assigned:
+      | {
+          readonly maxTokens: number;
+          readonly contextWindow: number;
+          readonly turnTimeMs: number;
+          readonly finalizationGraceMs: number;
+          readonly maxPlanningSteps: number;
+        }
+      | undefined;
+    const factory = createPiAgentFactory({
+      models: [reference],
+      modelRuntime: runtime,
+      contextWindowTokens: 65_536,
+      createChannel: async (context) => {
+        assigned = {
+          maxTokens: context.model.maxTokens,
+          contextWindow: context.model.contextWindow,
+          turnTimeMs: context.turnTimeMs,
+          finalizationGraceMs: context.finalizationGraceMs,
+          maxPlanningSteps: context.maxPlanningSteps,
+        };
+        return {
+          async run() {
+            return { actionId: "unused" };
+          },
+          async negotiate() {
+            return { action: { type: "pass" } };
+          },
+          async cancel() {},
+          async dispose() {},
+        };
+      },
+    });
+
+    const player = config.players[0];
+    if (player === undefined) throw new Error("Expected a player.");
+    const agent = await factory(player);
+    await agent.dispose();
+
+    expect(assigned).toEqual({
+      maxTokens: Math.min(nativeModel.maxTokens, 65_535),
+      contextWindow: Math.min(nativeModel.contextWindow, 65_536),
+      turnTimeMs: 90_000,
+      finalizationGraceMs: 30_000,
+      maxPlanningSteps: 8,
+    });
+  });
+
+  it("rejects invalid turn limits before creating a seat", async () => {
+    const runtime = await ModelRuntime.create();
+    expect(() =>
+      createPiAgentFactory({
+        models: [{ provider: "openai", modelId: "gpt-5.6-luna" }],
+        modelRuntime: runtime,
+        turnTimeMs: 0,
+      }),
+    ).toThrow("turnTimeMs must be a positive integer");
   });
 
   it("allocates a native Pi session path before the first model request", async () => {
