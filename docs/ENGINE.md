@@ -427,7 +427,7 @@ The standard supply has four generic 3:1 harbors and one 2:1 harbor for each of 
 
 Harbor positions belong to `BoardLayout`, not `StandardTopology`. This lets a native game shuffle harbor kinds and lets an adapter report an observed regular board without changing graph identity.
 
-The headless board uses the standard nine-harbor attachment pattern on its ordered 30-edge coastal ring. The clockwise gaps between harbor edges are six gaps of three edges and three gaps of four edges. The pattern repeats `3, 4, 3` three times. A seeded rotation removes dependence on an arbitrary first coastal edge, and a separate shuffle assigns the four generic and five resource harbor kinds. Tests check the exact gap multiset, distinct coastal edges, and harbor supply for 1,000 seeds. A graphical frame is presentation data and does not enter the engine topology.
+The headless board uses the standard nine-harbor attachment pattern on its ordered 30-edge coastal ring. The clockwise gaps between harbor edges are six gaps of three edges and three gaps of four edges. The pattern repeats `3, 4, 3` three times. The pattern has a fixed phase that matches the physical frame: it starts on the middle coastal edge of a corner hex, so three alternating corner hexes carry one harbor each on their middle edge and each of the six side hexes carries exactly one harbor. Harbor positions therefore do not depend on the seed. A seeded shuffle assigns the four generic and five resource harbor kinds. Tests check the exact gap multiset, the corner and side attachment, distinct coastal edges, and harbor supply for 1,000 seeds. A graphical frame is presentation data and does not enter the engine topology.
 
 ### Layout state
 
@@ -719,7 +719,7 @@ Layout tests verify each terrain, token, and harbor supply against direct expect
 
 Property tests run 1,000 generated seeds in CI. Every generated layout must pass all layout invariants. Fixed-seed equality checks deterministic output. A test does not require two different seeds to produce different layouts because a random mapping can have valid collisions.
 
-Harbor tests check nine distinct coastal attachments, the standard six three-edge gaps and three four-edge gaps, the exact harbor-kind supply, and deterministic placement.
+Harbor tests check nine distinct coastal attachments, the standard six three-edge gaps and three four-edge gaps, the fixed corner and side phase, the exact harbor-kind supply, and deterministic placement.
 
 ### Placement tests
 

@@ -1,5 +1,11 @@
 import { generateGameMaterials, STANDARD_TOPOLOGY } from "@catanarchy/engine";
-import type { DevelopmentCard, HarborKind, NumberToken, Terrain } from "@catanarchy/protocol";
+import type {
+  DevelopmentCard,
+  EdgeId,
+  HarborKind,
+  NumberToken,
+  Terrain,
+} from "@catanarchy/protocol";
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
 
@@ -80,6 +86,7 @@ const verifyMaterials = (seed: number) => {
     })
     .sort((left, right) => left - right);
   expect(harborGaps).toEqual([3, 3, 3, 3, 3, 3, 4, 4, 4]);
+  expectPhysicalHarborPhase(materials.layout.harbors);
   expect(terrain.get(materials.layout.robberHexId)).toBe("desert");
   expect(materials.layout.numbers.some(({ hexId }) => hexId === materials.layout.robberHexId)).toBe(
     false,
@@ -91,6 +98,28 @@ const verifyMaterials = (seed: number) => {
       hex.neighborHexIds.some((id) => numberByHex.get(id) === 6 || numberByHex.get(id) === 8),
   );
   expect(adjacentRedTokens).toBe(false);
+};
+
+const isCornerHex = (hex: { readonly q: number; readonly r: number }): boolean =>
+  [Math.abs(hex.q), Math.abs(hex.r), Math.abs(hex.q + hex.r)].filter((v) => v === 2).length === 2;
+
+const isCoastalHex = (hex: { readonly q: number; readonly r: number }): boolean =>
+  Math.max(Math.abs(hex.q), Math.abs(hex.r), Math.abs(hex.q + hex.r)) === 2;
+
+/** The physical frame: three alternating corners on their middle edge, one harbor per side hex. */
+const expectPhysicalHarborPhase = (harbors: ReadonlyArray<{ readonly edgeId: EdgeId }>): void => {
+  const vertexById = new Map(STANDARD_TOPOLOGY.vertices.map((vertex) => [vertex.id, vertex]));
+  const edgeById = new Map(STANDARD_TOPOLOGY.edges.map((edge) => [edge.id, edge]));
+  const edges = harbors.map(({ edgeId }) => edgeById.get(edgeId)!);
+  const cornerMiddle = edges.filter((edge) =>
+    edge.vertexIds.every((id) => vertexById.get(id)!.adjacentHexIds.length === 1),
+  );
+  expect(cornerMiddle).toHaveLength(3);
+  const harborHexes = edges.map((edge) => edge.adjacentHexIds[0]!);
+  expect(new Set(harborHexes).size).toBe(9);
+  const sideHexes = STANDARD_TOPOLOGY.hexes.filter((hex) => isCoastalHex(hex) && !isCornerHex(hex));
+  expect(sideHexes).toHaveLength(6);
+  expect(sideHexes.every((hex) => harborHexes.includes(hex.id))).toBe(true);
 };
 
 describe("standard board layout", () => {
