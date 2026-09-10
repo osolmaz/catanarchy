@@ -89,8 +89,9 @@ const maximumNegotiationWindows = Math.max(0, Math.floor((maxDecisions - setupDe
 const maximumRequests =
   maxDecisions * maxAttempts +
   maximumNegotiationWindows * config.players.length * negotiationRounds * maxAttempts;
-// Pi can make the original call, two split-turn compaction calls, and one recovery retry.
-const maximumProviderCalls = maximumRequests * 4;
+// Pi can make the original call, two overflow-compaction calls, one recovery retry,
+// and two post-recovery compaction calls.
+const maximumProviderCalls = maximumRequests * 6;
 
 interface Estimate {
   readonly lowUsd: number;
