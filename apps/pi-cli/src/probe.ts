@@ -40,7 +40,7 @@ const agent = await createPiAgentFactory({
   thinkingLevel: "high",
 })(player);
 const controller = new AbortController();
-const timer = setTimeout(() => controller.abort(), 180_000);
+const timer = setTimeout(() => controller.abort(), 720_000);
 
 const sanitizedMessage = (error: unknown): string => {
   const message = error instanceof Error ? error.message : "Unknown model error.";

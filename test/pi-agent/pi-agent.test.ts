@@ -704,8 +704,8 @@ describe("Pi model setup", () => {
     expect(assigned).toEqual({
       maxTokens: Math.min(nativeModel.maxTokens, 65_535),
       contextWindow: Math.min(nativeModel.contextWindow, 65_536),
-      turnTimeMs: 90_000,
-      finalizationGraceMs: 30_000,
+      turnTimeMs: 600_000,
+      finalizationGraceMs: 60_000,
       maxPlanningSteps: 8,
     });
   });

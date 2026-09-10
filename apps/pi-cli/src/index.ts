@@ -63,8 +63,8 @@ const thinkingArgument = (): NonNullable<PiAgentFactoryOptions["thinkingLevel"]>
 };
 
 const seed = integerArgument("seed", 42, 0, 0xffff_ffff);
-const turnTimeMs = integerArgument("turn-time-ms", 90_000, 1, 0x7fff_ffff);
-const finalizationGraceMs = integerArgument("finalization-grace-ms", 30_000, 1, 0x7fff_ffff);
+const turnTimeMs = integerArgument("turn-time-ms", 600_000, 1, 0x7fff_ffff);
+const finalizationGraceMs = integerArgument("finalization-grace-ms", 60_000, 1, 0x7fff_ffff);
 const maxPlanningSteps = integerArgument("max-planning-steps", 8, 1, 1_000);
 const maxAttempts = integerArgument("max-attempts", 1, 1);
 const maxOutputTokens = optionalIntegerArgument("max-output-tokens", 1);
