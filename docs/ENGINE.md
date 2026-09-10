@@ -548,6 +548,29 @@ All resource counts are non-negative integers. The bank and all player hands tog
 
 Values such as legal actions and visible victory points derive from state. Award ownership remains in state because a tie can depend on the previous holder. Random cursors remain in state so a replayed match can continue with the same future random stream.
 
+## Portable replay contract
+
+The complete state in the first `game.created` event is the replay starting point. A replay reader does not call the current board generator to replace or approve that state. This keeps a valid saved match readable when a later release changes a shuffle or another native generation choice.
+
+The reader performs these steps in order:
+
+1. Decode the complete event envelope and `GameState` with the protocol runtime schema.
+2. Require event sequence zero, state sequence zero, and matching event, state, config, and manifest match IDs.
+3. Require the canonical regular topology and a valid regular-board layout.
+4. Run the full state invariant checks before accepting the starting state.
+5. Reconstruct each later command from its first event, run the command against the reduced state, and require the complete expected event batch to match the stored batch.
+6. Run the state invariant checks after each accepted batch.
+
+The first event is authoritative for replay and the generator is authoritative for creating a new native game. These are separate jobs. `createGame` still produces a deterministic state for a seed. Native replay still verifies every later command and random result exactly from the stored random cursors.
+
+A generated run records the board generator ID and seed in its run manifest. A reader can generate a new state with the current recipe and report whether it matches the stored starting state. This comparison is information for evaluation and debugging. It does not decide whether replay succeeds.
+
+An adapter-observed starting board records the adapter ID instead of claiming native generation. It uses the same complete state decoder and invariant checks. Validation of later externally controlled dice, theft, and other random outcomes belongs to the adapter conformance contract. Such a run must not be labeled as exact native command reproduction.
+
+A board that differs only because a valid generation policy changed can replay. A board that breaks the regular-board or game-state invariants cannot replay. The earlier scratch runs created with the incorrect harbor phase are disposable test data and do not receive an exception.
+
+The project changes the existing `v1` contracts in place. It does not keep the old generator, add a fallback replay path, or accept a partial starting-state schema.
+
 ## Initial-placement state machine
 
 Milestone 1 implements these phases:
@@ -791,7 +814,7 @@ Complete. The engine generates terrain, number tokens, harbors, and the developm
 
 ### Step 3: event-state cutover
 
-Complete. Commands produce ordered events, reducers produce state, and the event log stays outside `GameState`. Replay checks its initial event and contiguous sequence numbers.
+Complete. Commands produce ordered events, reducers produce state, and the event log stays outside `GameState`. Replay decodes and validates the complete stored starting state, then checks contiguous sequence numbers and exact later command batches. Native generator comparison is reported separately.
 
 ### Step 4: initial placement
 
