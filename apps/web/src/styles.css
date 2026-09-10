@@ -425,6 +425,77 @@ aside {
   color: #3d6d5e;
 }
 
+.session-note {
+  color: #66736c;
+  font-size: 0.84rem;
+  line-height: 1.5;
+}
+
+.session-summaries {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.session-summaries article {
+  display: grid;
+  gap: 0.15rem;
+  border-radius: 9px;
+  padding: 0.6rem;
+  background: #f2eee5;
+}
+
+.session-summaries span,
+.session-summaries small,
+.agent-traces small {
+  color: #66736c;
+  font-size: 0.78rem;
+}
+
+.agent-traces {
+  max-height: 360px;
+  overflow: auto;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.agent-traces li {
+  border-bottom: 1px solid #e3ddd1;
+  padding: 0.55rem 0;
+}
+
+.agent-traces li > div {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.agent-traces p {
+  margin: 0.3rem 0 0;
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+
+.trace-outcome {
+  border-radius: 999px;
+  padding: 0.1rem 0.4rem;
+  background: #e6f0e8;
+  color: #33745e;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+}
+
+.trace-outcome.failed {
+  background: #f8dfd6;
+  color: #9b352d;
+}
+
+.trace-outcome.fallback {
+  background: #f4e8bd;
+  color: #725b12;
+}
+
 @keyframes pulse {
   from {
     opacity: 0.58;

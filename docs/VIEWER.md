@@ -4,7 +4,7 @@
 
 The first web slice is implemented as a trusted local game client. It starts seeded three-player and four-player games, renders the standard board, submits commands to the native engine, shows public scores, award progress, and the active player's private state, and moves through accepted-command history. It supports native games from setup through a terminal winner.
 
-Saved replay loading, timed playback, live streams, and negotiation transport remain planned. The `App` component accepts the current projected `NegotiationView` from such a transport and passes matching records to the implemented timeline. The timeline never decides trade legality. Remote and replay modes stay read-only and consume only viewer-safe data. The local setup client is a deliberate exception because the user runs the engine and browser in one trusted process.
+A trusted local report mode can load a Pi CLI result selected through `CATANARCHY_RUN_FILE`. It replays the authoritative game events, renders the final board and negotiation timeline, and shows saved model-call traces. Raw Pi session messages are not present because match sessions are ephemeral and disposed. Viewer-safe replay loading, timed playback, live streams, and negotiation transport remain planned. The `App` component accepts the current projected `NegotiationView` from such a transport and passes matching records to the implemented timeline. The timeline never decides trade legality. Remote and replay modes stay read-only and consume only viewer-safe data. The local setup client and local run report are deliberate trusted exceptions.
 
 ## Goals
 

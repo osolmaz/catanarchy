@@ -15,7 +15,15 @@ npm run dev
 
 Open the local URL that Vite prints. Choose a seed and player count, select **New game**, then use the highlighted board points, edges, and action buttons to play.
 
-The web app is a trusted local hot-seat client. It keeps the authoritative game state in the browser so it can show the active player's initial resource cards. A future remote viewer will receive only public or seat-authorized observations.
+To inspect a saved local Pi run, start the temporary viewer with the report path:
+
+```sh
+CATANARCHY_RUN_FILE=/path/to/run.json npm run dev
+```
+
+The report view shows the final board, negotiation timeline, seat summaries, game decisions, negotiation decisions, reasons, timing, token use, and cost. Pi sessions are in memory and are disposed after a run, so raw Pi message history is not available unless a future run explicitly records it.
+
+The web app and saved-run report are trusted local views. They can use authoritative state and private traces. A future remote viewer will receive only public or seat-authorized observations.
 
 ## Run a scripted setup
 
