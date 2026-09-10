@@ -354,11 +354,20 @@ describe("Pi negotiation selection", () => {
       },
     });
     const projected = JSON.parse(prompt) as {
-      negotiation: { events: unknown[]; promises: Array<{ id: string }>; evidence: unknown[] };
+      negotiation: {
+        sequence: number;
+        events: Array<{ sequence: number }>;
+        promises: Array<{ id: string }>;
+        evidence: unknown[];
+      };
     };
 
     expect(new TextEncoder().encode(prompt).byteLength).toBeLessThanOrEqual(24_576);
     expect(projected.negotiation.events.length).toBeLessThanOrEqual(128);
+    expect(projected.negotiation.sequence).toBe(projected.negotiation.events.length);
+    expect(projected.negotiation.events.map(({ sequence }) => sequence)).toEqual(
+      Array.from({ length: projected.negotiation.events.length }, (_value, sequence) => sequence),
+    );
     expect(projected.negotiation.promises.length).toBeLessThanOrEqual(32);
     expect(projected.negotiation.promises.at(-1)?.id).toBe("promise:33");
     expect(projected.negotiation.evidence.length).toBeLessThanOrEqual(64);
