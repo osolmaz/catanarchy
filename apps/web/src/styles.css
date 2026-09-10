@@ -153,7 +153,7 @@ h1 {
 
 .status-card {
   display: grid;
-  grid-template-columns: minmax(120px, 0.7fr) minmax(100px, 0.5fr) minmax(280px, 2fr);
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   gap: 1px;
   overflow: hidden;
   border: 1px solid #cfc5b2;
@@ -294,6 +294,7 @@ h1 {
 
 .replay-controls {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: center;
   gap: 0.5rem;
@@ -305,6 +306,29 @@ h1 {
   min-width: 120px;
   color: #5f6b65;
   font-size: 0.85rem;
+  text-align: center;
+}
+
+.replay-controls label {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: #5f6b65;
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.replay-controls select {
+  border: 1px solid #bcb39f;
+  border-radius: 7px;
+  padding: 0.55rem;
+  color: #19231f;
+  background: #fffefa;
+}
+
+.replay-controls small {
+  flex-basis: 100%;
+  color: #718078;
   text-align: center;
 }
 
