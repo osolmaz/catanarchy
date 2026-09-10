@@ -1,7 +1,16 @@
 import { mkdir, open, readFile, rename, writeFile, type FileHandle } from "node:fs/promises";
 import { isAbsolute, relative, resolve } from "node:path";
+import { isDeepStrictEqual } from "node:util";
+import { replay } from "@catanarchy/engine";
 import type { AgentModelIdentity, MatchActivity, MatchRunResult } from "@catanarchy/harness";
-import type { GameConfig, PlayerId } from "@catanarchy/protocol";
+import {
+  decodeGameConfig,
+  decodeGameEventEnvelope,
+  type GameConfig,
+  type GameEvent,
+  type PlayerId,
+} from "@catanarchy/protocol";
+import { Effect } from "effect";
 
 export const RUN_MANIFEST_SCHEMA = "catanarchy.run-manifest.v1" as const;
 export const RUN_RECORD_SCHEMA = "catanarchy.run-record.v1" as const;
@@ -448,6 +457,102 @@ const validateTerminalRecord = (manifest: RunManifest, records: ReadonlyArray<Ru
   }
 };
 
+const decodeStartedConfig = async (
+  manifest: RunManifest,
+  record: RunRecord | undefined,
+): Promise<GameConfig> => {
+  if (record?.kind !== "run.started" || !isRecord(record.payload)) {
+    throw new Error("The run start record is invalid.");
+  }
+  const config = await Effect.runPromise(
+    decodeGameConfig(record.payload["config"]).pipe(
+      Effect.mapError(() => new Error("The run start configuration is invalid.")),
+    ),
+  );
+  if (config.matchId !== manifest.matchId) {
+    throw new Error("The run start configuration does not match the manifest.");
+  }
+  return config;
+};
+
+const decodeRecordedGameEvent = async (payload: unknown): Promise<GameEvent> =>
+  (await Effect.runPromise(
+    decodeGameEventEnvelope(payload).pipe(
+      Effect.mapError(() => new Error("The run timeline contains a malformed game event.")),
+    ),
+  )) as GameEvent;
+
+const assertCommandMarker = (
+  record: RunRecord,
+  batch: ReadonlyArray<GameEvent>,
+  manifest: RunManifest,
+): void => {
+  const last = batch.at(-1);
+  if (record.kind !== "game.command-completed" || !isRecord(record.payload) || last === undefined) {
+    throw new Error("The run timeline contains an invalid command marker.");
+  }
+  const oneCommand = batch.every(
+    (event) => event.commandId === last.commandId && event.matchId === manifest.matchId,
+  );
+  if (
+    !oneCommand ||
+    record.payload["matchId"] !== manifest.matchId ||
+    record.payload["commandId"] !== last.commandId ||
+    record.payload["sequence"] !== last.sequence
+  ) {
+    throw new Error("The run timeline contains an invalid atomic command batch.");
+  }
+};
+
+interface GameTimelineValidation {
+  readonly events: GameEvent[];
+  readonly rawEvents: unknown[];
+  completedEventCount: number;
+}
+
+const consumeGameRecord = async (
+  validation: GameTimelineValidation,
+  manifest: RunManifest,
+  record: RunRecord,
+): Promise<void> => {
+  if (record.kind === "game.event") {
+    validation.events.push(await decodeRecordedGameEvent(record.payload));
+    validation.rawEvents.push(record.payload);
+    return;
+  }
+  if (record.kind !== "game.command-completed") return;
+  assertCommandMarker(record, validation.events.slice(validation.completedEventCount), manifest);
+  validation.completedEventCount = validation.events.length;
+};
+
+const validateGameTimeline = async (
+  manifest: RunManifest,
+  records: ReadonlyArray<RunRecord>,
+): Promise<void> => {
+  const config = await decodeStartedConfig(manifest, records[0]);
+  const validation: GameTimelineValidation = { events: [], rawEvents: [], completedEventCount: 0 };
+  for (const record of records) await consumeGameRecord(validation, manifest, record);
+  const first = validation.events[0];
+  if (
+    first !== undefined &&
+    (first.event.type !== "game.created" || !isDeepStrictEqual(first.event.state.config, config))
+  ) {
+    throw new Error("The first game event does not match the run start configuration.");
+  }
+  if (
+    manifest.status !== "partial" &&
+    validation.completedEventCount !== validation.events.length
+  ) {
+    throw new Error("The run timeline ends inside an atomic command batch.");
+  }
+  if (validation.completedEventCount === 0) return;
+  await Effect.runPromise(
+    replay(validation.rawEvents.slice(0, validation.completedEventCount)).pipe(
+      Effect.mapError(() => new Error("The run timeline game events cannot replay.")),
+    ),
+  );
+};
+
 export const readRunPackage = async (directory: string): Promise<RunPackage> => {
   const root = resolve(directory);
   const [manifestText, timelineText] = await Promise.all([
@@ -458,5 +563,6 @@ export const readRunPackage = async (directory: string): Promise<RunPackage> => 
   const records = parseCompleteLines(timelineText);
   validateTimelineOrder(manifest, records);
   validateTerminalRecord(manifest, records);
+  await validateGameTimeline(manifest, records);
   return { manifest, records };
 };

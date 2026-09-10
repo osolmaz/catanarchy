@@ -184,6 +184,90 @@ describe("run log", () => {
     await expect(readRunPackage(directory)).rejects.toThrow("run manifest is invalid");
   });
 
+  it("rejects corrupt game events and permits only a partial unmarked tail", async () => {
+    const directory = await temporaryRunDirectory();
+    const recorder = await RunRecorder.create({
+      directory,
+      runId: "run-game-validation",
+      config,
+      seats: config.players.map(({ id }) => ({
+        seatId: id,
+        agentType: "scripted" as const,
+        model: null,
+      })),
+      clock: clock(),
+    });
+    const result = await Effect.runPromise(
+      runGameSteps({
+        config,
+        maxDecisions: 1,
+        createAgent: async () => createFirstLegalAgent(),
+        onActivity: async (activity) => recorder.recordActivity(activity),
+      }),
+    );
+    await recorder.complete(result);
+
+    const timelinePath = resolve(directory, "timeline.jsonl");
+    const manifestPath = resolve(directory, "manifest.json");
+    const original = (await readFile(timelinePath, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    const eventIndex = original.findLastIndex(({ kind }) => kind === "game.event");
+    const eventRecord = original[eventIndex];
+    if (eventRecord === undefined || typeof eventRecord["payload"] !== "object") {
+      throw new Error("The test run has no game event.");
+    }
+    const payload = eventRecord["payload"] as Record<string, unknown>;
+    const event = payload["event"] as Record<string, unknown>;
+    const writeRecords = async (records: ReadonlyArray<Record<string, unknown>>): Promise<void> =>
+      writeFile(timelinePath, `${records.map((record) => JSON.stringify(record)).join("\n")}\n`);
+
+    const malformed = original.with(eventIndex, {
+      ...eventRecord,
+      payload: { ...payload, event: { ...event, type: "not-a-game-event" } },
+    });
+    await writeRecords(malformed);
+    await expect(readRunPackage(directory)).rejects.toThrow("malformed game event");
+
+    const wrongMatch = original.with(eventIndex, {
+      ...eventRecord,
+      payload: { ...payload, matchId: "another-match" },
+    });
+    await writeRecords(wrongMatch);
+    await expect(readRunPackage(directory)).rejects.toThrow("atomic command batch");
+
+    if (event["type"] !== "settlement.placed") {
+      throw new Error("The test run did not end with a settlement placement.");
+    }
+    const nonReplayable = original.with(eventIndex, {
+      ...eventRecord,
+      payload: { ...payload, event: { ...event, vertexId: "v:999:999" } },
+    });
+    await writeRecords(nonReplayable);
+    await expect(readRunPackage(directory)).rejects.toThrow("cannot replay");
+
+    const markerIndex = original.findLastIndex(({ kind }) => kind === "game.command-completed");
+    const withoutLastMarker = original
+      .filter((_record, index) => index !== markerIndex)
+      .map((record, index): Record<string, unknown> => ({ ...record, index }));
+    await writeRecords(withoutLastMarker);
+    await expect(readRunPackage(directory)).rejects.toThrow("inside an atomic command batch");
+
+    const partialRecords = withoutLastMarker
+      .filter(({ kind }) => kind !== "run.completed")
+      .map((record, index): Record<string, unknown> => ({ ...record, index }));
+    const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as Record<string, unknown>;
+    await writeFile(
+      manifestPath,
+      `${JSON.stringify({ ...manifest, status: "partial", finishedAt: null })}\n`,
+    );
+    await writeRecords(partialRecords);
+    await expect(readRunPackage(directory)).resolves.toMatchObject({
+      manifest: { status: "partial" },
+    });
+  });
+
   it("ignores an incomplete final line while a writer is appending", async () => {
     const directory = await temporaryRunDirectory();
     const recorder = await RunRecorder.create({
