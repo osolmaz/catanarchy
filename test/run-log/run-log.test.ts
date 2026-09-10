@@ -1,7 +1,7 @@
 import { appendFile, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
-import { replay } from "@catanarchy/engine";
+import { replay, STANDARD_BOARD_GENERATOR_ID } from "@catanarchy/engine";
 import { createFirstLegalAgent, runGameSteps } from "@catanarchy/harness";
 import type { GameConfig } from "@catanarchy/protocol";
 import { parseRunRecord, readRunPackage, RunRecorder, type RunClock } from "@catanarchy/run-log";
@@ -21,6 +21,12 @@ const config: GameConfig = {
   ],
 };
 
+const initialStateOrigin = {
+  type: "generated" as const,
+  generatorId: STANDARD_BOARD_GENERATOR_ID,
+  seed: config.seed,
+};
+
 const temporaryRunDirectory = async (): Promise<string> => {
   const root = await mkdtemp(resolve(tmpdir(), "catanarchy-run-log-"));
   roots.push(root);
@@ -38,6 +44,43 @@ const clock = (): RunClock => {
   };
 };
 
+const storedLayout = (records: ReadonlyArray<Record<string, unknown>>): Record<string, unknown> => {
+  const created = records.find(({ kind }) => kind === "game.event");
+  const payload = created?.["payload"] as Record<string, unknown> | undefined;
+  const event = payload?.["event"] as Record<string, unknown> | undefined;
+  const state = event?.["state"] as Record<string, unknown> | undefined;
+  const layout = state?.["layout"];
+  if (typeof layout !== "object" || layout === null) {
+    throw new Error("Expected a generated starting board.");
+  }
+  return layout as Record<string, unknown>;
+};
+
+const swapTwoTerrainKinds = (terrain: Array<Record<string, unknown>>): void => {
+  const leftIndex = terrain.findIndex(({ terrain: value }) => value !== "desert");
+  const leftKind = terrain[leftIndex]?.["terrain"];
+  const rightIndex = terrain.findIndex(
+    ({ terrain: value }, index) => index > leftIndex && value !== "desert" && value !== leftKind,
+  );
+  const left = terrain[leftIndex];
+  const right = terrain[rightIndex];
+  if (left === undefined || right === undefined) throw new Error("Expected two terrain kinds.");
+  [left["terrain"], right["terrain"]] = [right["terrain"], left["terrain"]];
+};
+
+const changeStoredTerrainShuffle = async (directory: string): Promise<void> => {
+  const timelinePath = resolve(directory, "timeline.jsonl");
+  const records = (await readFile(timelinePath, "utf8"))
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+  const layout = storedLayout(records);
+  const terrain = structuredClone(layout["terrain"]) as Array<Record<string, unknown>>;
+  swapTwoTerrainKinds(terrain);
+  layout["terrain"] = terrain;
+  await writeFile(timelinePath, `${records.map((record) => JSON.stringify(record)).join("\n")}\n`);
+};
+
 afterEach(async () => {
   await Promise.all(
     roots.splice(0).map(async (root) => rm(root, { recursive: true, force: true })),
@@ -51,6 +94,7 @@ describe("run log", () => {
       directory,
       runId: "run-42",
       config,
+      initialStateOrigin,
       seats: config.players.map(({ id }) => ({
         seatId: id,
         agentType: "scripted" as const,
@@ -70,6 +114,11 @@ describe("run log", () => {
 
     const saved = await readRunPackage(directory);
     expect(saved.manifest.status).toBe("completed");
+    expect(saved.manifest.initialStateOrigin).toEqual(initialStateOrigin);
+    expect(saved.verification).toEqual({
+      generatorMatch: "matches-current",
+      commandVerification: "exact",
+    });
     expect(saved.records[0]?.offsetMs).toBe(0);
     expect(saved.records.map(({ index }) => index)).toEqual(
       saved.records.map((_record, index) => index),
@@ -86,12 +135,78 @@ describe("run log", () => {
     expect(await Effect.runPromise(replay(events))).toEqual(result.state);
   });
 
+  it("reports a valid stored board that differs from the current generator", async () => {
+    const directory = await temporaryRunDirectory();
+    const recorder = await RunRecorder.create({
+      directory,
+      runId: "run-different-board",
+      config,
+      initialStateOrigin,
+      seats: config.players.map(({ id }) => ({
+        seatId: id,
+        agentType: "scripted" as const,
+        model: null,
+      })),
+      clock: clock(),
+    });
+    const result = await Effect.runPromise(
+      runGameSteps({
+        config,
+        maxDecisions: 1,
+        createAgent: async () => createFirstLegalAgent(),
+        onActivity: async (activity) => recorder.recordActivity(activity),
+      }),
+    );
+    await recorder.complete(result);
+
+    await changeStoredTerrainShuffle(directory);
+
+    await expect(readRunPackage(directory)).resolves.toMatchObject({
+      verification: {
+        generatorMatch: "differs-from-current",
+        commandVerification: "exact",
+      },
+    });
+  });
+
+  it("marks native generator checks as not applicable for an observed origin", async () => {
+    const directory = await temporaryRunDirectory();
+    const recorder = await RunRecorder.create({
+      directory,
+      runId: "run-observed",
+      config,
+      initialStateOrigin: { type: "observed", adapterId: "test-adapter" },
+      seats: config.players.map(({ id }) => ({
+        seatId: id,
+        agentType: "scripted" as const,
+        model: null,
+      })),
+      clock: clock(),
+    });
+    const result = await Effect.runPromise(
+      runGameSteps({
+        config,
+        maxDecisions: 1,
+        createAgent: async () => createFirstLegalAgent(),
+        onActivity: async (activity) => recorder.recordActivity(activity),
+      }),
+    );
+    await recorder.complete(result);
+
+    const saved = await readRunPackage(directory);
+    expect(saved.verification).toEqual({
+      generatorMatch: "not-applicable",
+      commandVerification: "not-applicable",
+    });
+  });
+
   it("maps a Pi seat to a native session file inside the run", async () => {
     const directory = await temporaryRunDirectory();
     const recorder = await RunRecorder.create({
       directory,
       runId: "run-pi",
       config,
+      initialStateOrigin,
       seats: config.players.map(({ id }, index) => ({
         seatId: id,
         agentType: index === 0 ? ("pi" as const) : ("scripted" as const),
@@ -124,6 +239,7 @@ describe("run log", () => {
       directory,
       runId: "run-failed",
       config,
+      initialStateOrigin,
       seats: config.players.map(({ id }) => ({
         seatId: id,
         agentType: "scripted" as const,
@@ -149,6 +265,7 @@ describe("run log", () => {
       directory,
       runId: "run-invalid",
       config,
+      initialStateOrigin,
       seats: config.players.map(({ id }) => ({
         seatId: id,
         agentType: "scripted" as const,
@@ -173,6 +290,15 @@ describe("run log", () => {
     await writeFile(manifestPath, `${JSON.stringify({ ...manifest, status: "completed" })}\n`);
     await expect(readRunPackage(directory)).rejects.toThrow("terminal record");
 
+    await writeFile(
+      manifestPath,
+      `${JSON.stringify({
+        ...manifest,
+        initialStateOrigin: { ...initialStateOrigin, seed: config.seed + 1 },
+      })}\n`,
+    );
+    await expect(readRunPackage(directory)).rejects.toThrow("origin seed");
+
     await writeFile(manifestPath, `${JSON.stringify({ ...manifest, status: "partial" })}\n`);
     await expect(readRunPackage(directory)).rejects.toThrow("run manifest is invalid");
 
@@ -190,6 +316,7 @@ describe("run log", () => {
       directory,
       runId: "run-game-validation",
       config,
+      initialStateOrigin,
       seats: config.players.map(({ id }) => ({
         seatId: id,
         agentType: "scripted" as const,
@@ -282,6 +409,7 @@ describe("run log", () => {
       directory,
       runId: "run-negotiation-validation",
       config,
+      initialStateOrigin,
       seats: config.players.map(({ id }) => ({
         seatId: id,
         agentType: "scripted" as const,
@@ -347,6 +475,7 @@ describe("run log", () => {
       directory,
       runId: "run-partial-read",
       config,
+      initialStateOrigin,
       seats: config.players.map(({ id }) => ({
         seatId: id,
         agentType: "scripted" as const,

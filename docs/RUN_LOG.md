@@ -149,7 +149,7 @@ A reader rejects a package when:
 - a terminal manifest has no matching terminal record
 - the complete stored starting state does not decode or breaks an engine invariant
 - a game event sequence is invalid
-- a later atomic command batch does not match native command execution
+- a generated run's later atomic command batch does not match native command execution
 - a generated origin does not agree with the starting-state seed
 - a seat session path escapes the package
 - a public projection contains a seat-private record
@@ -158,7 +158,7 @@ Unknown record kinds are rejected in version 1. A later compatible addition must
 
 ## Loading and seeking
 
-A loader validates the manifest before it opens referenced files. It uses the complete state in `game.created` as the replay starting point and replays later events only at complete command boundaries. It separately reports whether a generated starting state matches the current native generator. A generator mismatch does not make an otherwise valid replay fail.
+A loader validates the manifest before it opens referenced files. It uses the complete state in `game.created` as the replay starting point and replays later events only at complete command boundaries. For a generated run, it separately checks exact native command execution and reports whether the starting state matches the current native generator. An observed run reports that both native generator matching and native command reproduction do not apply. A generator mismatch does not make an otherwise valid replay fail.
 
 The current local viewer loads the run into memory and creates a frame for each visible record. A later large-run loader can add a sparse index from timeline index and game sequence to byte offset.
 

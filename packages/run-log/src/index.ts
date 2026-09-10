@@ -1,7 +1,7 @@
 import { mkdir, open, readFile, rename, writeFile, type FileHandle } from "node:fs/promises";
 import { isAbsolute, relative, resolve, sep as platformSeparator } from "node:path";
 import { isDeepStrictEqual } from "node:util";
-import { replay } from "@catanarchy/engine";
+import { matchesCurrentGenerator, replay, verifyNativeReplay } from "@catanarchy/engine";
 import type { AgentModelIdentity, MatchActivity, MatchRunResult } from "@catanarchy/harness";
 import {
   decodeGameConfig,
@@ -9,6 +9,7 @@ import {
   decodeNegotiationEvent,
   type GameConfig,
   type GameEvent,
+  type GameState,
   type NegotiationEvent,
   type PlayerId,
 } from "@catanarchy/protocol";
@@ -18,6 +19,29 @@ export const RUN_MANIFEST_SCHEMA = "catanarchy.run-manifest.v1" as const;
 export const RUN_RECORD_SCHEMA = "catanarchy.run-record.v1" as const;
 
 export type RunStatus = "partial" | "completed" | "failed" | "cancelled";
+
+export type InitialStateOrigin =
+  | {
+      readonly type: "generated";
+      readonly generatorId: string;
+      readonly seed: number;
+    }
+  | {
+      readonly type: "observed";
+      readonly adapterId: string;
+    };
+
+export type GeneratorMatch =
+  | "matches-current"
+  | "differs-from-current"
+  | "not-applicable"
+  | "pending";
+export type CommandVerification = "exact" | "not-applicable" | "pending";
+
+export interface RunVerification {
+  readonly generatorMatch: GeneratorMatch;
+  readonly commandVerification: CommandVerification;
+}
 
 export interface RunSeatManifest {
   readonly seatId: PlayerId;
@@ -37,6 +61,7 @@ export interface RunManifest {
   readonly timeline: "timeline.jsonl";
   readonly timing: "monotonic";
   readonly piVersion: string | null;
+  readonly initialStateOrigin: InitialStateOrigin;
   readonly seats: ReadonlyArray<RunSeatManifest>;
 }
 
@@ -94,6 +119,7 @@ export interface RunTerminalSummary {
 export interface RunPackage {
   readonly manifest: RunManifest;
   readonly records: ReadonlyArray<RunRecord>;
+  readonly verification: RunVerification;
 }
 
 export interface RunClock {
@@ -105,6 +131,7 @@ export interface CreateRunRecorderOptions {
   readonly directory: string;
   readonly runId: string;
   readonly config: GameConfig;
+  readonly initialStateOrigin: InitialStateOrigin;
   readonly seats: ReadonlyArray<{
     readonly seatId: PlayerId;
     readonly agentType: RunSeatManifest["agentType"];
@@ -182,6 +209,7 @@ export class RunRecorder {
       timeline: "timeline.jsonl",
       timing: "monotonic",
       piVersion: options.piVersion ?? null,
+      initialStateOrigin: options.initialStateOrigin,
       seats: options.seats.map((seat) => ({
         ...seat,
         sessionId: null,
@@ -367,12 +395,29 @@ const hasSafeSessionPath = (seat: RunSeatManifest): boolean => {
   );
 };
 
+const isObservedOrigin = (value: Readonly<Record<string, unknown>>): boolean =>
+  value["type"] === "observed" &&
+  typeof value["adapterId"] === "string" &&
+  value["adapterId"].length > 0;
+
+const isGeneratedOrigin = (value: Readonly<Record<string, unknown>>): boolean =>
+  value["type"] === "generated" &&
+  typeof value["generatorId"] === "string" &&
+  value["generatorId"].length > 0 &&
+  Number.isSafeInteger(value["seed"]) &&
+  Number(value["seed"]) >= 0 &&
+  Number(value["seed"]) <= 0xffff_ffff;
+
+const isInitialStateOrigin = (value: unknown): value is InitialStateOrigin =>
+  isRecord(value) && (isObservedOrigin(value) || isGeneratedOrigin(value));
+
 const hasManifestFiles = (value: Readonly<Record<string, unknown>>): boolean => {
   const seats = value["seats"];
   if (
     value["timeline"] !== "timeline.jsonl" ||
     value["timing"] !== "monotonic" ||
     (typeof value["piVersion"] !== "string" && value["piVersion"] !== null) ||
+    !isInitialStateOrigin(value["initialStateOrigin"]) ||
     !Array.isArray(seats) ||
     !seats.every((seat) => isSeatManifest(seat) && hasSafeSessionPath(seat))
   ) {
@@ -475,6 +520,12 @@ const decodeStartedConfig = async (
   if (config.matchId !== manifest.matchId) {
     throw new Error("The run start configuration does not match the manifest.");
   }
+  if (
+    manifest.initialStateOrigin.type === "generated" &&
+    manifest.initialStateOrigin.seed !== config.seed
+  ) {
+    throw new Error("The generated run origin seed does not match the start configuration.");
+  }
   return config;
 };
 
@@ -565,10 +616,34 @@ const consumeGameRecord = async (
   validation.completedEventCount = validation.events.length;
 };
 
+const initialRecordedState = (
+  validation: GameTimelineValidation,
+  config: GameConfig,
+): GameState | null => {
+  const first = validation.events[0];
+  if (first === undefined) return null;
+  if (first.event.type !== "game.created" || !isDeepStrictEqual(first.event.state.config, config)) {
+    throw new Error("The first game event does not match the run start configuration.");
+  }
+  return first.event.state;
+};
+
+const assertCompleteCommandTail = (
+  manifest: RunManifest,
+  validation: GameTimelineValidation,
+): void => {
+  if (
+    manifest.status !== "partial" &&
+    validation.completedEventCount !== validation.events.length
+  ) {
+    throw new Error("The run timeline ends inside an atomic command batch.");
+  }
+};
+
 const validateEventTimeline = async (
   manifest: RunManifest,
   records: ReadonlyArray<RunRecord>,
-): Promise<void> => {
+): Promise<GameState | null> => {
   const config = await decodeStartedConfig(manifest, records[0]);
   const validation: GameTimelineValidation = {
     events: [],
@@ -577,25 +652,40 @@ const validateEventTimeline = async (
     negotiationSequence: -1,
   };
   for (const record of records) await consumeGameRecord(validation, manifest, record);
-  const first = validation.events[0];
-  if (
-    first !== undefined &&
-    (first.event.type !== "game.created" || !isDeepStrictEqual(first.event.state.config, config))
-  ) {
-    throw new Error("The first game event does not match the run start configuration.");
-  }
-  if (
-    manifest.status !== "partial" &&
-    validation.completedEventCount !== validation.events.length
-  ) {
-    throw new Error("The run timeline ends inside an atomic command batch.");
-  }
-  if (validation.completedEventCount === 0) return;
+  const initialState = initialRecordedState(validation, config);
+  assertCompleteCommandTail(manifest, validation);
+  if (validation.completedEventCount === 0 || initialState === null) return null;
+  const completeEvents = validation.rawEvents.slice(0, validation.completedEventCount);
   await Effect.runPromise(
-    replay(validation.rawEvents.slice(0, validation.completedEventCount)).pipe(
+    replay(completeEvents).pipe(
       Effect.mapError(() => new Error("The run timeline game events cannot replay.")),
     ),
   );
+  if (manifest.initialStateOrigin.type === "generated") {
+    await Effect.runPromise(
+      verifyNativeReplay(completeEvents).pipe(
+        Effect.mapError(() => new Error("The run timeline does not match native execution.")),
+      ),
+    );
+  }
+  return initialState;
+};
+
+const verificationFor = async (
+  manifest: RunManifest,
+  state: GameState | null,
+): Promise<RunVerification> => {
+  if (state === null) {
+    return { generatorMatch: "pending", commandVerification: "pending" };
+  }
+  if (manifest.initialStateOrigin.type === "observed") {
+    return { generatorMatch: "not-applicable", commandVerification: "not-applicable" };
+  }
+  const matches = await Effect.runPromise(matchesCurrentGenerator(state));
+  return {
+    generatorMatch: matches ? "matches-current" : "differs-from-current",
+    commandVerification: "exact",
+  };
 };
 
 export const readRunPackage = async (directory: string): Promise<RunPackage> => {
@@ -608,6 +698,6 @@ export const readRunPackage = async (directory: string): Promise<RunPackage> => 
   const records = parseCompleteLines(timelineText);
   validateTimelineOrder(manifest, records);
   validateTerminalRecord(manifest, records);
-  await validateEventTimeline(manifest, records);
-  return { manifest, records };
+  const state = await validateEventTimeline(manifest, records);
+  return { manifest, records, verification: await verificationFor(manifest, state) };
 };

@@ -2,6 +2,7 @@
 
 import { writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import { STANDARD_BOARD_GENERATOR_ID } from "@catanarchy/engine";
 import { runGameSteps, type AgentUsage, type MatchRunResult } from "@catanarchy/harness";
 import {
   applyEnvironmentAuthentication,
@@ -204,6 +205,7 @@ const main = async (): Promise<void> => {
     directory: runDirectory,
     runId,
     config,
+    initialStateOrigin: { type: "generated", generatorId: STANDARD_BOARD_GENERATOR_ID, seed },
     piVersion,
     seats: config.players.map((player, index) => ({
       seatId: player.id,
