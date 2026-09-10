@@ -333,9 +333,11 @@ describe("Pi negotiation selection", () => {
           sequence,
           gameSequence: base.gameSequence,
           event: {
-            type: "negotiation.player-passed" as const,
+            type: "negotiation.message-sent" as const,
             round: 1,
             playerId: "red",
+            scope: { type: "public" as const },
+            text: "x".repeat(10_000),
           },
         })),
         promises,
@@ -355,10 +357,11 @@ describe("Pi negotiation selection", () => {
       negotiation: { events: unknown[]; promises: Array<{ id: string }>; evidence: unknown[] };
     };
 
-    expect(projected.negotiation.events).toHaveLength(128);
-    expect(projected.negotiation.promises).toHaveLength(32);
-    expect(projected.negotiation.promises[0]?.id).toBe("promise:2");
-    expect(projected.negotiation.evidence).toHaveLength(64);
+    expect(new TextEncoder().encode(prompt).byteLength).toBeLessThanOrEqual(24_576);
+    expect(projected.negotiation.events.length).toBeLessThanOrEqual(128);
+    expect(projected.negotiation.promises.length).toBeLessThanOrEqual(32);
+    expect(projected.negotiation.promises.at(-1)?.id).toBe("promise:33");
+    expect(projected.negotiation.evidence.length).toBeLessThanOrEqual(64);
   });
 });
 
