@@ -220,6 +220,69 @@ describe("saved run viewer", () => {
     expect(screen.getByText(/native command check not applicable/u)).toBeTruthy();
   });
 
+  it("opens a failed run at its last complete command", async () => {
+    const created = Effect.runSync(createGame(config));
+    const createdEvent = created.events[0];
+    const action = legalActions(created.state)[0];
+    if (createdEvent === undefined || action === undefined) {
+      throw new Error("Expected an initialized game and setup action.");
+    }
+    const handled = Effect.runSync(handleCommand(created.state, action.command));
+    const incompleteEvent = handled.events[0];
+    if (incompleteEvent === undefined) throw new Error("Expected a settlement event.");
+    const values = [
+      ["run.started", { config }],
+      ["game.event", createdEvent],
+      [
+        "game.command-completed",
+        {
+          matchId: config.matchId,
+          commandId: createdEvent.commandId,
+          sequence: createdEvent.sequence,
+        },
+      ],
+      ["game.event", incompleteEvent],
+      [
+        "run.failed",
+        {
+          gameSequence: incompleteEvent.sequence,
+          negotiationSequence: -1,
+          winnerPlayerId: null,
+          reason: "activity write failed",
+        },
+      ],
+    ] as const;
+    const run = await loadRunPackage({
+      manifest: {
+        schema: "catanarchy.run-manifest.v1",
+        runId: "interrupted-run",
+        matchId: config.matchId,
+        status: "failed",
+        initialStateOrigin: {
+          type: "generated",
+          generatorId: "catanarchy.standard-board.v1",
+          seed: config.seed,
+        },
+        seats: [],
+      },
+      records: values.map(([kind, payload], index) => ({
+        schema: "catanarchy.run-record.v1",
+        runId: "interrupted-run",
+        index,
+        offsetMs: index,
+        recordedAt: new Date(index).toISOString(),
+        visibility: "referee",
+        kind,
+        payload,
+      })),
+      verification: { generatorMatch: "matches-current", commandVerification: "exact" },
+    });
+
+    expect(run.status).toBe("failed");
+    expect(run.state).toEqual(created.state);
+    expect(run.frames).toHaveLength(1);
+  });
+
   it("replays multi-event commands only at atomic command boundaries", async () => {
     const created = Effect.runSync(createGame(config));
     let state = created.state;

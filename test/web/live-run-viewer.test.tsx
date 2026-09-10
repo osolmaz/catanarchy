@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { createGame } from "@catanarchy/engine";
+import { createGame, handleCommand, legalActions } from "@catanarchy/engine";
 import type { GameConfig } from "@catanarchy/protocol";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { Effect } from "effect";
@@ -184,19 +184,49 @@ describe("live run viewer", () => {
     expect(screen.getByText("live")).toBeTruthy();
     expect(screen.getByText("game.created")).toBeTruthy();
 
-    await act(async () => {
-      source.emit(
-        runRecord(3, 3, "run.completed", {
-          gameSequence: event.sequence,
-          negotiationSequence: -1,
-          winnerPlayerId: null,
+    const action = legalActions(created.state)[0];
+    if (action === undefined) throw new Error("Expected a setup action.");
+    const handled = Effect.runSync(handleCommand(created.state, action.command));
+    const placed = handled.events[0];
+    if (placed === undefined) throw new Error("Expected a settlement event.");
+    const completed = runRecord(5, 5, "run.completed", {
+      gameSequence: placed.sequence,
+      negotiationSequence: -1,
+      winnerPlayerId: null,
+    });
+    const terminalSnapshot = {
+      manifest: manifest("completed"),
+      records: [
+        started,
+        runRecord(1, 1, "game.event", event),
+        runRecord(2, 2, "game.command-completed", {
+          matchId: config.matchId,
+          commandId: event.commandId,
+          sequence: event.sequence,
         }),
-        manifest("completed"),
-      );
+        runRecord(3, 3, "game.event", placed),
+        runRecord(4, 4, "game.command-completed", {
+          matchId: config.matchId,
+          commandId: placed.commandId,
+          sequence: placed.sequence,
+        }),
+        completed,
+      ],
+      verification,
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof globalThis.fetch>(async () =>
+        Promise.resolve(new Response(JSON.stringify(terminalSnapshot), { status: 200 })),
+      ),
+    );
+    await act(async () => {
+      source.emit(completed, manifest("completed"));
       source.emitManifest(manifest("completed"));
     });
 
     await waitFor(() => expect(screen.queryByText("live")).toBeNull());
+    expect(screen.getByText("settlement.placed")).toBeTruthy();
     expect(source.closed).toBe(true);
   });
 });
