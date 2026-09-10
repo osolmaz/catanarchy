@@ -11,7 +11,8 @@ if (root === null) {
 }
 
 const runReportView = async (): Promise<ReactNode> => {
-  if (!__CATANARCHY_RUN_REPORT__) return <App />;
+  const localPlayRequested = new URLSearchParams(window.location.search).get("mode") === "play";
+  if (!__CATANARCHY_RUN_REPORT__ || localPlayRequested) return <App />;
   try {
     const response = await fetch("/__catanarchy/run-report");
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
