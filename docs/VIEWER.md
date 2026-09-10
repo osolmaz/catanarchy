@@ -351,7 +351,7 @@ Complete for the standard board and setup pieces. The layered SVG uses canonical
 
 ### Step 4: replay viewer
 
-Complete for trusted local runs. Old reports replay at command boundaries with recorded model time where available. New run directories replay every visible timeline record with exact recorded timing. The board changes only after the full event batch for one game command. Controls support buttons, keyboard input, a range control, direct URL frame selection, and five playback speeds. Viewer-safe exported packages remain planned.
+Complete for trusted local runs. Old reports replay at command boundaries with recorded model time where available. New run directories replay every visible timeline record with exact recorded timing. The board changes only after the full event batch for one game command. The status area shows whether the board was generated or observed. It separately shows the current-generator comparison and native command-verification result. Controls support buttons, keyboard input, a range control, direct URL frame selection, and five playback speeds. Viewer-safe exported packages remain planned.
 
 ### Step 5: live viewing
 

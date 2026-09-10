@@ -8,6 +8,7 @@ import type {
   PromiseEvidence,
   TradeOffer,
 } from "@catanarchy/protocol";
+import type { CommandVerification, GeneratorMatch, InitialStateOrigin } from "@catanarchy/run-log";
 import { Effect } from "effect";
 
 export interface RunTrace {
@@ -49,6 +50,9 @@ export interface LoadedRunReport {
   readonly frameDurationsMs: ReadonlyArray<number>;
   readonly timingSource: "recorded-time" | "recorded-model-time" | "mixed" | "synthetic";
   readonly status: "partial" | "completed" | "failed" | "cancelled";
+  readonly initialStateOrigin: InitialStateOrigin | null;
+  readonly generatorMatch: GeneratorMatch;
+  readonly commandVerification: CommandVerification;
   readonly sessionSeatIds: ReadonlyArray<string>;
   readonly events: ReadonlyArray<GameEvent>;
   readonly negotiation: NegotiationView;
@@ -59,6 +63,7 @@ export interface LoadedRunReport {
 export interface RunPackageSnapshot {
   readonly manifest: unknown;
   readonly records: ReadonlyArray<unknown>;
+  readonly verification: unknown;
 }
 
 interface BrowserRunRecord {
@@ -229,6 +234,9 @@ export const loadRunReport = async (input: unknown): Promise<LoadedRunReport> =>
     frameDurationsMs: timing.durations,
     timingSource: timing.source,
     status: "completed",
+    initialStateOrigin: null,
+    generatorMatch: "not-applicable",
+    commandVerification: "not-applicable",
     sessionSeatIds: [],
     events,
     negotiation: negotiationView(state.matchId, negotiation, result["negotiationSession"]),
@@ -239,6 +247,38 @@ export const loadRunReport = async (input: unknown): Promise<LoadedRunReport> =>
 
 const isRunStatus = (value: unknown): value is LoadedRunReport["status"] =>
   value === "partial" || value === "completed" || value === "failed" || value === "cancelled";
+
+const isGeneratedOrigin = (
+  value: Readonly<Record<string, unknown>>,
+): value is Readonly<Record<string, unknown>> & {
+  readonly type: "generated";
+  readonly generatorId: string;
+  readonly seed: number;
+} =>
+  value["type"] === "generated" &&
+  typeof value["generatorId"] === "string" &&
+  value["generatorId"].length > 0 &&
+  Number.isSafeInteger(value["seed"]) &&
+  Number(value["seed"]) >= 0 &&
+  Number(value["seed"]) <= 0xffff_ffff;
+
+const isObservedOrigin = (
+  value: Readonly<Record<string, unknown>>,
+): value is Readonly<Record<string, unknown>> & {
+  readonly type: "observed";
+  readonly adapterId: string;
+} =>
+  value["type"] === "observed" &&
+  typeof value["adapterId"] === "string" &&
+  value["adapterId"].length > 0;
+
+const parseInitialStateOrigin = (value: unknown): InitialStateOrigin | null => {
+  if (!isRecord(value)) return null;
+  if (isGeneratedOrigin(value)) {
+    return { type: value.type, generatorId: value.generatorId, seed: value.seed };
+  }
+  return isObservedOrigin(value) ? { type: value.type, adapterId: value.adapterId } : null;
+};
 
 const isBrowserManifest = (
   value: unknown,
@@ -253,6 +293,7 @@ const isBrowserManifest = (
   typeof value["runId"] === "string" &&
   typeof value["matchId"] === "string" &&
   isRunStatus(value["status"]) &&
+  parseInitialStateOrigin(value["initialStateOrigin"]) !== null &&
   Array.isArray(value["seats"]);
 
 const parseManifest = (
@@ -261,9 +302,12 @@ const parseManifest = (
   readonly runId: string;
   readonly matchId: string;
   readonly status: LoadedRunReport["status"];
+  readonly initialStateOrigin: InitialStateOrigin;
   readonly sessionSeatIds: ReadonlyArray<string>;
 } => {
   if (!isBrowserManifest(value)) throw new Error("The run manifest is invalid.");
+  const initialStateOrigin = parseInitialStateOrigin(value["initialStateOrigin"]);
+  if (initialStateOrigin === null) throw new Error("The run manifest origin is invalid.");
   const sessionSeatIds = value["seats"].flatMap((seat) =>
     isRecord(seat) && typeof seat["seatId"] === "string" && typeof seat["sessionFile"] === "string"
       ? [seat["seatId"]]
@@ -273,7 +317,36 @@ const parseManifest = (
     runId: value["runId"],
     matchId: value["matchId"],
     status: value["status"],
+    initialStateOrigin,
     sessionSeatIds,
+  };
+};
+
+const isGeneratorMatch = (value: unknown): value is GeneratorMatch =>
+  value === "matches-current" ||
+  value === "differs-from-current" ||
+  value === "not-applicable" ||
+  value === "pending";
+
+const isCommandVerification = (value: unknown): value is CommandVerification =>
+  value === "exact" || value === "not-applicable" || value === "pending";
+
+const parseVerification = (
+  value: unknown,
+): {
+  readonly generatorMatch: GeneratorMatch;
+  readonly commandVerification: CommandVerification;
+} => {
+  if (
+    !isRecord(value) ||
+    !isGeneratorMatch(value["generatorMatch"]) ||
+    !isCommandVerification(value["commandVerification"])
+  ) {
+    throw new Error("The run verification report is invalid.");
+  }
+  return {
+    generatorMatch: value["generatorMatch"],
+    commandVerification: value["commandVerification"],
   };
 };
 
@@ -421,6 +494,7 @@ const assertRecordOrder = (
 
 export const loadRunPackage = async (input: RunPackageSnapshot): Promise<LoadedRunReport> => {
   const manifest = parseManifest(input.manifest);
+  const verification = parseVerification(input.verification);
   const records = input.records.map(parseBrowserRecord);
   const build = newTimelineBuild(manifest.matchId);
   let previousOffset = -1;
@@ -440,6 +514,9 @@ export const loadRunPackage = async (input: RunPackageSnapshot): Promise<LoadedR
     frameDurationsMs: frameDurations(build.frames),
     timingSource: "recorded-time",
     status: manifest.status,
+    initialStateOrigin: manifest.initialStateOrigin,
+    generatorMatch: verification.generatorMatch,
+    commandVerification: verification.commandVerification,
     sessionSeatIds: manifest.sessionSeatIds,
     events: build.events,
     negotiation: negotiationView(manifest.matchId, build.negotiations),

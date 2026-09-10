@@ -87,6 +87,7 @@ export const LiveRunViewer = ({ initialSnapshot, initialRun }: LiveRunViewerProp
         const message = JSON.parse(event.data) as {
           readonly manifest: unknown;
           readonly record: unknown;
+          readonly verification: unknown;
         };
         const record = message.record as { readonly index?: unknown };
         const expected = snapshot.current.records.length;
@@ -98,6 +99,7 @@ export const LiveRunViewer = ({ initialSnapshot, initialRun }: LiveRunViewerProp
         void publish({
           manifest: message.manifest,
           records: [...snapshot.current.records, message.record],
+          verification: message.verification,
         });
       } catch {
         void resync();

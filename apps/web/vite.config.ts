@@ -188,7 +188,7 @@ const runPackagePlugin = (directory: string | undefined): Plugin => ({
           for (const record of run.records) {
             if (record.index <= cursor) continue;
             response.write(
-              `id: ${record.index}\ndata: ${JSON.stringify({ manifest: run.manifest, record })}\n\n`,
+              `id: ${record.index}\ndata: ${JSON.stringify({ manifest: run.manifest, record, verification: run.verification })}\n\n`,
             );
             cursor = record.index;
           }
