@@ -274,6 +274,19 @@ describe("negotiation protocol", () => {
     expect(projectNegotiation(later, { type: "player", playerId: "blue" }).events).toHaveLength(
       later.events.length,
     );
+
+    const currentWindowView = projectNegotiation(
+      later,
+      { type: "player", playerId: "blue" },
+      { currentWindowOnly: true },
+    );
+    expect(currentWindowView.events.length).toBeLessThan(later.events.length);
+    expect(currentWindowView.events[0]?.event).toMatchObject({
+      type: "negotiation.window-opened",
+      windowId: later.windowId,
+    });
+    expect(currentWindowView.promises).toEqual(first.promises);
+    expect(currentWindowView.evidence).toEqual(later.evidence);
   });
 
   it("expires conflicting offers after one accepted trade", async () => {

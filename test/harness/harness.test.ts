@@ -222,7 +222,8 @@ describe("agent harness", () => {
 
   it("completes and replays a full deterministic native game after multi-round bargaining", async () => {
     let completedTrade = false;
-    let sawPriorTranscript = false;
+    let sawCurrentWindow = false;
+    let sawPriorClosedWindow = false;
     const result = await Effect.runPromise(
       runGameSteps({
         config: { ...config(4), seed: 43, matchId: "harness-complete-game" },
@@ -235,10 +236,17 @@ describe("agent harness", () => {
           async negotiate(request) {
             if (
               request.negotiation.events.some(
+                ({ event }) => event.type === "negotiation.window-opened",
+              )
+            ) {
+              sawCurrentWindow = true;
+            }
+            if (
+              request.negotiation.events.some(
                 ({ event }) => event.type === "negotiation.window-closed",
               )
             ) {
-              sawPriorTranscript = true;
+              sawPriorClosedWindow = true;
             }
             return {
               action: completedTrade
@@ -274,7 +282,8 @@ describe("agent harness", () => {
       ),
     ).toBeGreaterThanOrEqual(2);
     expect(result.negotiationSession?.closed).toBe(true);
-    expect(sawPriorTranscript).toBe(true);
+    expect(sawCurrentWindow).toBe(true);
+    expect(sawPriorClosedWindow).toBe(false);
     expect(result.negotiations.map(({ sequence }) => sequence)).toEqual(
       Array.from({ length: result.negotiations.length }, (_value, sequence) => sequence),
     );
