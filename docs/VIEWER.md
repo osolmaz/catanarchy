@@ -181,18 +181,15 @@ Diagnostic mode is off by default. It uses the same topology and frame as the no
 
 ## Page layout
 
-The desktop viewer contains:
+The desktop viewer fits one screen without page scrolling:
 
-- Match header with status, turn, phase, frame sequence, and game sequence
-- SVG board
-- Public player summary
-- Dice and bank summary
-- Chat and trade timeline
-- Replay controls
-- Event inspector
-- Connection and projection status
+- SVG board in the left pane, sized to the available height
+- One control strip under the board with step buttons, a frame scrubber, the frame position, and playback speed
+- One sidebar with the phase line, match ID, game sequence, the player table, and one chronological feed
 
-A narrow screen stacks these regions. The board stays first. The current match summary and replay controls follow it. Long timelines and event data use virtualized lists only after measured size requires them.
+The feed shows the newest record first, so the latest decision, message, or binding trade is visible without scrolling. Only the feed scrolls. There is no page header, navigation bar, or section heading; the player table and the feed are self-describing. Connection and projection status join the sidebar when live transport exists.
+
+A narrow screen stacks these regions and lets the page scroll. The board stays first. Long feeds use virtualized lists only after measured size requires them.
 
 ## Replay behavior
 
@@ -270,7 +267,7 @@ The browser must not cache private replay data in persistent storage by default.
 
 ## Accessibility
 
-The viewer supports keyboard control for replay navigation. Buttons have visible focus states and text labels. Playback does not start automatically.
+The viewer supports keyboard control for replay navigation: arrow keys step frames, Home and End jump to the first and last frame, and space toggles playback. Buttons have visible focus states and accessible names. Playback does not start automatically.
 
 The SVG has an accessible match summary outside the graphic. Important status does not depend on color, animation, or hover. Animations respect reduced-motion preferences. Player colors use labels or shapes where confusion is possible.
 

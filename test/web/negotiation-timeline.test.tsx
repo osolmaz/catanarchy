@@ -8,9 +8,24 @@ import type {
 } from "@catanarchy/protocol";
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
-import { NegotiationTimeline } from "../../apps/web/src/NegotiationTimeline.js";
+import { Feed } from "../../apps/web/src/Feed.js";
+import { negotiationFeedItems } from "../../apps/web/src/NegotiationTimeline.js";
 
 const EMPTY: ResourceCounts = { lumber: 0, brick: 0, wool: 0, grain: 0, ore: 0 };
+
+interface TimelineProps {
+  readonly negotiation: NegotiationView;
+  readonly gameEvents: ReadonlyArray<GameEvent>;
+  readonly throughGameSequence?: number;
+}
+
+const NegotiationTimeline = ({ negotiation, gameEvents, throughGameSequence }: TimelineProps) => (
+  <Feed
+    items={negotiationFeedItems(negotiation, gameEvents, throughGameSequence)}
+    empty="No negotiation records."
+    label="Negotiation timeline"
+  />
+);
 
 const event = (sequence: number, payload: NegotiationEvent["event"]): NegotiationEvent => ({
   schema: "catanarchy.negotiation-event.v1",

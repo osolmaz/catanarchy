@@ -1,13 +1,19 @@
 import { observe } from "@catanarchy/engine";
-import { useEffect, useState } from "react";
-import { AgentTracePanel } from "./AgentTracePanel.js";
+import { useCallback, useEffect, useState } from "react";
 import { Board } from "./Board.js";
-import { NegotiationTimeline } from "./NegotiationTimeline.js";
+import { Controls } from "./Controls.js";
+import { Feed } from "./Feed.js";
+import { negotiationFeedItems } from "./NegotiationTimeline.js";
+import { phaseText } from "./phase.js";
+import { Players } from "./Players.js";
 import type { LoadedRunReport, RunTrace } from "./RunReport.js";
+import { decisionFeedItems, sessionSummaries, sessionText } from "./traces.js";
 
 export interface SavedRunViewerProps {
   readonly run: LoadedRunReport;
 }
+
+const SPEEDS = [1, 2, 5, 10, 20] as const;
 
 const gameTraceVisible = (trace: RunTrace, gameSequence: number): boolean =>
   trace.sequence !== undefined && trace.sequence < gameSequence;
@@ -15,33 +21,47 @@ const gameTraceVisible = (trace: RunTrace, gameSequence: number): boolean =>
 const negotiationTraceVisible = (trace: RunTrace, gameSequence: number): boolean =>
   trace.gameSequence !== undefined && trace.gameSequence < gameSequence;
 
-const playbackLabel = (source: LoadedRunReport["timingSource"]): string => {
+const timingNote = (source: LoadedRunReport["timingSource"]): string => {
   switch (source) {
     case "recorded-model-time":
-      return "Recorded model time";
+      return "recorded model time";
     case "mixed":
-      return "Recorded model time with 1-second gaps";
+      return "recorded model time, 1 s gaps";
     case "synthetic":
-      return "Synthetic 1 second per command";
+      return "1 s per command";
   }
 };
 
+/** Optional `?frame=N` selects the initial one-based frame; the URL never carries match data. */
+const initialFrame = (count: number): number => {
+  const requested = Number(new URLSearchParams(window.location.search).get("frame"));
+  return Number.isInteger(requested) && requested >= 1 ? Math.min(requested, count) - 1 : 0;
+};
+
 export const SavedRunViewer = ({ run }: SavedRunViewerProps) => {
-  const [frameIndex, setFrameIndex] = useState(0);
+  const [frameIndex, setFrameIndex] = useState(() => initialFrame(run.states.length));
   const [playing, setPlaying] = useState(false);
-  const [speed, setSpeed] = useState(1);
+  const [speedIndex, setSpeedIndex] = useState(0);
+  const speed = SPEEDS[speedIndex] ?? 1;
   const latestIndex = run.states.length - 1;
   const state = run.states[frameIndex] ?? run.state;
   const observation = observe(state, { type: "public" });
-  const visibleEvents = run.events.filter(({ sequence }) => sequence <= state.sequence);
-  const visibleDecisions = run.decisions.filter((trace) => gameTraceVisible(trace, state.sequence));
-  const visibleNegotiationDecisions = run.negotiationDecisions.filter((trace) =>
-    negotiationTraceVisible(trace, state.sequence),
-  );
+  const sessions = sessionSummaries([...run.decisions, ...run.negotiationDecisions]);
   const visibleNegotiation = {
     ...run.negotiation,
     events: run.negotiation.events.filter(({ gameSequence }) => gameSequence < state.sequence),
   };
+  const items = [
+    ...negotiationFeedItems(visibleNegotiation, run.events, state.sequence),
+    ...decisionFeedItems(
+      run.decisions.filter((trace) => gameTraceVisible(trace, state.sequence)),
+      "decision",
+    ),
+    ...decisionFeedItems(
+      run.negotiationDecisions.filter((trace) => negotiationTraceVisible(trace, state.sequence)),
+      "negotiation-decision",
+    ),
+  ];
 
   useEffect(() => {
     if (!playing || frameIndex >= latestIndex) return;
@@ -53,127 +73,46 @@ export const SavedRunViewer = ({ run }: SavedRunViewerProps) => {
     return () => clearTimeout(timer);
   }, [frameIndex, latestIndex, playing, run.frameDurationsMs, speed]);
 
-  const seek = (index: number): void => {
+  const seek = useCallback((index: number): void => {
     setPlaying(false);
     setFrameIndex(index);
-  };
+  }, []);
+  const togglePlaying = useCallback(() => setPlaying((current) => !current), []);
+  const cycleSpeed = useCallback(() => setSpeedIndex((i) => (i + 1) % SPEEDS.length), []);
 
   return (
-    <main>
-      <header className="hero">
-        <div>
-          <p className="eyebrow">Catanarchy saved agent run</p>
-          <h1>Replay {run.state.matchId}</h1>
-          <p className="subtitle">
-            Step through the complete saved game, negotiation, and model-call traces.
-          </p>
-        </div>
-        <a className="viewer-link" href="?mode=play">
-          Play a new game
-        </a>
-      </header>
-
-      <section className="status-card" aria-live="polite">
-        <div>
-          <span>Match</span>
-          <strong>{state.matchId}</strong>
-        </div>
-        <div>
-          <span>Replay frame</span>
-          <strong>
-            {frameIndex + 1} of {run.states.length}
-          </strong>
-        </div>
-        <div>
-          <span>Game sequence</span>
-          <strong>{state.sequence}</strong>
-        </div>
-        <div className="phase-status">
-          <span>Phase</span>
-          <strong>{state.phase.tag}</strong>
-        </div>
-      </section>
-
-      <section className="game-grid">
-        <div className="board-panel">
-          <Board
-            observation={observation}
-            legalActions={[]}
-            onAction={() => {}}
-            interactive={false}
-          />
-          <div className="replay-controls" aria-label="Saved run replay controls">
-            <button type="button" disabled={frameIndex === 0} onClick={() => seek(0)}>
-              First
-            </button>
-            <button type="button" disabled={frameIndex === 0} onClick={() => seek(frameIndex - 1)}>
-              Previous
-            </button>
-            <button
-              type="button"
-              disabled={frameIndex === latestIndex}
-              onClick={() => setPlaying((current) => !current)}
-            >
-              {playing ? "Pause" : "Play"}
-            </button>
-            <button
-              type="button"
-              disabled={frameIndex === latestIndex}
-              onClick={() => seek(frameIndex + 1)}
-            >
-              Next
-            </button>
-            <button
-              type="button"
-              disabled={frameIndex === latestIndex}
-              onClick={() => seek(latestIndex)}
-            >
-              Last
-            </button>
-            <label>
-              Speed
-              <select value={speed} onChange={(event) => setSpeed(Number(event.target.value))}>
-                <option value={1}>1×</option>
-                <option value={2}>2×</option>
-                <option value={5}>5×</option>
-                <option value={10}>10×</option>
-                <option value={20}>20×</option>
-              </select>
-            </label>
-            <small>{playbackLabel(run.timingSource)}</small>
-          </div>
-        </div>
-
-        <aside>
-          <section className="panel">
-            <h2>Negotiation</h2>
-            <NegotiationTimeline negotiation={visibleNegotiation} gameEvents={visibleEvents} />
-          </section>
-
-          <section className="panel">
-            <h2>Agent sessions and decisions</h2>
-            <AgentTracePanel
-              decisions={visibleDecisions}
-              negotiationDecisions={visibleNegotiationDecisions}
-            />
-          </section>
-
-          <section className="panel">
-            <h2>Event log</h2>
-            <ol className="events">
-              {run.events.map((event) => (
-                <li
-                  key={`${event.sequence}:${event.event.type}`}
-                  className={event.sequence <= state.sequence ? "visible" : "future"}
-                >
-                  <code>{event.sequence}</code>
-                  <span>{event.event.type}</span>
-                </li>
-              ))}
-            </ol>
-          </section>
-        </aside>
-      </section>
+    <main className="viewer">
+      <div className="board-pane">
+        <Board
+          observation={observation}
+          legalActions={[]}
+          onAction={() => {}}
+          interactive={false}
+        />
+      </div>
+      <Controls
+        index={frameIndex}
+        count={run.states.length}
+        onSeek={seek}
+        playback={{
+          playing,
+          onToggle: togglePlaying,
+          speed,
+          onSpeed: cycleSpeed,
+          note: timingNote(run.timingSource),
+        }}
+      />
+      <aside>
+        <header className="status" aria-live="polite">
+          <strong>{phaseText(state)}</strong>
+          <small>
+            <span>{state.matchId}</span> · event {state.sequence} ·{" "}
+            <a href="?mode=play">play locally</a>
+          </small>
+        </header>
+        <Players observation={observation} note={(id) => sessionText(sessions.get(id))} />
+        <Feed items={items} empty="No records yet." label="Run feed" />
+      </aside>
     </main>
   );
 };

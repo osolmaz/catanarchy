@@ -3,16 +3,19 @@ import type {
   CommandResult,
   GameConfig,
   GameEvent,
-  GamePhase,
   GameState,
   LegalAction,
   NegotiationView,
   PlayerColor,
 } from "@catanarchy/protocol";
 import { Effect, Either } from "effect";
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Board } from "./Board.js";
-import { NegotiationTimeline } from "./NegotiationTimeline.js";
+import { Controls } from "./Controls.js";
+import { Feed, type FeedItem } from "./Feed.js";
+import { negotiationFeedItems } from "./NegotiationTimeline.js";
+import { phaseText } from "./phase.js";
+import { Players } from "./Players.js";
 
 interface LocalGame {
   readonly states: ReadonlyArray<GameState>;
@@ -52,51 +55,10 @@ const negotiationForMatch = (
   matchId: string,
 ): NegotiationView => (negotiation?.matchId === matchId ? negotiation : emptyNegotiation(matchId));
 
-const resourceText = (resources: GameState["bank"] | null): string =>
+const handText = (resources: GameState["bank"] | null): string =>
   resources === null
     ? "Hidden"
     : `Lumber ${resources.lumber} · Brick ${resources.brick} · Wool ${resources.wool} · Grain ${resources.grain} · Ore ${resources.ore}`;
-
-type SetupPhase = Extract<GamePhase, { readonly tag: `setup.${string}` }>;
-type TurnPhase = Exclude<GamePhase, SetupPhase>;
-
-const setupPhaseText = (phase: SetupPhase, playerName: string): string => {
-  switch (phase.tag) {
-    case "setup.settlement":
-      return `${playerName}: place a settlement (${phase.direction} round)`;
-    case "setup.road":
-      return `${playerName}: place an adjacent road (${phase.direction} round)`;
-    case "setup.completing":
-      return "Completing initial placement";
-  }
-};
-
-const turnPhaseText = (phase: TurnPhase, playerName: string): string => {
-  switch (phase.tag) {
-    case "turn.roll":
-      return `${playerName}: roll the dice (turn ${phase.turn})`;
-    case "turn.action":
-      return `${playerName}: trade, build, play a card, or end turn after ${phase.dice.join(" + ")}`;
-    case "turn.discard":
-      return `${playerName}: discard ${phase.remaining} resource cards`;
-    case "turn.robber":
-      return `${playerName}: move the robber (${phase.source})`;
-    case "turn.free-road":
-      return `${playerName}: place ${phase.remaining} free road${phase.remaining === 1 ? "" : "s"}`;
-    case "game.finished":
-      return `${playerName}: game complete`;
-  }
-};
-
-const phaseText = (state: GameState): string => {
-  const playerName = state.config.players[state.phase.playerIndex]?.name ?? "Player";
-  if (state.result !== null) {
-    return `${playerName} won with ${state.result.victoryPoints} victory points`;
-  }
-  return state.phase.tag.startsWith("setup.")
-    ? setupPhaseText(state.phase as SetupPhase, playerName)
-    : turnPhaseText(state.phase as TurnPhase, playerName);
-};
 
 const BOARD_ACTIONS = new Set([
   "place-initial-settlement",
@@ -159,22 +121,97 @@ const activePlayerObservation = (state: GameState) => {
   );
 };
 
+const eventText = (record: GameEvent): string => {
+  const event = record.event;
+  const actor = "playerId" in event ? `${event.playerId}: ` : "";
+  const dice = event.type === "dice.rolled" ? ` ${event.dice.join(" + ")}` : "";
+  return `${actor}${event.type}${dice}`;
+};
+
+const eventFeedItems = (
+  events: ReadonlyArray<GameEvent>,
+  through: number,
+): ReadonlyArray<FeedItem> =>
+  events
+    .filter((event) => event.sequence <= through)
+    .map((event) => ({
+      key: `event:${event.sequence}`,
+      sequence: event.sequence,
+      order: 0,
+      kind: "event",
+      text: eventText(event),
+    }));
+
 interface ActionControlsProps {
   readonly actions: ReadonlyArray<LegalAction>;
   readonly onAction: (action: LegalAction) => void;
 }
 
 const ActionControls = ({ actions, onAction }: ActionControlsProps) => {
-  const buttons = actions
-    .filter((action) => !isBoardAction(action))
-    .map((action) => (
-      <button key={action.id} type="button" onClick={() => onAction(action)}>
-        {actionLabel(action)}
-      </button>
-    ));
-  if (actions.length === 0) return <p>No action is available.</p>;
-  if (actions.every(isBoardAction)) return <p>Select a highlighted board location.</p>;
-  return buttons;
+  if (actions.length === 0) return <p className="empty">No action is available.</p>;
+  if (actions.every(isBoardAction)) {
+    return <p className="empty">Select a highlighted board location.</p>;
+  }
+  return (
+    <div className="actions">
+      {actions
+        .filter((action) => !isBoardAction(action))
+        .map((action) => (
+          <button key={action.id} type="button" onClick={() => onAction(action)}>
+            {actionLabel(action)}
+          </button>
+        ))}
+    </div>
+  );
+};
+
+interface NewGameFormProps {
+  readonly onStart: (seed: number, playerCount: number) => void;
+}
+
+const NewGameForm = ({ onStart }: NewGameFormProps) => {
+  const [seedInput, setSeedInput] = useState("42");
+  const [playerCount, setPlayerCount] = useState(4);
+  const [error, setError] = useState<string | null>(null);
+  const submit = (): void => {
+    const seed = Number(seedInput);
+    if (!Number.isSafeInteger(seed) || seed < 0 || seed > 0xffff_ffff) {
+      setError("Seed must be an unsigned 32-bit integer.");
+      return;
+    }
+    setError(null);
+    onStart(seed, playerCount);
+  };
+  return (
+    <form
+      className="new-game"
+      onSubmit={(event) => {
+        event.preventDefault();
+        submit();
+      }}
+    >
+      <label>
+        Seed
+        <input
+          value={seedInput}
+          inputMode="numeric"
+          onChange={(event) => setSeedInput(event.target.value)}
+        />
+      </label>
+      <label>
+        Players
+        <select
+          value={playerCount}
+          onChange={(event) => setPlayerCount(Number(event.target.value))}
+        >
+          <option value={3}>3</option>
+          <option value={4}>4</option>
+        </select>
+      </label>
+      <button type="submit">New game</button>
+      {error === null ? null : <p className="error">{error}</p>}
+    </form>
+  );
 };
 
 export interface AppProps {
@@ -182,8 +219,6 @@ export interface AppProps {
 }
 
 export const App = ({ negotiation }: AppProps = {}) => {
-  const [seedInput, setSeedInput] = useState("42");
-  const [playerCount, setPlayerCount] = useState(4);
   const [game, setGame] = useState<LocalGame>(() => startGame(42, 4));
   const [frameIndex, setFrameIndex] = useState(0);
   const [error, setError] = useState<string | null>(null);
@@ -192,18 +227,20 @@ export const App = ({ negotiation }: AppProps = {}) => {
   const isLive = frameIndex === latestIndex;
   const observation = useMemo(() => activePlayerObservation(state), [state]);
   const actions = isLive ? legalActions(state) : [];
-  const negotiationView = negotiationForMatch(negotiation, state.matchId);
+  const items = [
+    ...eventFeedItems(game.events, state.sequence),
+    ...negotiationFeedItems(
+      negotiationForMatch(negotiation, state.matchId),
+      game.events,
+      state.sequence,
+    ),
+  ];
 
-  const onNewGame = () => {
-    const seed = Number(seedInput);
-    if (!Number.isSafeInteger(seed) || seed < 0 || seed > 0xffff_ffff) {
-      setError("Seed must be an unsigned 32-bit integer.");
-      return;
-    }
+  const onStart = useCallback((seed: number, playerCount: number): void => {
     setGame(startGame(seed, playerCount));
     setFrameIndex(0);
     setError(null);
-  };
+  }, []);
 
   const onAction = (action: LegalAction) => {
     if (!isLive) return;
@@ -221,167 +258,41 @@ export const App = ({ negotiation }: AppProps = {}) => {
     setError(null);
   };
 
+  const cards = observation.ownDevelopmentCards;
+
   return (
-    <main>
-      <header className="hero">
-        <div>
-          <p className="eyebrow">Catanarchy simulator</p>
-          <h1>Play a deterministic game</h1>
-          <p className="subtitle">
-            Place pieces, roll for production, build, earn awards, and inspect the event history.
-          </p>
-        </div>
-        <form
-          className="new-game"
-          onSubmit={(event) => {
-            event.preventDefault();
-            onNewGame();
-          }}
-        >
-          <label>
-            Seed
-            <input
-              value={seedInput}
-              inputMode="numeric"
-              onChange={(event) => setSeedInput(event.target.value)}
-            />
-          </label>
-          <label>
-            Players
-            <select
-              value={playerCount}
-              onChange={(event) => setPlayerCount(Number(event.target.value))}
-            >
-              <option value={3}>3</option>
-              <option value={4}>4</option>
-            </select>
-          </label>
-          <button type="submit">New game</button>
-        </form>
-      </header>
-
-      {error === null ? null : <p className="error">{error}</p>}
-
-      <section className="status-card" aria-live="polite">
-        <div>
-          <span>Match</span>
-          <strong>{state.matchId}</strong>
-        </div>
-        <div>
-          <span>Event sequence</span>
-          <strong>{state.sequence}</strong>
-        </div>
-        <div className="phase-status">
-          <span>Next action</span>
+    <main className="viewer">
+      <div className="board-pane">
+        <Board
+          observation={observation}
+          legalActions={actions}
+          onAction={onAction}
+          interactive={isLive}
+        />
+      </div>
+      <Controls index={frameIndex} count={game.states.length} onSeek={setFrameIndex} />
+      <aside>
+        <header className="status" aria-live="polite">
           <strong>{phaseText(state)}</strong>
-        </div>
-      </section>
-
-      <section className="game-grid">
-        <div className="board-panel">
-          <Board
-            observation={observation}
-            legalActions={actions}
-            onAction={onAction}
-            interactive={isLive}
-          />
-          <div className="replay-controls" aria-label="Replay controls">
-            <button type="button" disabled={frameIndex === 0} onClick={() => setFrameIndex(0)}>
-              First
-            </button>
-            <button
-              type="button"
-              disabled={frameIndex === 0}
-              onClick={() => setFrameIndex((value) => value - 1)}
-            >
-              Previous
-            </button>
-            <span>
-              Frame {frameIndex + 1} of {game.states.length}
-            </span>
-            <button
-              type="button"
-              disabled={frameIndex === latestIndex}
-              onClick={() => setFrameIndex((value) => value + 1)}
-            >
-              Next
-            </button>
-            <button type="button" disabled={isLive} onClick={() => setFrameIndex(latestIndex)}>
-              Live
-            </button>
-          </div>
-        </div>
-
-        <aside>
-          <section className="panel">
-            <h2>Actions</h2>
-            <div className="turn-actions">
-              <ActionControls actions={actions} onAction={onAction} />
-            </div>
-          </section>
-
-          <section className="panel">
-            <h2>Players</h2>
-            <div className="players">
-              {observation.players.map((player) => (
-                <article
-                  key={player.id}
-                  className={player.id === observation.activePlayerId ? "player active" : "player"}
-                >
-                  <span className={`player-dot ${player.color}`} />
-                  <div>
-                    <strong>{player.name}</strong>
-                    <small>
-                      {player.visibleVictoryPoints} visible VP · {player.settlements} settlements ·{" "}
-                      {player.cities} cities · {player.roads} roads · route{" "}
-                      {player.longestRoadLength} · {player.playedKnights} knights ·{" "}
-                      {player.resourceCount} resources · {player.developmentCardCount} development
-                      cards
-                      {player.hasLongestRoad ? " · Longest Road" : ""}
-                      {player.hasLargestArmy ? " · Largest Army" : ""}
-                    </small>
-                  </div>
-                </article>
-              ))}
-            </div>
-            <h3>Active hand</h3>
-            <p className="resource-line">{resourceText(observation.ownResources)}</p>
-            <h3>Total victory points</h3>
-            <p className="resource-line">{observation.ownVictoryPoints ?? "Hidden"}</p>
-            <h3>Development cards</h3>
-            <p className="resource-line">
-              {observation.ownDevelopmentCards === null ||
-              observation.ownDevelopmentCards.length === 0
-                ? "None"
-                : observation.ownDevelopmentCards.map(({ card }) => card).join(" · ")}
-            </p>
-          </section>
-
-          <section className="panel">
-            <h2>Negotiation</h2>
-            <NegotiationTimeline
-              negotiation={negotiationView}
-              gameEvents={game.events}
-              throughGameSequence={state.sequence}
-            />
-          </section>
-
-          <section className="panel">
-            <h2>Event log</h2>
-            <ol className="events">
-              {game.events.map((event) => (
-                <li
-                  key={`${event.sequence}:${event.event.type}`}
-                  className={event.sequence <= state.sequence ? "visible" : "future"}
-                >
-                  <code>{event.sequence}</code>
-                  <span>{event.event.type}</span>
-                </li>
-              ))}
-            </ol>
-          </section>
-        </aside>
-      </section>
+          <small>
+            <span>{state.matchId}</span> · event {state.sequence}
+          </small>
+        </header>
+        <NewGameForm onStart={onStart} />
+        {error === null ? null : <p className="error">{error}</p>}
+        <ActionControls actions={actions} onAction={onAction} />
+        <Players observation={observation} />
+        <p className="hand">
+          <span>{handText(observation.ownResources)}</span>
+          <span>
+            VP <b>{observation.ownVictoryPoints ?? "Hidden"}</b> · Cards{" "}
+            {cards === null || cards.length === 0
+              ? "none"
+              : cards.map(({ card }) => card).join(", ")}
+          </span>
+        </p>
+        <Feed items={items} empty="No events yet." label="Game feed" />
+      </aside>
     </main>
   );
 };

@@ -74,24 +74,36 @@ describe("saved run viewer", () => {
 
     render(<SavedRunViewer run={run} />);
 
-    expect(screen.getByRole("heading", { name: "Replay saved-run-test" })).toBeTruthy();
-    expect(screen.getByRole("link", { name: "Play a new game" }).getAttribute("href")).toBe(
+    expect(screen.getByText("saved-run-test")).toBeTruthy();
+    expect(screen.getByRole("link", { name: "play locally" }).getAttribute("href")).toBe(
       "?mode=play",
     );
-    expect(screen.getByText("1 of 2")).toBeTruthy();
+    expect(screen.getByText("1 / 2")).toBeTruthy();
+    expect(screen.getByText("model · 1 calls · 12 tok · $0.0010")).toBeTruthy();
     expect(screen.queryByText("red (public): I need brick.")).toBeNull();
-    expect(screen.queryByText("test/model")).toBeNull();
+    expect(screen.queryByText("Strong production.")).toBeNull();
     expect(run.frameDurationsMs).toEqual([12]);
     expect(run.timingSource).toBe("recorded-model-time");
 
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
 
-    expect(screen.getByText("2 of 2")).toBeTruthy();
+    expect(screen.getByText("2 / 2")).toBeTruthy();
     expect(screen.getByText("red (public): I need brick.")).toBeTruthy();
-    expect(screen.getByText("test/model")).toBeTruthy();
+    expect(screen.getByText("red: settlement:v:0:0")).toBeTruthy();
+    expect(screen.getByText("model · 12 tok · $0.0010 · 12 ms")).toBeTruthy();
     expect(screen.getByText("Strong production.")).toBeTruthy();
-    expect(screen.getByText(/Raw Pi message history was not saved/)).toBeTruthy();
-    expect(screen.getByRole("option", { name: "20×" })).toBeTruthy();
+    expect(screen.getByText("recorded model time")).toBeTruthy();
+
+    fireEvent.keyDown(window, { key: "ArrowLeft" });
+    expect(screen.getByText("1 / 2")).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("Frame"), { target: { value: "1" } });
+    expect(screen.getByText("2 / 2")).toBeTruthy();
+
+    const speed = screen.getByRole("button", { name: "Playback speed" });
+    expect(speed.textContent).toBe("1×");
+    for (let step = 0; step < 4; step += 1) fireEvent.click(speed);
+    expect(speed.textContent).toBe("20×");
+    expect(screen.getByText("2 / 2")).toBeTruthy();
   });
 
   it("replays multi-event commands only at atomic command boundaries", async () => {
