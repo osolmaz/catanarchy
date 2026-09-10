@@ -19,7 +19,7 @@ const config: GameConfig = {
   ],
 };
 
-const manifest = (status: "partial" | "completed") => ({
+const manifest = (status: "partial" | "completed" | "failed" | "cancelled") => ({
   schema: "catanarchy.run-manifest.v1",
   runId: "live-run",
   matchId: config.matchId,
@@ -115,6 +115,29 @@ describe("live run viewer", () => {
     await waitFor(() => expect(fetch).toHaveBeenCalledOnce());
     act(() => source.onopen?.());
     expect(screen.queryByText("The live connection is reconnecting.")).toBeNull();
+  });
+
+  it("shows a terminal failure before the first game state", () => {
+    vi.stubGlobal("EventSource", FakeEventSource);
+    const records = [
+      runRecord(0, 0, "run.started", { config }),
+      runRecord(1, 1, "run.failed", {
+        gameSequence: -1,
+        negotiationSequence: -1,
+        winnerPlayerId: null,
+        reason: "The Pi match failed.",
+      }),
+    ];
+
+    render(
+      <LiveRunViewer
+        initialSnapshot={{ manifest: manifest("failed"), records }}
+        initialRun={null}
+      />,
+    );
+
+    expect(screen.getByText("The run ended with status: failed.")).toBeTruthy();
+    expect(screen.queryByText("Waiting for the first game state.")).toBeNull();
   });
 
   it("waits for the first command and then follows streamed records", async () => {
