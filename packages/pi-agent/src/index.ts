@@ -1,5 +1,6 @@
 import {
   AgentDecisionError,
+  AgentRunAbort,
   type AgentDecision,
   type AgentDecisionRequest,
   type AgentModelIdentity,
@@ -1185,6 +1186,88 @@ const negotiationForPrompt = (request: AgentNegotiationRequest): PromptNegotiati
 export const buildNegotiationPrompt = (request: AgentNegotiationRequest): string =>
   JSON.stringify(negotiationPromptPayload(request, negotiationForPrompt(request)), undefined, 2);
 
+export interface PiCostBudgetSnapshot {
+  readonly ceilingUsd: number;
+  readonly nextRequestExposureUsd: number;
+  readonly observedUsd: number;
+}
+
+export class PiCostBudget {
+  readonly #ceilingUsd: number;
+  readonly #nextRequestExposureUsd: number;
+  #observedUsd = 0;
+
+  constructor(ceilingUsd: number, nextRequestExposureUsd: number) {
+    if (!Number.isFinite(ceilingUsd) || ceilingUsd <= 0) {
+      throw new Error("The cost ceiling must be a positive finite number.");
+    }
+    if (!Number.isFinite(nextRequestExposureUsd) || nextRequestExposureUsd <= 0) {
+      throw new Error("The next-request cost exposure must be a positive finite number.");
+    }
+    if (nextRequestExposureUsd > ceilingUsd) {
+      throw new Error("The next-request cost exposure exceeds the cost ceiling.");
+    }
+    this.#ceilingUsd = ceilingUsd;
+    this.#nextRequestExposureUsd = nextRequestExposureUsd;
+  }
+
+  snapshot(): PiCostBudgetSnapshot {
+    return {
+      ceilingUsd: this.#ceilingUsd,
+      nextRequestExposureUsd: this.#nextRequestExposureUsd,
+      observedUsd: this.#observedUsd,
+    };
+  }
+
+  async run<T extends { readonly usage?: AgentUsage }>(operation: () => Promise<T>): Promise<T> {
+    if (this.#observedUsd + this.#nextRequestExposureUsd > this.#ceilingUsd) {
+      throw new AgentRunAbort({ message: "The Pi run cost ceiling cannot admit another request." });
+    }
+    try {
+      const result = await operation();
+      this.#addUsage(result.usage);
+      return result;
+    } catch (error) {
+      if (error instanceof AgentDecisionError) this.#addUsage(error.usage);
+      throw error;
+    }
+  }
+
+  #addUsage(usage: AgentUsage | undefined): void {
+    if (usage === undefined) return;
+    if (!Number.isFinite(usage.cost) || usage.cost < 0) {
+      throw new AgentRunAbort({ message: "The provider returned invalid cost usage." });
+    }
+    this.#observedUsd += usage.cost;
+  }
+}
+
+export const withPiCostBudget =
+  (createAgent: SeatAgentFactory, budget: PiCostBudget): SeatAgentFactory =>
+  async (player) => {
+    const agent = await createAgent(player);
+    const negotiate = agent.negotiate?.bind(agent);
+    return {
+      ...(agent.model === undefined ? {} : { model: agent.model }),
+      async decide(request) {
+        return budget.run(async () => agent.decide(request));
+      },
+      ...(negotiate === undefined
+        ? {}
+        : {
+            async negotiate(request: AgentNegotiationRequest) {
+              return budget.run(async () => negotiate.call(agent, request));
+            },
+          }),
+      async cancel() {
+        await agent.cancel();
+      },
+      async dispose() {
+        await agent.dispose();
+      },
+    };
+  };
+
 export const createPiSeatAgent = (
   model: PiModelReference,
   channel: PiDecisionChannel,
@@ -1329,6 +1412,49 @@ export const createPiAgentFactory = (options: PiAgentFactoryOptions): SeatAgentF
     await registerChannelSession(options, player, channel);
     return createPiSeatAgent(reference, channel);
   };
+};
+
+export const pinOpenRouterProvider = (
+  runtime: ModelRuntime,
+  references: ReadonlyArray<PiModelReference>,
+  providerSlug: string,
+): void => {
+  if (!/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/u.test(providerSlug)) {
+    throw new Error("The OpenRouter provider must be a lowercase provider slug.");
+  }
+  const modelIds = [
+    ...new Set(
+      references.filter(({ provider }) => provider === "openrouter").map(({ modelId }) => modelId),
+    ),
+  ];
+  if (modelIds.length === 0) {
+    throw new Error("An OpenRouter provider route requires at least one OpenRouter model.");
+  }
+  const routedModels = modelIds.map((modelId) => {
+    const model = runtime.getModel("openrouter", modelId);
+    if (model === undefined) throw new Error(`Unknown Pi model: openrouter/${modelId}`);
+    return {
+      id: model.id,
+      name: model.name,
+      api: model.api,
+      reasoning: model.reasoning,
+      ...(model.thinkingLevelMap === undefined ? {} : { thinkingLevelMap: model.thinkingLevelMap }),
+      input: [...model.input],
+      cost: model.cost,
+      contextWindow: model.contextWindow,
+      maxTokens: model.maxTokens,
+      ...(model.samplingParams === undefined ? {} : { samplingParams: model.samplingParams }),
+      ...(model.headers === undefined ? {} : { headers: model.headers }),
+      compat: {
+        ...model.compat,
+        openRouterRouting: {
+          allow_fallbacks: false,
+          only: [providerSlug],
+        },
+      },
+    };
+  });
+  runtime.registerProvider("openrouter", { models: routedModels });
 };
 
 export const applyEnvironmentAuthentication = async (

@@ -199,6 +199,10 @@ export class AgentDecisionError extends Data.TaggedError("AgentDecisionError")<{
   readonly usage?: AgentUsage;
 }> {}
 
+export class AgentRunAbort extends Data.TaggedError("AgentRunAbort")<{
+  readonly message: string;
+}> {}
+
 const CANCELLATION_GRACE_MS = 1_000;
 const DISPOSAL_GRACE_MS = 1_000;
 const MAX_TIMER_DELAY_MS = 0x7fff_ffff;
@@ -457,6 +461,10 @@ interface ChosenAction {
   readonly traces: ReadonlyArray<DecisionTrace>;
 }
 
+const rethrowRunAbort = (error: unknown): void => {
+  if (error instanceof AgentRunAbort) throw error;
+};
+
 const chooseAction = async (
   agent: SeatAgent,
   request: Omit<AgentDecisionRequest, "signal">,
@@ -486,6 +494,7 @@ const chooseAction = async (
       traces.push(trace);
       await record({ kind: "game.decision", payload: trace });
     } catch (error) {
+      rethrowRunAbort(error);
       const failure = failureCategory(error);
       const trace = failedAttemptTrace(
         agent,
@@ -660,6 +669,7 @@ const chooseNegotiationAction = async (
       await record({ kind: "negotiation.decision", payload: trace });
       return { applied, traces };
     } catch (error) {
+      rethrowRunAbort(error);
       const failure = failureCategory(error);
       if (failure === "cancellation-timeout") unavailableAgents.add(agent);
       const trace = failedNegotiationTrace(
@@ -935,7 +945,7 @@ const runWithAgents = async (
 
 export const runInitialPlacement = (
   options: InitialPlacementOptions,
-): Effect.Effect<InitialPlacementResult, HarnessError> =>
+): Effect.Effect<InitialPlacementResult, HarnessError | AgentRunAbort> =>
   Effect.acquireUseRelease(
     Effect.tryPromise({
       try: async () => createAgents(options.config, options.createAgent),
@@ -946,7 +956,7 @@ export const runInitialPlacement = (
         try: async () =>
           runWithAgents(options, agents, (state) => state.phase.tag !== "turn.roll", false),
         catch: (error) =>
-          error instanceof HarnessError
+          error instanceof HarnessError || error instanceof AgentRunAbort
             ? error
             : new HarnessError({ message: "The initial-placement match failed." }),
       }),
@@ -955,7 +965,7 @@ export const runInitialPlacement = (
 
 export const runGameSteps = (
   options: GameStepOptions,
-): Effect.Effect<MatchRunResult, HarnessError> => {
+): Effect.Effect<MatchRunResult, HarnessError | AgentRunAbort> => {
   try {
     positiveInteger(options.maxDecisions, "maxDecisions");
   } catch (error) {
@@ -980,7 +990,7 @@ export const runGameSteps = (
             true,
           ),
         catch: (error) =>
-          error instanceof HarnessError
+          error instanceof HarnessError || error instanceof AgentRunAbort
             ? error
             : new HarnessError({ message: "The game-step run failed." }),
       }),

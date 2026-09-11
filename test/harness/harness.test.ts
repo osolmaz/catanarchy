@@ -1,6 +1,7 @@
 import { replay } from "@catanarchy/engine";
 import {
   AgentDecisionError,
+  AgentRunAbort,
   createFirstLegalAgent,
   runGameSteps,
   runInitialPlacement,
@@ -192,6 +193,47 @@ const scoringAction = (request: AgentDecisionRequest): LegalAction => {
 };
 
 describe("agent harness", () => {
+  it("stops a match when an agent aborts the complete run", async () => {
+    const error = await Effect.runPromise(
+      Effect.flip(
+        runGameSteps({
+          config: config(4),
+          maxDecisions: 1,
+          createAgent: async () =>
+            inertAgent(async () => {
+              throw new AgentRunAbort({ message: "stop the run" });
+            }),
+        }),
+      ),
+    );
+
+    expect(error).toBeInstanceOf(AgentRunAbort);
+  });
+
+  it("stops a match when negotiation aborts the complete run", async () => {
+    const error = await Effect.runPromise(
+      Effect.flip(
+        runGameSteps({
+          config: config(4),
+          maxDecisions: 30,
+          negotiationPolicy: { maxRounds: 1, maxMessageLength: 160, maxOpenOffers: 4 },
+          createAgent: async () => ({
+            async decide(request) {
+              return { actionId: firstAction(request).id };
+            },
+            async negotiate() {
+              throw new AgentRunAbort({ message: "stop the run" });
+            },
+            async cancel() {},
+            async dispose() {},
+          }),
+        }),
+      ),
+    );
+
+    expect(error).toBeInstanceOf(AgentRunAbort);
+  });
+
   it("runs a bounded normal-turn step after setup", async () => {
     const gameConfig: GameConfig = { ...config(4), seed: 0, matchId: "harness-steps" };
     const result = await Effect.runPromise(

@@ -1,15 +1,24 @@
 #!/usr/bin/env node
 
-import { writeFile } from "node:fs/promises";
+import { access, mkdir, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { STANDARD_BOARD_GENERATOR_ID } from "@catanarchy/engine";
-import { runGameSteps, type AgentUsage, type MatchRunResult } from "@catanarchy/harness";
+import {
+  runGameSteps,
+  type AgentUsage,
+  type MatchActivity,
+  type MatchRunResult,
+} from "@catanarchy/harness";
 import {
   applyEnvironmentAuthentication,
   assertModelsAvailable,
   createPiAgentFactory,
   ModelRuntime,
   parseModelReference,
+  PiCostBudget,
+  pinOpenRouterProvider,
+  withPiCostBudget,
   type PiAgentFactoryOptions,
   type PiModelReference,
 } from "@catanarchy/pi-agent";
@@ -68,6 +77,13 @@ const finalizationGraceMs = integerArgument("finalization-grace-ms", 60_000, 1, 
 const maxPlanningSteps = integerArgument("max-planning-steps", 8, 1, 1_000);
 const maxAttempts = integerArgument("max-attempts", 1, 1);
 const maxOutputTokens = optionalIntegerArgument("max-output-tokens", 1);
+const pauseAfterDecisions = optionalIntegerArgument("pause-after-decisions", 1);
+const pauseAfterDecisionsReport = pauseAfterDecisions ?? null;
+const resumeSignal = argument("resume-signal");
+if ((pauseAfterDecisions === undefined) !== (resumeSignal === undefined)) {
+  throw new Error("--pause-after-decisions and --resume-signal must be used together.");
+}
+const resumeSignalPath = resumeSignal === undefined ? null : resolve(resumeSignal);
 const contextWindowTokens = integerArgument("context-window-tokens", 131_072, 32_768);
 const costCeilingUsd = numberArgument("cost-ceiling-usd", 5);
 const thinkingLevel = thinkingArgument();
@@ -76,6 +92,10 @@ const negotiationRounds = integerArgument("negotiation-rounds", 1, 0, 10);
 const maxMessageLength = integerArgument("max-message-length", 500, 1, 10_000);
 const maxOpenOffers = integerArgument("max-open-offers", 8, 1, 100);
 const outputPath = argument("output");
+const modelsPath = argument("models-path");
+const modelsPathReport = modelsPath === undefined ? null : resolve(modelsPath);
+const openRouterProvider = argument("openrouter-provider");
+const openRouterProviderReport = openRouterProvider ?? null;
 const modelReferences = (
   argument("models") ?? "openai/gpt-5.6-luna,huggingface/deepseek-ai/DeepSeek-V4-Flash"
 )
@@ -118,6 +138,7 @@ const maximumProviderCalls = maximumRequests * maximumModelMessagesPerRequest * 
 interface Estimate {
   readonly lowUsd: number;
   readonly highUsd: number;
+  readonly nextRequestHighUsd: number;
 }
 
 interface PricingRates {
@@ -176,6 +197,7 @@ const estimateCost = (
   return {
     lowUsd: maximumRequests * lowPerRequest,
     highUsd: maximumProviderCalls * highPerRequest,
+    nextRequestHighUsd: maximumModelMessagesPerRequest * 6 * highPerRequest,
   };
 };
 
@@ -206,6 +228,8 @@ const totalUsage = (result: MatchRunResult): AgentUsage =>
 
 const summarize = (result: MatchRunResult) => ({
   matchId: result.state.matchId,
+  modelsPath: modelsPathReport,
+  openRouterProvider: openRouterProviderReport,
   seed,
   sequence: result.state.sequence,
   phase: result.state.phase,
@@ -225,22 +249,78 @@ const summarize = (result: MatchRunResult) => ({
   models: modelReferences,
 });
 
+const createModelRuntime = async (): Promise<ModelRuntime> => {
+  if (modelsPath === undefined) return ModelRuntime.create();
+  const cacheDirectory = resolve(homedir(), ".cache", "catanarchy");
+  await mkdir(cacheDirectory, { recursive: true });
+  return ModelRuntime.create({
+    modelsPath: resolve(modelsPath),
+    modelsStorePath: resolve(cacheDirectory, "models-store.json"),
+  });
+};
+
+const waitForResumeSignal = async (): Promise<void> => {
+  if (resumeSignalPath === null) return;
+  for (;;) {
+    try {
+      await access(resumeSignalPath);
+      return;
+    } catch (error) {
+      if (
+        !(error instanceof Error) ||
+        !("code" in error) ||
+        (error as NodeJS.ErrnoException).code !== "ENOENT"
+      ) {
+        throw error;
+      }
+      await new Promise((resolveWait) => setTimeout(resolveWait, 250));
+    }
+  }
+};
+
+const activityRecorder = (recorder: RunRecorder): ((activity: MatchActivity) => Promise<void>) => {
+  let completedDecisions = 0;
+  let initialCommandCompleted = false;
+  return async (activity) => {
+    await recorder.recordActivity(activity);
+    if (activity.kind !== "game.command-completed") return;
+    if (!initialCommandCompleted) {
+      initialCommandCompleted = true;
+      return;
+    }
+    completedDecisions += 1;
+    if (completedDecisions !== pauseAfterDecisions) return;
+    console.error(JSON.stringify({ event: "run-paused", completedDecisions, resumeSignalPath }));
+    await waitForResumeSignal();
+    console.error(JSON.stringify({ event: "run-resumed", completedDecisions }));
+  };
+};
+
+const configureProviderRouting = (runtime: ModelRuntime): void => {
+  if (openRouterProvider !== undefined) {
+    pinOpenRouterProvider(runtime, modelReferences, openRouterProvider);
+  }
+};
+
 const main = async (): Promise<void> => {
-  const runtime = await ModelRuntime.create();
+  const runtime = await createModelRuntime();
+  configureProviderRouting(runtime);
   await applyEnvironmentAuthentication(runtime, modelReferences);
   await assertModelsAvailable(runtime, modelReferences);
 
   const estimate = estimateCost(runtime, modelReferences);
-  if (estimate.highUsd >= costCeilingUsd) {
+  if (estimate.nextRequestHighUsd > costCeilingUsd) {
     throw new Error(
-      `The conservative cost estimate $${estimate.highUsd.toFixed(4)} is not below the $${costCeilingUsd.toFixed(2)} cost ceiling.`,
+      `The next request can cost up to $${estimate.nextRequestHighUsd.toFixed(4)}, above the $${costCeilingUsd.toFixed(2)} cost ceiling.`,
     );
   }
+  const costBudget = new PiCostBudget(costCeilingUsd, estimate.nextRequestHighUsd);
   console.error(
     JSON.stringify({
       event: "live-test-budget",
       lowUsd: Number(estimate.lowUsd.toFixed(6)),
       highUsd: Number(estimate.highUsd.toFixed(6)),
+      nextRequestHighUsd: Number(estimate.nextRequestHighUsd.toFixed(6)),
       ceilingUsd: costCeilingUsd,
       maximumRequests,
       maximumModelMessagesPerRequest,
@@ -252,6 +332,10 @@ const main = async (): Promise<void> => {
       finalizationGraceMs,
       maxPlanningSteps,
       negotiationRounds,
+      modelsPath: modelsPathReport,
+      openRouterProvider: openRouterProviderReport,
+      pauseAfterDecisions: pauseAfterDecisionsReport,
+      resumeSignalPath,
       note: "The providers do not expose an immutable per-run billing cap. The fixed request and token limits bound this smoke test.",
     }),
   );
@@ -276,22 +360,25 @@ const main = async (): Promise<void> => {
       runGameSteps({
         config,
         maxDecisions,
-        createAgent: createPiAgentFactory({
-          models: modelReferences,
-          modelRuntime: runtime,
-          thinkingLevel,
-          ...(maxOutputTokens === undefined ? {} : { maxOutputTokens }),
-          contextWindowTokens,
-          turnTimeMs,
-          finalizationGraceMs,
-          maxPlanningSteps,
-          sessionDirectory: recorder.sessionsDirectory,
-          onSessionCreated: async (player, session) =>
-            recorder.registerPiSession(player.id, session),
-        }),
+        createAgent: withPiCostBudget(
+          createPiAgentFactory({
+            models: modelReferences,
+            modelRuntime: runtime,
+            thinkingLevel,
+            ...(maxOutputTokens === undefined ? {} : { maxOutputTokens }),
+            contextWindowTokens,
+            turnTimeMs,
+            finalizationGraceMs,
+            maxPlanningSteps,
+            sessionDirectory: recorder.sessionsDirectory,
+            onSessionCreated: async (player, session) =>
+              recorder.registerPiSession(player.id, session),
+          }),
+          costBudget,
+        ),
         decisionTimeoutMs: outerDecisionTimeoutMs,
         maxAttempts,
-        onActivity: async (activity) => recorder.recordActivity(activity),
+        onActivity: activityRecorder(recorder),
         ...(negotiationRounds === 0
           ? {}
           : {
@@ -311,7 +398,7 @@ const main = async (): Promise<void> => {
     throw error;
   }
 
-  const summary = summarize(result);
+  const summary = { ...summarize(result), costBudget: costBudget.snapshot() };
   console.log(JSON.stringify({ ...summary, runDirectory }, undefined, 2));
   if (outputPath !== undefined) {
     await writeFile(outputPath, `${JSON.stringify({ summary, result }, undefined, 2)}\n`, {
