@@ -425,47 +425,32 @@ aside {
 
 /* Board */
 
-.hex {
-  stroke: #efe6cf;
-  stroke-width: 2.5;
-  stroke-linejoin: round;
-}
-
-.terrain-label {
-  fill: rgb(23 31 27 / 70%);
-  font-size: 7px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
+.terrain-art,
+.board-piece {
   pointer-events: none;
-  text-transform: uppercase;
 }
 
 .number-token {
-  fill: #f7edd3;
-  stroke: #8a7b60;
-  stroke-width: 1.2;
+  fill: #f5f5ef;
+  stroke: #d1d2ca;
+  stroke-width: 0.8;
+  filter: drop-shadow(1px 1px 1px rgb(20 37 24 / 35%));
 }
 
 .number-label {
-  fill: #20241f;
-  font-size: 13px;
-  font-weight: 700;
+  fill: #073c19;
+  font-family: "Arial Black", system-ui, sans-serif;
+  font-size: 14px;
+  font-weight: 900;
 }
 
 .number-label.hot,
 .pips.hot circle {
-  fill: #b12927;
+  fill: #bd111b;
 }
 
 .pips circle {
-  fill: #34372f;
-}
-
-.robber path,
-.robber circle {
-  fill: #262b28;
-  stroke: #f7edd3;
-  stroke-width: 1.4;
+  fill: #073c19;
 }
 
 .harbor-line {
@@ -491,18 +476,6 @@ aside {
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-}
-
-.road {
-  stroke: #1f2422;
-  stroke-width: 1.4;
-}
-
-.settlement,
-.city {
-  stroke: #1f2422;
-  stroke-width: 1.5;
-  stroke-linejoin: round;
 }
 
 .legal-settlement,

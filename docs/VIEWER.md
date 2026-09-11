@@ -4,7 +4,7 @@
 
 The first web slice is implemented as a trusted local game client. It starts seeded three-player and four-player games, renders the standard board, submits commands to the native engine, shows public scores, award progress, and the active player's private state, and moves through accepted-command history. It supports native games from setup through a terminal winner.
 
-A trusted local report mode can load a Pi CLI result selected through `CATANARCHY_RUN_FILE`. It validates and replays authoritative game events at complete command boundaries. It shows the board, negotiation timeline, and saved model-call traces for the selected frame. Controls support first, previous, play, pause, next, last, and 1×, 2×, 5×, 10×, or 20× playback. Old reports use recorded model-call durations and a one-second fallback because they do not contain exact chronological offsets. Raw Pi session messages are not present because those match sessions were ephemeral and were disposed.
+A trusted local report mode can load a Pi CLI result selected through `CATANARCHY_RUN_FILE`. It validates and replays authoritative game events at complete command boundaries. It shows the board, negotiation timeline, and saved model-call traces for the selected frame. Controls support first, previous, play, pause, next, last, and selectable playback speeds from 1× through 1000×. Old reports use recorded model-call durations and a one-second fallback because they do not contain exact chronological offsets. Raw Pi session messages are not present because those match sessions were ephemeral and were disposed.
 
 New Pi runs use the [run log format](RUN_LOG.md). The harness writes exact timing, game events, negotiation events, model requests, and decisions while the match runs. Pi writes one native session file for each seat. The trusted local viewer follows new records through server-sent events, reconnects after a dropped stream, and reloads when it finds a sequence gap. It can download each seat's Pi session.
 
@@ -25,7 +25,7 @@ The viewer also helps engine development. A wrong edge, harbor, road, or settlem
 
 ## Scope
 
-The first release supports the regular three-player and four-player base-game board defined in the [engine design](ENGINE.md). It renders original geometric shapes and text. It does not use copied board artwork or game assets.
+The first release supports the regular three-player and four-player base-game board defined in the [engine design](ENGINE.md). The web viewer uses Colonist terrain, robber, road, settlement, and city art listed in [Third-party assets](../THIRD_PARTY_ASSETS.md). It draws number tokens and harbors as semantic SVG elements. The engine and agent protocol do not depend on viewer art.
 
 The current slice includes native setup, dice rolls, building, development cards, maritime and domestic trade, negotiation, discards, robber choices, awards, scores, and victory. It excludes remote commands, matchmaking, accounts, ratings, map editing, and expansion layouts. It also excludes public access to referee state.
 
@@ -351,7 +351,7 @@ Complete for the standard board and setup pieces. The layered SVG uses canonical
 
 ### Step 4: replay viewer
 
-Complete for trusted local runs. Old reports replay at command boundaries with recorded model time where available. New run directories replay every visible timeline record with exact recorded timing. The board changes only after the full event batch for one game command. The status area shows whether the board was generated or observed. It separately shows the current-generator comparison and native command-verification result. Controls support buttons, keyboard input, a range control, direct URL frame selection, and five playback speeds. Viewer-safe exported packages remain planned.
+Complete for trusted local runs. Old reports replay at command boundaries with recorded model time where available. New run directories replay every visible timeline record with exact recorded timing. The board changes only after the full event batch for one game command. The status area shows whether the board was generated or observed. It separately shows the current-generator comparison and native command-verification result. Controls support buttons, keyboard input, a time-based range control, direct URL frame selection, and ten playback speeds. Viewer-safe exported packages remain planned.
 
 ### Step 5: live viewing
 
