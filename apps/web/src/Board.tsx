@@ -17,6 +17,10 @@ const VIEW_BOX = "20 0 500 460";
 const TILE_WIDTH = SCALE * SQRT_THREE;
 const TILE_HEIGHT = SCALE * 2;
 const NUMBER_TOKEN_OFFSET_Y = 14;
+const NUMBER_TOKEN_SIZE = 24;
+const SHORE_ART_SIZE = TILE_HEIGHT;
+const PORT_ART_SIZE = 35;
+const DOCK_ART_SIZE = 33;
 const TERRAIN_ART: Readonly<Record<Terrain, string>> = {
   forest: "/assets/colonist/tile-forest.svg",
   hill: "/assets/colonist/tile-hill.svg",
@@ -79,11 +83,43 @@ const midpoint = ([a, b]: readonly [Point, Point]): Point => ({
   y: (a.y + b.y) / 2,
 });
 
-const HARBOR_OFFSET = 40;
+const HARBOR_OFFSET = 38;
 
-const harborRatio = (kind: HarborKind): string => (kind === "generic" ? "3:1" : "2:1");
+const portArt = (kind: HarborKind): string => `/assets/colonist/port-${kind}.svg`;
 
-const harborResource = (kind: HarborKind): string => (kind === "generic" ? "any" : kind);
+const SHORE_ROTATION_BY_EDGES: Readonly<Record<string, string>> = {
+  "3,4": "0",
+  "2,3": "60",
+  "1,2": "120",
+  "0,1": "180",
+  "0,5": "neg120",
+  "4,5": "neg60",
+  "3,4,5": "0",
+  "2,3,4": "60",
+  "1,2,3": "120",
+  "0,1,2": "180",
+  "0,1,5": "neg120",
+  "0,4,5": "neg60",
+};
+
+const shoreArt = (edgeIndexes: ReadonlyArray<number>): string => {
+  const rotation = SHORE_ROTATION_BY_EDGES[edgeIndexes.join(",")];
+  if (rotation === undefined) {
+    throw new Error(`A standard coastal hex has an invalid edge set: ${edgeIndexes.join(",")}.`);
+  }
+  return `/assets/colonist/shore-${edgeIndexes.length}-${rotation}.svg`;
+};
+
+const dockArt = (from: Point, to: Point): string => {
+  const deltaX = to.x - from.x;
+  const horizontal = Math.abs(deltaX) < 1 ? 0 : Math.sign(deltaX);
+  const vertical = Math.sign(to.y - from.y);
+  let orientation: string;
+  if (horizontal === 0) orientation = vertical > 0 ? "0" : "180";
+  else if (horizontal > 0) orientation = vertical > 0 ? "neg120" : "neg60";
+  else orientation = vertical > 0 ? "120" : "60";
+  return `/assets/colonist/dock-${orientation}.svg`;
+};
 
 /** Unit normal of the edge that points away from the board center. */
 const outwardNormal = ([a, b]: readonly [Point, Point]): Point => {
@@ -98,25 +134,19 @@ const probabilityPips = (number: number): number => 6 - Math.abs(7 - number);
 
 const NumberToken = ({ center, number }: { center: Point; number: number }) => {
   const pips = probabilityPips(number);
-  const hot = number === 6 || number === 8;
   const y = center.y + NUMBER_TOKEN_OFFSET_Y;
   return (
-    <g data-number-token={number} aria-label={`${number} with ${pips} probability pips`}>
-      <rect x={center.x - 13.5} y={y - 15} width="27" height="30" rx="3" className="number-token" />
-      <text
-        x={center.x}
-        y={y + 1}
-        textAnchor="middle"
-        className={hot ? "number-label hot" : "number-label"}
-      >
-        {number}
-      </text>
-      <g data-probability-pips={pips} className={hot ? "pips hot" : "pips"}>
-        {Array.from({ length: pips }, (_, index) => (
-          <circle key={index} cx={center.x + (index - (pips - 1) / 2) * 3} cy={y + 9} r="1" />
-        ))}
-      </g>
-    </g>
+    <image
+      href={`/assets/colonist/number-${number}.svg`}
+      x={center.x - NUMBER_TOKEN_SIZE / 2}
+      y={y - NUMBER_TOKEN_SIZE / 2}
+      width={NUMBER_TOKEN_SIZE}
+      height={NUMBER_TOKEN_SIZE}
+      className="number-art"
+      data-number-token={number}
+      data-probability-pips={pips}
+      aria-label={`${number} with ${pips} probability pips`}
+    />
   );
 };
 
@@ -164,26 +194,32 @@ const HexLayer = ({ observation }: { observation: GameObservation }) => {
   );
 };
 
-const CoastLayer = ({
-  observation,
-  geometry: g,
-}: {
-  observation: GameObservation;
-  geometry: Geometry;
-}) => (
-  <g className="coast-layer" aria-hidden="true">
-    {observation.topology.coastalRing.map((edgeId) => {
-      const [a, b] = g.edgePoints(edgeId);
-      return (
-        <g key={edgeId} data-coast-edge={edgeId}>
-          <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} className="coast-waterline" />
-          <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} className="coast-foam" />
-          <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} className="coast-sand" />
-        </g>
-      );
-    })}
-  </g>
-);
+const ShoreLayer = ({ observation }: { observation: GameObservation }) => {
+  const coastalEdges = new Set(observation.topology.coastalRing);
+  return (
+    <g className="shore-layer" aria-hidden="true">
+      {observation.topology.hexes.map((hex) => {
+        const edgeIndexes = hex.edgeIds
+          .map((edgeId, index) => (coastalEdges.has(edgeId) ? index : -1))
+          .filter((index) => index >= 0);
+        if (edgeIndexes.length === 0) return null;
+        const center = point(3 * hex.q, 2 * hex.r + hex.q);
+        return (
+          <image
+            key={hex.id}
+            href={shoreArt(edgeIndexes)}
+            x={center.x - SHORE_ART_SIZE / 2}
+            y={center.y - SHORE_ART_SIZE / 2}
+            width={SHORE_ART_SIZE}
+            height={SHORE_ART_SIZE}
+            className="shore-art"
+            data-shore-art={hex.id}
+          />
+        );
+      })}
+    </g>
+  );
+};
 
 const HarborLayer = ({
   observation,
@@ -200,35 +236,31 @@ const HarborLayer = ({
       const at = { x: mid.x + normal.x * HARBOR_OFFSET, y: mid.y + normal.y * HARBOR_OFFSET };
       return (
         <g key={harbor.edgeId} data-harbor-edge={harbor.edgeId}>
-          {ends.map((end) => (
-            <g key={`${end.x}:${end.y}`}>
-              <line x1={end.x} y1={end.y} x2={at.x} y2={at.y + 10} className="harbor-pier-shadow" />
-              <line x1={end.x} y1={end.y} x2={at.x} y2={at.y + 10} className="harbor-pier" />
-            </g>
-          ))}
-          <g transform={`translate(${at.x} ${at.y})`} className="harbor-boat">
-            <path d="M-14,8 Q0,15 14,8 L10,16 Q0,21 -10,16 Z" className="harbor-hull" />
-            <line x1="0" y1="-18" x2="0" y2="11" className="harbor-mast" />
-            <path d="M-1,-17 L-1,8 L13,5 Q8,-6 -1,-17 Z" className="harbor-sail" />
-            <path d="M1,-18 L10,-15 L1,-12 Z" className="harbor-flag" />
-            <text x="5" y="-3" textAnchor="middle" className="harbor-label">
-              {harborRatio(harbor.kind)}
-            </text>
-            <text x="5" y="3" textAnchor="middle" className="harbor-resource">
-              {harborResource(harbor.kind)}
-            </text>
-          </g>
+          {ends.map((end) => {
+            const center = midpoint([at, end]);
+            return (
+              <image
+                key={`${end.x}:${end.y}`}
+                href={dockArt(at, end)}
+                x={center.x - DOCK_ART_SIZE / 2}
+                y={center.y - DOCK_ART_SIZE / 2}
+                width={DOCK_ART_SIZE}
+                height={DOCK_ART_SIZE}
+                className="dock-art"
+              />
+            );
+          })}
+          <image
+            href={portArt(harbor.kind)}
+            x={at.x - PORT_ART_SIZE / 2}
+            y={at.y - PORT_ART_SIZE / 2}
+            width={PORT_ART_SIZE}
+            height={PORT_ART_SIZE}
+            className="port-art"
+            aria-label={`${harbor.kind} harbor on ${harbor.edgeId}`}
+          />
         </g>
       );
-    })}
-  </g>
-);
-
-const IntersectionLayer = ({ observation }: { observation: GameObservation }) => (
-  <g className="intersection-layer" aria-hidden="true">
-    {observation.topology.vertices.map((vertex) => {
-      const at = point(vertex.x, vertex.y);
-      return <circle key={vertex.id} cx={at.x} cy={at.y} r="5.5" className="intersection" />;
     })}
   </g>
 );
@@ -387,10 +419,9 @@ export const Board = ({ observation, legalActions, onAction, interactive }: Boar
   const g = geometry(observation);
   return (
     <svg className="board" viewBox={VIEW_BOX} role="group" aria-label="Catan game board">
-      <CoastLayer observation={observation} geometry={g} />
+      <ShoreLayer observation={observation} />
       <HexLayer observation={observation} />
       <HarborLayer observation={observation} geometry={g} />
-      <IntersectionLayer observation={observation} />
       <RoadLayer observation={observation} geometry={g} />
       <BuildingLayer observation={observation} geometry={g} />
       {interactive ? (

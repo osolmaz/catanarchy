@@ -4,7 +4,9 @@ The web viewer includes board art from Colonist.
 
 ## Colonist board art
 
-Colonist publishes its [asset pack](https://tinyurl.com/Colonist-Assets) and [board builder](https://www.figma.com/community/file/1222835270932934554/colonist-io-board-builder) from its [press kit](https://colonist.io/press-kit). The files below were downloaded from `https://cdn.colonist.io/dist/assets/` on September 11, 2026.
+Colonist publishes its [asset pack](https://tinyurl.com/Colonist-Assets) and [Board Builder](https://www.figma.com/community/file/1222835270932934554/colonist-io-board-builder) from its [press kit](https://colonist.io/press-kit).
+
+The terrain, robber, road, settlement, and city files were downloaded from `https://cdn.colonist.io/dist/assets/` on September 11, 2026.
 
 | Local files              | Colonist source names                            |
 | ------------------------ | ------------------------------------------------ |
@@ -19,6 +21,17 @@ Colonist publishes its [asset pack](https://tinyurl.com/Colonist-Assets) and [bo
 | `settlement-{color}.svg` | `settlement_{color}.{content-hash}.svg`          |
 | `city-{color}.svg`       | `city_{color}.{content-hash}.svg`                |
 
-The four imported colors are red, blue, white, and orange. Colonist does not publish separate number-token, coast, or harbor files in this asset set. Catanarchy draws these parts as semantic SVG over and around the imported tiles.
+The four piece colors are red, blue, white, and orange.
+
+The number, shore, dock, and port files were exported from the official Colonist Board Builder Figma file on September 11, 2026.
+
+| Local files          | Figma components                         |
+| -------------------- | ---------------------------------------- |
+| `number-{2..12}.svg` | Probability tokens, except seven         |
+| `shore-{2,3}-*.svg`  | Two-edge and three-edge shore rotations  |
+| `dock-*.svg`         | Six dock orientations                    |
+| `port-{kind}.svg`    | Five resource ports and the generic port |
+
+The Board Builder identifies Demi Yilmaz as its creator and is licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). The exported SVG files keep the component geometry, colors, and labels from that source.
 
 These files remain Colonist material and are not covered by Catanarchy's MIT license. The simulator, protocol, agents, and run files do not depend on this art. Models receive structured game state rather than these images.
