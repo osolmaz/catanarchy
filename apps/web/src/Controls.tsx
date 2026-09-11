@@ -6,6 +6,9 @@ export interface Playback {
   readonly speed: number;
   readonly onSpeed: () => void;
   readonly note: string;
+  readonly elapsedMs: number;
+  readonly totalMs: number;
+  readonly onSeekTime: (offsetMs: number) => void;
 }
 
 interface ControlsProps {
@@ -28,6 +31,14 @@ const ICON = {
   last: "M12 2h2v12h-2zM2 2l8 6-8 6z",
   play: "M4 2l10 6-10 6z",
   pause: "M3 2h4v12H3zM9 2h4v12H9z",
+};
+
+export const formatPlaybackTime = (milliseconds: number): string => {
+  const totalSeconds = Math.floor(Math.max(0, milliseconds) / 1_000);
+  const hours = Math.floor(totalSeconds / 3_600);
+  const minutes = Math.floor((totalSeconds % 3_600) / 60);
+  const seconds = totalSeconds % 60;
+  return `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
 };
 
 const isTyping = (target: EventTarget | null): boolean =>
@@ -109,14 +120,32 @@ export const Controls = (props: ControlsProps) => {
       >
         <Icon d={ICON.last} />
       </button>
-      <input
-        type="range"
-        aria-label="Frame"
-        min={0}
-        max={last}
-        value={index}
-        onChange={(event) => onSeek(Number(event.target.value))}
-      />
+      {playback === undefined ? (
+        <input
+          type="range"
+          aria-label="Frame"
+          min={0}
+          max={last}
+          value={index}
+          onChange={(event) => onSeek(Number(event.target.value))}
+        />
+      ) : (
+        <input
+          type="range"
+          aria-label="Replay time"
+          aria-valuetext={`${formatPlaybackTime(playback.elapsedMs)} of ${formatPlaybackTime(playback.totalMs)}`}
+          min={0}
+          max={Math.max(1, playback.totalMs)}
+          step={1}
+          value={playback.elapsedMs}
+          onChange={(event) => playback.onSeekTime(Number(event.target.value))}
+        />
+      )}
+      {playback === undefined ? null : (
+        <span className="time" aria-live="off">
+          {formatPlaybackTime(playback.elapsedMs)} / {formatPlaybackTime(playback.totalMs)}
+        </span>
+      )}
       <span className="frame">
         {index + 1} / {count}
       </span>

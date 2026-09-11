@@ -137,11 +137,20 @@ p {
   accent-color: var(--accent);
 }
 
-.controls .frame {
-  min-width: 4.5rem;
+.controls .frame,
+.controls .time {
   color: var(--muted);
   font-variant-numeric: tabular-nums;
   text-align: center;
+  white-space: nowrap;
+}
+
+.controls .frame {
+  min-width: 4.5rem;
+}
+
+.controls .time {
+  min-width: 10.5rem;
 }
 
 .controls small {

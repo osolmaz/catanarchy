@@ -8,8 +8,10 @@ import {
 
 export interface TimestampPlayback {
   readonly frameIndex: number;
+  readonly offsetMs: number;
   readonly playing: boolean;
   readonly seek: (index: number) => void;
+  readonly seekOffset: (offsetMs: number) => void;
   readonly togglePlaying: () => void;
 }
 
@@ -20,6 +22,7 @@ export const useTimestampPlayback = (
   speed: number,
 ): TimestampPlayback => {
   const [frameIndex, setFrameIndex] = useState(initialFrameIndex);
+  const [offsetMs, setOffsetMs] = useState(frames[initialFrameIndex]?.offsetMs ?? 0);
   const [playing, setPlaying] = useState(false);
   const previousFrameCount = useRef(frames.length);
   const frameIndexRef = useRef(frameIndex);
@@ -35,13 +38,16 @@ export const useTimestampPlayback = (
   useEffect(() => {
     const oldCount = previousFrameCount.current;
     previousFrameCount.current = frames.length;
-    setFrameIndex((current) => {
-      const followLive = live && !playingRef.current && current >= oldCount - 1;
-      const next = followLive ? latestIndex : Math.min(current, latestIndex);
-      frameIndexRef.current = next;
-      if (!playingRef.current) playbackOffsetRef.current = frames[next]?.offsetMs ?? 0;
-      return next;
-    });
+    const current = frameIndexRef.current;
+    const followLive = live && !playingRef.current && current >= oldCount - 1;
+    const next = followLive ? latestIndex : Math.min(current, latestIndex);
+    frameIndexRef.current = next;
+    setFrameIndex(next);
+    if (!playingRef.current) {
+      const nextOffsetMs = frames[next]?.offsetMs ?? 0;
+      playbackOffsetRef.current = nextOffsetMs;
+      setOffsetMs(nextOffsetMs);
+    }
   }, [frames, latestIndex, live]);
 
   useEffect(() => {
@@ -65,6 +71,7 @@ export const useTimestampPlayback = (
     const advance = (): void => {
       const targetOffsetMs = playbackOffsetAt(anchor, performance.now(), finalOffsetMs);
       playbackOffsetRef.current = targetOffsetMs;
+      setOffsetMs(targetOffsetMs);
       const nextIndex = frameIndexAtOffset(frames, targetOffsetMs);
       if (nextIndex !== frameIndexRef.current) {
         frameIndexRef.current = nextIndex;
@@ -77,8 +84,8 @@ export const useTimestampPlayback = (
         return;
       }
       const nextOffsetMs = frames[nextIndex + 1]?.offsetMs ?? finalOffsetMs;
-      const delayMs = Math.max(1, Math.ceil((nextOffsetMs - targetOffsetMs) / speed));
-      timer = setTimeout(advance, delayMs);
+      const frameDelayMs = Math.max(1, Math.ceil((nextOffsetMs - targetOffsetMs) / speed));
+      timer = setTimeout(advance, Math.min(frameDelayMs, 100));
     };
 
     advance();
@@ -96,19 +103,49 @@ export const useTimestampPlayback = (
       playingRef.current = false;
       setPlaying(false);
       playbackAnchorRef.current = null;
-      playbackOffsetRef.current = frames[index]?.offsetMs ?? 0;
+      const nextOffsetMs = frames[index]?.offsetMs ?? 0;
+      playbackOffsetRef.current = nextOffsetMs;
+      setOffsetMs(nextOffsetMs);
       frameIndexRef.current = index;
       setFrameIndex(index);
     },
     [frames],
   );
+  const seekOffset = useCallback(
+    (requestedOffsetMs: number): void => {
+      const finalOffsetMs = frames[latestIndex]?.offsetMs ?? 0;
+      const nextOffsetMs = Math.min(finalOffsetMs, Math.max(0, requestedOffsetMs));
+      const nextIndex = frameIndexAtOffset(frames, nextOffsetMs);
+      playingRef.current = false;
+      setPlaying(false);
+      playbackAnchorRef.current = null;
+      playbackOffsetRef.current = nextOffsetMs;
+      setOffsetMs(nextOffsetMs);
+      frameIndexRef.current = nextIndex;
+      setFrameIndex(nextIndex);
+    },
+    [frames, latestIndex],
+  );
   const togglePlaying = useCallback((): void => {
     setPlaying((current) => {
-      const next = !current && frameIndexRef.current < latestIndex;
+      if (current) {
+        const finalOffsetMs = frames[latestIndex]?.offsetMs ?? 0;
+        const anchor = playbackAnchorRef.current;
+        const nextOffsetMs =
+          anchor === null
+            ? playbackOffsetRef.current
+            : playbackOffsetAt(anchor, performance.now(), finalOffsetMs);
+        playbackOffsetRef.current = nextOffsetMs;
+        setOffsetMs(nextOffsetMs);
+        playbackAnchorRef.current = null;
+        playingRef.current = false;
+        return false;
+      }
+      const next = frameIndexRef.current < latestIndex;
       playingRef.current = next;
       return next;
     });
-  }, [latestIndex]);
+  }, [frames, latestIndex]);
 
-  return { frameIndex, playing, seek, togglePlaying };
+  return { frameIndex, offsetMs, playing, seek, seekOffset, togglePlaying };
 };

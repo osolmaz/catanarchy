@@ -44,14 +44,18 @@ describe("timestamp playback hook", () => {
     expect(result.current.frameIndex).toBe(1);
   });
 
-  it("seeks to an exact frame and stops playback", () => {
+  it("seeks by frame or exact replay time and stops playback", () => {
     vi.useFakeTimers();
     const { result } = renderHook(() => useTimestampPlayback(frames, 0, false, 1));
 
     act(() => result.current.togglePlaying());
-    act(() => result.current.seek(2));
-
-    expect(result.current.frameIndex).toBe(2);
+    act(() => result.current.seekOffset(1_500));
+    expect(result.current.frameIndex).toBe(1);
+    expect(result.current.offsetMs).toBe(1_500);
     expect(result.current.playing).toBe(false);
+
+    act(() => result.current.seek(2));
+    expect(result.current.frameIndex).toBe(2);
+    expect(result.current.offsetMs).toBe(2_000);
   });
 });
