@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { formatPlaybackTime } from "../../apps/web/src/Controls.js";
 import { frameIndexAtOffset, playbackOffsetAt } from "../../apps/web/src/playback.js";
 
 describe("timestamp playback", () => {
@@ -24,6 +25,12 @@ describe("timestamp playback", () => {
     expect(frameIndexAtOffset(frames, 100)).toBe(2);
     expect(frameIndexAtOffset(frames, 900)).toBe(3);
     expect(frameIndexAtOffset(frames, 1_500)).toBe(4);
+  });
+
+  it("formats the replay clock with stable hours, minutes, and seconds", () => {
+    expect(formatPlaybackTime(0)).toBe("0:00:00");
+    expect(formatPlaybackTime(17_021_999)).toBe("4:43:41");
+    expect(formatPlaybackTime(-1)).toBe("0:00:00");
   });
 
   it("rejects an empty replay", () => {

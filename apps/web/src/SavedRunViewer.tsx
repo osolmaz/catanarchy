@@ -72,6 +72,8 @@ const initialFrame = (count: number, live: boolean): number => {
       : 0;
 };
 
+const totalPlaybackTime = (run: LoadedRunReport): number => run.frames.at(-1)?.offsetMs ?? 0;
+
 const gameFeedItems = (events: ReadonlyArray<LoadedRunReport["events"][number]>): FeedItem[] =>
   events.map((event) => ({
     key: `event:${event.sequence}`,
@@ -84,12 +86,13 @@ const gameFeedItems = (events: ReadonlyArray<LoadedRunReport["events"][number]>)
 export const SavedRunViewer = ({ run, live = false }: SavedRunViewerProps) => {
   const [speedIndex, setSpeedIndex] = useState(0);
   const speed = SPEEDS[speedIndex] ?? 1;
-  const { frameIndex, playing, seek, togglePlaying } = useTimestampPlayback(
+  const { frameIndex, offsetMs, playing, seek, seekOffset, togglePlaying } = useTimestampPlayback(
     run.frames,
     initialFrame(run.frames.length, live),
     live,
     speed,
   );
+  const totalMs = totalPlaybackTime(run);
   const frame = run.frames[frameIndex] ?? run.frames.at(-1);
   if (frame === undefined) throw new Error("The run has no replay frame.");
   const state = frame.state;
@@ -133,6 +136,9 @@ export const SavedRunViewer = ({ run, live = false }: SavedRunViewerProps) => {
           speed,
           onSpeed: cycleSpeed,
           note: timingNote(run.timingSource),
+          elapsedMs: offsetMs,
+          totalMs,
+          onSeekTime: seekOffset,
         }}
       />
       <aside>

@@ -97,8 +97,9 @@ describe("saved run viewer", () => {
 
     fireEvent.keyDown(window, { key: "ArrowLeft" });
     expect(screen.getByText("1 / 2")).toBeTruthy();
-    fireEvent.change(screen.getByLabelText("Frame"), { target: { value: "1" } });
+    fireEvent.change(screen.getByLabelText("Replay time"), { target: { value: "12" } });
     expect(screen.getByText("2 / 2")).toBeTruthy();
+    expect(screen.getByText("0:00:00 / 0:00:00")).toBeTruthy();
 
     const speed = screen.getByRole("button", { name: "Playback speed" });
     expect(speed.textContent).toBe("1×");
