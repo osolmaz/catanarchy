@@ -22,16 +22,28 @@ const fetchJson = async (path: string): Promise<unknown> => {
   return response.json();
 };
 
-const runView = async (): Promise<ReactNode> => {
+type LoadingReporter = (message: string) => Promise<void>;
+
+const LoadingRun = ({ message }: { readonly message: string }) => (
+  <main className="run-loading" aria-live="polite">
+    <span className="loading-spinner" aria-hidden="true" />
+    <strong>{message}</strong>
+  </main>
+);
+
+const runView = async (reportLoading: LoadingReporter): Promise<ReactNode> => {
   const localPlayRequested = new URLSearchParams(window.location.search).get("mode") === "play";
   if (__CATANARCHY_RUN_SOURCE__ === null || localPlayRequested) return <App />;
   try {
     if (__CATANARCHY_RUN_SOURCE__ === "report") {
-      return (
-        <SavedRunViewer run={await loadRunReport(await fetchJson("/__catanarchy/run-report"))} />
-      );
+      await reportLoading("Loading saved run…");
+      const report = await fetchJson("/__catanarchy/run-report");
+      await reportLoading("Replaying saved run…");
+      return <SavedRunViewer run={await loadRunReport(report)} />;
     }
+    await reportLoading("Downloading recorded game…");
     const snapshot = (await fetchJson("/__catanarchy/run-snapshot")) as RunPackageSnapshot;
+    await reportLoading(`Replaying ${snapshot.records.length.toLocaleString()} records…`);
     let initialRun: LoadedRunReport | null = null;
     try {
       initialRun = await loadRunPackage(snapshot);
@@ -49,4 +61,15 @@ const runView = async (): Promise<ReactNode> => {
   }
 };
 
-createRoot(root).render(<StrictMode>{await runView()}</StrictMode>);
+const application = createRoot(root);
+const renderView = (view: ReactNode): void => {
+  application.render(<StrictMode>{view}</StrictMode>);
+};
+const nextPaint = (): Promise<void> =>
+  new Promise((resolve) => requestAnimationFrame(() => resolve()));
+const reportLoading = async (message: string): Promise<void> => {
+  renderView(<LoadingRun message={message} />);
+  await nextPaint();
+};
+renderView(<LoadingRun message="Opening replay…" />);
+void runView(reportLoading).then(renderView);

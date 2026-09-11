@@ -101,10 +101,11 @@ describe("saved run viewer", () => {
     expect(screen.getByText("2 / 2")).toBeTruthy();
     expect(screen.getByText("0:00:00 / 0:00:00")).toBeTruthy();
 
-    const speed = screen.getByRole("button", { name: "Playback speed" });
-    expect(speed.textContent).toBe("1×");
-    for (let step = 0; step < 4; step += 1) fireEvent.click(speed);
-    expect(speed.textContent).toBe("20×");
+    const speed = screen.getByRole("combobox", { name: "Playback speed" });
+    expect((speed as HTMLSelectElement).value).toBe("100");
+    expect(screen.getByRole("option", { name: "1000×" })).toBeTruthy();
+    fireEvent.change(speed, { target: { value: "1000" } });
+    expect((speed as HTMLSelectElement).value).toBe("1000");
     expect(screen.getByText("2 / 2")).toBeTruthy();
   });
 

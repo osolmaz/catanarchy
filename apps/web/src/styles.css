@@ -125,8 +125,14 @@ p {
 
 .controls .speed {
   width: auto;
-  min-width: 42px;
+  min-width: 64px;
+  height: 30px;
+  border: 0;
+  border-radius: 6px;
   padding: 0 0.5rem;
+  color: #fff;
+  background: var(--accent);
+  cursor: pointer;
   font-variant-numeric: tabular-nums;
 }
 
@@ -211,13 +217,24 @@ aside {
   transform: translateX(-50%);
 }
 
-.waiting {
+.waiting,
+.run-loading {
   display: grid;
   place-content: center;
+  justify-items: center;
   gap: 1rem;
   min-height: 100%;
   padding: 2rem;
   text-align: center;
+}
+
+.loading-spinner {
+  width: 2rem;
+  height: 2rem;
+  border: 3px solid var(--line);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
 }
 
 .error {
@@ -516,6 +533,12 @@ aside {
   }
 }
 
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 @media (width <= 900px) {
   body {
     overflow: auto;
@@ -542,7 +565,8 @@ aside {
 @media (prefers-reduced-motion: reduce) {
   .legal-road,
   .legal-settlement,
-  .legal-city {
+  .legal-city,
+  .loading-spinner {
     animation: none;
   }
 }

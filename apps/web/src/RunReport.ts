@@ -1,4 +1,4 @@
-import { replay } from "@catanarchy/engine";
+import { applyEvent, replay } from "@catanarchy/engine";
 import type {
   GameEvent,
   GameState,
@@ -134,8 +134,23 @@ const commandBatchEnds = (events: ReadonlyArray<GameEvent>): ReadonlyArray<numbe
 const replayStates = async (
   events: ReadonlyArray<GameEvent>,
   ends: ReadonlyArray<number>,
-): Promise<ReadonlyArray<GameState>> =>
-  Promise.all(ends.map((end) => Effect.runPromise(replay(events.slice(0, end)))));
+): Promise<ReadonlyArray<GameState>> => {
+  const verifiedFinalState = await Effect.runPromise(replay(events));
+  const first = events[0];
+  if (first === undefined || first.event.type !== "game.created") {
+    throw new Error("The run has no initial game state.");
+  }
+  let state = first.event.state;
+  let eventIndex = 1;
+  const states: GameState[] = [state];
+  for (const end of ends.slice(1)) {
+    state = events.slice(eventIndex, end).reduce(applyEvent, state);
+    states.push(state);
+    eventIndex = end;
+  }
+  states[states.length - 1] = verifiedFinalState;
+  return states;
+};
 
 const SYNTHETIC_FRAME_DURATION_MS = 1_000;
 
@@ -412,10 +427,19 @@ const addGameEvent = (build: TimelineBuild, payload: unknown): void => {
   build.events.push(payload);
 };
 
-const completeGameCommand = async (
-  build: TimelineBuild,
-  record: BrowserRunRecord,
-): Promise<void> => {
+const stateAfterCommandBatch = (
+  state: GameState | undefined,
+  batch: ReadonlyArray<GameEvent>,
+): GameState => {
+  if (state !== undefined) return batch.reduce(applyEvent, state);
+  const first = batch[0];
+  if (batch.length !== 1 || first?.event.type !== "game.created") {
+    throw new Error("The run timeline has no valid initial game state.");
+  }
+  return first.event.state;
+};
+
+const completeGameCommand = (build: TimelineBuild, record: BrowserRunRecord): void => {
   if (!isRecord(record.payload)) throw new Error("The command marker is invalid.");
   const batch = build.events.slice(build.completedGameEventCount);
   const last = batch.at(-1);
@@ -431,7 +455,7 @@ const completeGameCommand = async (
   ) {
     throw new Error("The command marker does not match its game-event batch.");
   }
-  build.state = await Effect.runPromise(replay(build.events));
+  build.state = stateAfterCommandBatch(build.state, batch);
   build.completedGameEventCount = build.events.length;
   pushFrame(build, record.offsetMs);
 };
@@ -455,13 +479,13 @@ const addDecision = (
   pushFrame(build, offsetMs);
 };
 
-const consumeRecord = async (build: TimelineBuild, record: BrowserRunRecord): Promise<void> => {
+const consumeRecord = (build: TimelineBuild, record: BrowserRunRecord): void => {
   switch (record.kind) {
     case "game.event":
       addGameEvent(build, record.payload);
       break;
     case "game.command-completed":
-      await completeGameCommand(build, record);
+      completeGameCommand(build, record);
       break;
     case "negotiation.event":
       addNegotiationEvent(build, record.payload, record.offsetMs);
@@ -501,13 +525,16 @@ export const loadRunPackage = async (input: RunPackageSnapshot): Promise<LoadedR
   for (const [index, record] of records.entries()) {
     assertRecordOrder(record, manifest.runId, index, previousOffset);
     previousOffset = record.offsetMs;
-    await consumeRecord(build, record);
+    consumeRecord(build, record);
   }
   if (build.events.length !== build.completedGameEventCount && manifest.status === "completed") {
     throw new Error("The completed run ends inside a game-event batch.");
   }
-  const finalState = build.frames.at(-1)?.state;
-  if (finalState === undefined) throw new Error("The run package has no complete game state.");
+  const completeEvents = build.events.slice(0, build.completedGameEventCount);
+  const finalState = await Effect.runPromise(replay(completeEvents));
+  const lastFrame = build.frames.at(-1);
+  if (lastFrame === undefined) throw new Error("The run package has no complete game state.");
+  build.frames[build.frames.length - 1] = { ...lastFrame, state: finalState };
   return {
     state: finalState,
     frames: build.frames,
