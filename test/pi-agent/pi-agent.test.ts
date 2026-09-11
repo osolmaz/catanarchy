@@ -260,6 +260,9 @@ describe("Pi action selection", () => {
     expect(prompt).toContain('"longestRoadPlayerId": null');
     expect(prompt).toContain('"playerId": "red"');
     expect(prompt).toContain('"actionId": "settlement:');
+    expect(prompt).toContain(
+      "Copy actionId exactly from this request's legalActions list; never infer an actionId from the board.",
+    );
     expect(prompt).toContain('"adjacentHexes": [');
   });
 
@@ -493,6 +496,9 @@ describe("Pi negotiation selection", () => {
     expect(prompt).toContain('"task": "Choose one negotiation operation');
     expect(prompt).toContain('"ownResources"');
     expect(prompt).toContain('"negotiation"');
+    expect(prompt).toContain(
+      "Every make-offer operation requires targetPlayerId, including a public offer.",
+    );
     expect(prompt).not.toContain("developmentDeck");
   });
 

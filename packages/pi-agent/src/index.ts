@@ -407,7 +407,12 @@ const NegotiationToolParameters = Type.Object({
     Type.String({ description: "Recipient for a directed message, offer, or promise" }),
   ),
   text: Type.Optional(Type.String()),
-  targetPlayerId: Type.Optional(Type.String()),
+  targetPlayerId: Type.Optional(
+    Type.String({
+      description:
+        "Required for every make-offer operation, including a public offer; use another player ID",
+    }),
+  ),
   offerId: Type.Optional(Type.String()),
   give: Type.Optional(ResourceCountsParameters),
   receive: Type.Optional(ResourceCountsParameters),
@@ -556,8 +561,8 @@ const systemPromptFor = (
 Use only information in the current request and prior authorized messages in this session.
 Choose strategically, but do not invent hidden state, commands, offers, or resource cards.
 You may call inspect_game several times while planning. Each inspection uses turn time.
-For a game-action request, finish by calling choose_action exactly once with one listed actionId.
-For a negotiation request, finish by calling choose_negotiation exactly once with one valid operation.
+For a game-action request, finish by calling choose_action exactly once. Copy its actionId exactly from the current legalActions list; never infer an actionId from the board.
+For a negotiation request, finish by calling choose_negotiation exactly once with one valid operation. Every make-offer operation requires targetPlayerId, including a public offer.
 Do not call the other selection tool. The reason is optional and must be one short sentence.`;
 
 interface PromptPhaseResult {
@@ -892,7 +897,7 @@ const createSdkDecisionChannel = async ({
     description: "Select one action ID from the current legal-action list and finish the decision.",
     promptSnippet: "Select one legal Catan action and finish the decision",
     promptGuidelines: [
-      "Call choose_action exactly once with an actionId from the current request.",
+      "Call choose_action exactly once and copy actionId exactly from the current legalActions list; never infer an actionId from the board.",
     ],
     parameters: Type.Object({
       actionId: Type.String({ description: "One exact actionId from the legalActions list" }),
@@ -910,6 +915,7 @@ const createSdkDecisionChannel = async ({
     promptGuidelines: [
       "Call choose_negotiation exactly once during a negotiation request.",
       "Use exact offer and promise IDs from the current request.",
+      "For every make-offer operation, set targetPlayerId to another player, including when scope is public.",
       "For direct records, set scope to direct and scopePlayerId to the recipient.",
     ],
     parameters: NegotiationToolParameters,
@@ -1066,6 +1072,8 @@ export const buildDecisionPrompt = (request: AgentDecisionRequest): string =>
   JSON.stringify(
     {
       task: "Choose one legal Catan action and call choose_action.",
+      selectionRule:
+        "Copy actionId exactly from this request's legalActions list; never infer an actionId from the board.",
       matchId: request.matchId,
       sequence: request.sequence,
       playerId: request.playerId,
@@ -1163,6 +1171,7 @@ const negotiationPromptPayload = (
   rules: [
     "Passing is always allowed.",
     "Only the active turn player can make a new offer.",
+    "Every make-offer operation requires targetPlayerId, including a public offer.",
     "Only an open offer target can counter, accept, or reject it.",
     "Only an open offer proposer can withdraw it.",
     "Offers must exchange at least one resource each way and cannot exchange the same resource type both ways.",
