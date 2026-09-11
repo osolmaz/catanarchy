@@ -17,6 +17,13 @@ describe("web simulator", () => {
     expect(screen.getByRole("group", { name: "Catan game board" })).toBeTruthy();
     expect(screen.getAllByRole("button", { name: /^Place settlement on / })).toHaveLength(54);
     expect(container.querySelectorAll("[data-hex-id]")).toHaveLength(19);
+    expect(container.querySelectorAll("[data-terrain-art]")).toHaveLength(19);
+    expect(
+      [...container.querySelectorAll("[data-terrain-art]")].every((image) =>
+        image.getAttribute("href")?.startsWith("/assets/colonist/tile-"),
+      ),
+    ).toBe(true);
+    expect(container.querySelector('.robber[href="/assets/colonist/robber.svg"]')).toBeTruthy();
     expect(container.querySelectorAll("[data-number-token]")).toHaveLength(18);
     expect(
       container.querySelectorAll('[data-number-token="6"] [data-probability-pips="5"]'),
@@ -36,8 +43,19 @@ describe("web simulator", () => {
     fireEvent.click(settlement);
 
     expect(container.querySelectorAll("[data-building-vertex]")).toHaveLength(1);
+    expect(
+      container.querySelector('[data-building-vertex][href="/assets/colonist/settlement-red.svg"]'),
+    ).toBeTruthy();
     expect(container.querySelectorAll("[data-legal-vertex]")).toHaveLength(0);
     expect(container.querySelectorAll("[data-legal-edge]").length).toBeGreaterThanOrEqual(2);
+
+    const road = container.querySelector("[data-legal-edge]");
+    if (road === null) throw new Error("Expected a legal road.");
+    fireEvent.click(road);
+
+    expect(
+      container.querySelector('[data-road-edge][href="/assets/colonist/road-red.svg"]'),
+    ).toBeTruthy();
   });
 
   it("completes four-player initial placement through board clicks", () => {

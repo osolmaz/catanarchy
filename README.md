@@ -27,7 +27,7 @@ New Pi matches write a run directory. Open it in the viewer from another termina
 CATANARCHY_RUN_DIR=/path/printed/by/play-pi npm run dev
 ```
 
-The viewer follows new records as they arrive. You can pause, move through the timeline, return to the latest record, or replay at 1×, 2×, 5×, 10×, or 20×. Each Pi seat has a link to its native Pi session JSONL file after that seat makes its first model request.
+The viewer follows new records as they arrive. You can pause, move through the timeline, return to the latest record, or select a replay speed from 1× through 1000×. Each Pi seat has a link to its native Pi session JSONL file after that seat makes its first model request.
 
 The web app and run viewer are trusted local views. They can use authoritative state, private traces, and private Pi sessions. A future remote viewer will receive only public or seat-authorized observations.
 
@@ -74,8 +74,8 @@ npm run check
 
 The project uses Effect with strict TypeScript. Oxlint and Oxfmt check the source. Vitest runs unit, property, replay, privacy, and component tests. SimpleDoc and Slophammer check the repository. Mutation testing is intentionally disabled.
 
-The code is split into protocol, engine, harness, Pi agent, CLI, and web modules. The engine stays deterministic and does not depend on Pi, browsers, networks, or databases. Catanarchy contains no game artwork or copied game assets.
+The code is split into protocol, engine, harness, Pi agent, CLI, and web modules. The engine stays deterministic and does not depend on Pi, browsers, networks, or databases. Colonist board art is isolated in the web viewer and never forms part of an agent observation.
 
 ## License
 
-[MIT](LICENSE)
+The Catanarchy code is [MIT](LICENSE). The imported Colonist viewer art is listed separately in [Third-party assets](THIRD_PARTY_ASSETS.md).
