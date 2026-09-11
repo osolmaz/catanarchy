@@ -25,7 +25,7 @@ The viewer also helps engine development. A wrong edge, harbor, road, or settlem
 
 ## Scope
 
-The first release supports the regular three-player and four-player base-game board defined in the [engine design](ENGINE.md). The web viewer uses Colonist terrain, robber, road, settlement, and city art listed in [Third-party assets](../THIRD_PARTY_ASSETS.md). It draws number tokens and harbors as semantic SVG elements. The engine and agent protocol do not depend on viewer art.
+The first release supports the regular three-player and four-player base-game board defined in the [engine design](ENGINE.md). The web viewer uses Colonist terrain, robber, road, settlement, and city art listed in [Third-party assets](../THIRD_PARTY_ASSETS.md). It draws compact number tokens, the layered coast, intersections, piers, and harbor boats as semantic SVG elements. The engine and agent protocol do not depend on viewer art.
 
 The current slice includes native setup, dice rolls, building, development cards, maritime and domestic trade, negotiation, discards, robber choices, awards, scores, and victory. It excludes remote commands, matchmaking, accounts, ratings, map editing, and expansion layouts. It also excludes public access to referee state.
 
