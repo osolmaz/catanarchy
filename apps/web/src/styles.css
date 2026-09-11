@@ -426,117 +426,14 @@ aside {
 /* Board */
 
 .terrain-art,
-.board-piece {
+.number-art,
+.shore-art,
+.dock-art,
+.port-art,
+.board-piece,
+.shore-layer,
+.harbor-layer {
   pointer-events: none;
-}
-
-.number-token {
-  fill: #f5f5ef;
-  stroke: #d1d2ca;
-  stroke-width: 0.8;
-  filter: drop-shadow(1px 1px 1px rgb(20 37 24 / 35%));
-}
-
-.number-label {
-  fill: #073c19;
-  font-family: "Arial Black", system-ui, sans-serif;
-  font-size: 12px;
-  font-weight: 900;
-}
-
-.number-label.hot,
-.pips.hot circle {
-  fill: #bd111b;
-}
-
-.pips circle {
-  fill: #073c19;
-}
-
-.coast-layer,
-.harbor-layer,
-.intersection-layer {
-  pointer-events: none;
-}
-
-.coast-waterline,
-.coast-foam,
-.coast-sand {
-  stroke-linecap: round;
-}
-
-.coast-waterline {
-  stroke: #58bce1;
-  stroke-width: 32;
-}
-
-.coast-foam {
-  stroke: #d7f0ec;
-  stroke-width: 24;
-}
-
-.coast-sand {
-  stroke: #f0d17d;
-  stroke-width: 16;
-}
-
-.harbor-pier-shadow,
-.harbor-pier {
-  stroke-linecap: butt;
-}
-
-.harbor-pier-shadow {
-  stroke: #70451f;
-  stroke-width: 8;
-}
-
-.harbor-pier {
-  stroke: #d98e27;
-  stroke-dasharray: 4 2;
-  stroke-width: 5.5;
-}
-
-.harbor-hull {
-  fill: #a76024;
-  stroke: #6b3c1c;
-  stroke-width: 1;
-}
-
-.harbor-mast {
-  stroke: #6b3c1c;
-  stroke-width: 1.2;
-}
-
-.harbor-sail {
-  fill: #f8f4e9;
-  stroke: #8b6747;
-  stroke-width: 0.8;
-}
-
-.harbor-flag {
-  fill: #f8f4e9;
-  stroke: #8b6747;
-  stroke-width: 0.6;
-}
-
-.harbor-label {
-  fill: #73401d;
-  font-size: 5.5px;
-  font-weight: 800;
-}
-
-.harbor-resource {
-  fill: #73401d;
-  font-size: 3.4px;
-  font-weight: 700;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
-}
-
-.intersection {
-  fill: rgb(230 214 116 / 78%);
-  stroke: rgb(116 96 39 / 78%);
-  stroke-width: 1.8;
 }
 
 .legal-settlement,

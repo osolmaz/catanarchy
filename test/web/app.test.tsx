@@ -17,8 +17,12 @@ describe("web simulator", () => {
     expect(screen.getByRole("group", { name: "Catan game board" })).toBeTruthy();
     expect(screen.getAllByRole("button", { name: /^Place settlement on / })).toHaveLength(54);
     expect(container.querySelectorAll("[data-hex-id]")).toHaveLength(19);
-    expect(container.querySelectorAll("[data-coast-edge]")).toHaveLength(30);
-    expect(container.querySelectorAll(".intersection")).toHaveLength(54);
+    expect(container.querySelectorAll("[data-shore-art]")).toHaveLength(12);
+    expect(
+      [...container.querySelectorAll("[data-shore-art]")].every((image) =>
+        image.getAttribute("href")?.startsWith("/assets/colonist/shore-"),
+      ),
+    ).toBe(true);
     expect(container.querySelectorAll("[data-terrain-art]")).toHaveLength(19);
     expect(
       [...container.querySelectorAll("[data-terrain-art]")].every((image) =>
@@ -27,17 +31,29 @@ describe("web simulator", () => {
     ).toBe(true);
     expect(container.querySelector('.robber[href="/assets/colonist/robber.svg"]')).toBeTruthy();
     expect(container.querySelectorAll("[data-number-token]")).toHaveLength(18);
-    expect(container.querySelector(".number-token")?.getAttribute("width")).toBe("27");
-    expect(container.querySelector(".number-token")?.getAttribute("height")).toBe("30");
     expect(
-      container.querySelectorAll('[data-number-token="6"] [data-probability-pips="5"]'),
+      [...container.querySelectorAll("[data-number-token]")].every((image) =>
+        image.getAttribute("href")?.startsWith("/assets/colonist/number-"),
+      ),
+    ).toBe(true);
+    expect(container.querySelector(".number-art")?.getAttribute("width")).toBe("24");
+    expect(container.querySelector(".number-art")?.getAttribute("height")).toBe("24");
+    expect(
+      container.querySelectorAll('[data-number-token="6"][data-probability-pips="5"]'),
     ).toHaveLength(2);
     expect(
-      container.querySelectorAll('[data-number-token="12"] [data-probability-pips="1"]'),
+      container.querySelectorAll('[data-number-token="12"][data-probability-pips="1"]'),
     ).toHaveLength(1);
     expect(container.querySelectorAll("[data-legal-vertex]")).toHaveLength(54);
     expect(container.querySelectorAll("[data-harbor-edge]")).toHaveLength(9);
-    expect(container.querySelectorAll(".harbor-boat")).toHaveLength(9);
+    expect(container.querySelectorAll(".dock-art")).toHaveLength(18);
+    for (const orientation of ["0", "60", "120", "180", "neg60", "neg120"]) {
+      expect(
+        container.querySelectorAll(`.dock-art[href="/assets/colonist/dock-${orientation}.svg"]`)
+          .length,
+      ).toBeGreaterThan(0);
+    }
+    expect(container.querySelectorAll(".port-art")).toHaveLength(9);
   });
 
   it("places a settlement and then offers adjacent roads", () => {
