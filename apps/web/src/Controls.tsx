@@ -4,7 +4,8 @@ export interface Playback {
   readonly playing: boolean;
   readonly onToggle: () => void;
   readonly speed: number;
-  readonly onSpeed: () => void;
+  readonly speedOptions: ReadonlyArray<number>;
+  readonly onSpeed: (speed: number) => void;
   readonly note: string;
   readonly elapsedMs: number;
   readonly totalMs: number;
@@ -151,15 +152,19 @@ export const Controls = (props: ControlsProps) => {
       </span>
       {playback === undefined ? null : (
         <>
-          <button
-            type="button"
+          <select
             className="speed"
             aria-label="Playback speed"
             title="Playback speed"
-            onClick={playback.onSpeed}
+            value={playback.speed}
+            onChange={(event) => playback.onSpeed(Number(event.target.value))}
           >
-            {playback.speed}×
-          </button>
+            {playback.speedOptions.map((speed) => (
+              <option key={speed} value={speed}>
+                {speed}×
+              </option>
+            ))}
+          </select>
           <small>{playback.note}</small>
         </>
       )}

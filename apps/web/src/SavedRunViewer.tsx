@@ -1,5 +1,5 @@
 import { observe } from "@catanarchy/engine";
-import { useCallback, useState } from "react";
+import { useState } from "react";
 import { Board } from "./Board.js";
 import { Controls } from "./Controls.js";
 import { Feed, type FeedItem } from "./Feed.js";
@@ -15,7 +15,8 @@ export interface SavedRunViewerProps {
   readonly live?: boolean;
 }
 
-const SPEEDS = [1, 2, 5, 10, 20] as const;
+const SPEEDS = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1_000] as const;
+const DEFAULT_SPEED = 100;
 
 const timingNote = (source: LoadedRunReport["timingSource"]): string => {
   switch (source) {
@@ -84,8 +85,7 @@ const gameFeedItems = (events: ReadonlyArray<LoadedRunReport["events"][number]>)
   }));
 
 export const SavedRunViewer = ({ run, live = false }: SavedRunViewerProps) => {
-  const [speedIndex, setSpeedIndex] = useState(0);
-  const speed = SPEEDS[speedIndex] ?? 1;
+  const [speed, setSpeed] = useState(DEFAULT_SPEED);
   const { frameIndex, offsetMs, playing, seek, seekOffset, togglePlaying } = useTimestampPlayback(
     run.frames,
     initialFrame(run.frames.length, live),
@@ -113,7 +113,6 @@ export const SavedRunViewer = ({ run, live = false }: SavedRunViewerProps) => {
     ...decisionFeedItems(visibleNegotiationDecisions, "negotiation-decision"),
   ];
 
-  const cycleSpeed = useCallback(() => setSpeedIndex((index) => (index + 1) % SPEEDS.length), []);
   const sessionSeats = new Set(run.sessionSeatIds);
 
   return (
@@ -134,7 +133,8 @@ export const SavedRunViewer = ({ run, live = false }: SavedRunViewerProps) => {
           playing,
           onToggle: togglePlaying,
           speed,
-          onSpeed: cycleSpeed,
+          speedOptions: SPEEDS,
+          onSpeed: setSpeed,
           note: timingNote(run.timingSource),
           elapsedMs: offsetMs,
           totalMs,

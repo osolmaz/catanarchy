@@ -2,17 +2,30 @@ import { watchFile, unwatchFile } from "node:fs";
 import { readFile, realpath } from "node:fs/promises";
 import { isAbsolute, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { gzipSync } from "node:zlib";
 import type { RunManifest, RunPackage } from "@catanarchy/run-log";
 import react from "@vitejs/plugin-react";
 import { defineConfig, type Plugin } from "vite";
 
 const fromRoot = (path: string): string => fileURLToPath(new URL(`../../${path}`, import.meta.url));
 
-const sendJson = (response: import("node:http").ServerResponse, value: unknown): void => {
+const sendJson = (
+  request: import("node:http").IncomingMessage,
+  response: import("node:http").ServerResponse,
+  value: unknown,
+): void => {
+  const body = JSON.stringify(value);
+  const acceptsGzip = /(?:^|,)\s*gzip\s*(?:,|$)/iu.test(request.headers["accept-encoding"] ?? "");
   response.statusCode = 200;
   response.setHeader("Content-Type", "application/json; charset=utf-8");
   response.setHeader("Cache-Control", "no-store");
-  response.end(JSON.stringify(value));
+  response.setHeader("Vary", "Accept-Encoding");
+  if (acceptsGzip) {
+    response.setHeader("Content-Encoding", "gzip");
+    response.end(gzipSync(body));
+    return;
+  }
+  response.end(body);
 };
 
 const sendText = (
@@ -142,7 +155,7 @@ const runPackagePlugin = (directory: string | undefined): Plugin => ({
       const url = new URL(request.url ?? "/", "http://catanarchy.local");
       if (url.pathname === "/__catanarchy/run-snapshot") {
         void readRunPackage(root).then(
-          (run) => sendJson(response, run),
+          (run) => sendJson(request, response, run),
           (error: unknown) => sendError(response, error),
         );
         return;
