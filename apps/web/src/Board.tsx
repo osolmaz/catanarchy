@@ -13,9 +13,10 @@ const SQRT_THREE = Math.sqrt(3);
 const SCALE = 42;
 const ORIGIN_X = 270;
 const ORIGIN_Y = 230;
-const VIEW_BOX = "40 20 460 420";
+const VIEW_BOX = "20 0 500 460";
 const TILE_WIDTH = SCALE * SQRT_THREE;
 const TILE_HEIGHT = SCALE * 2;
+const NUMBER_TOKEN_OFFSET_Y = 14;
 const TERRAIN_ART: Readonly<Record<Terrain, string>> = {
   forest: "/assets/colonist/tile-forest.svg",
   hill: "/assets/colonist/tile-hill.svg",
@@ -78,8 +79,7 @@ const midpoint = ([a, b]: readonly [Point, Point]): Point => ({
   y: (a.y + b.y) / 2,
 });
 
-const HARBOR_OFFSET = 31;
-const HARBOR_CHIP = { width: 34, height: 18 };
+const HARBOR_OFFSET = 40;
 
 const harborRatio = (kind: HarborKind): string => (kind === "generic" ? "3:1" : "2:1");
 
@@ -99,19 +99,13 @@ const probabilityPips = (number: number): number => 6 - Math.abs(7 - number);
 const NumberToken = ({ center, number }: { center: Point; number: number }) => {
   const pips = probabilityPips(number);
   const hot = number === 6 || number === 8;
+  const y = center.y + NUMBER_TOKEN_OFFSET_Y;
   return (
     <g data-number-token={number} aria-label={`${number} with ${pips} probability pips`}>
-      <rect
-        x={center.x - 16}
-        y={center.y - 18}
-        width="32"
-        height="36"
-        rx="4"
-        className="number-token"
-      />
+      <rect x={center.x - 13.5} y={y - 15} width="27" height="30" rx="3" className="number-token" />
       <text
         x={center.x}
-        y={center.y + 2.5}
+        y={y + 1}
         textAnchor="middle"
         className={hot ? "number-label hot" : "number-label"}
       >
@@ -119,12 +113,7 @@ const NumberToken = ({ center, number }: { center: Point; number: number }) => {
       </text>
       <g data-probability-pips={pips} className={hot ? "pips hot" : "pips"}>
         {Array.from({ length: pips }, (_, index) => (
-          <circle
-            key={index}
-            cx={center.x + (index - (pips - 1) / 2) * 3.6}
-            cy={center.y + 11}
-            r="1.15"
-          />
+          <circle key={index} cx={center.x + (index - (pips - 1) / 2) * 3} cy={y + 9} r="1" />
         ))}
       </g>
     </g>
@@ -175,6 +164,27 @@ const HexLayer = ({ observation }: { observation: GameObservation }) => {
   );
 };
 
+const CoastLayer = ({
+  observation,
+  geometry: g,
+}: {
+  observation: GameObservation;
+  geometry: Geometry;
+}) => (
+  <g className="coast-layer" aria-hidden="true">
+    {observation.topology.coastalRing.map((edgeId) => {
+      const [a, b] = g.edgePoints(edgeId);
+      return (
+        <g key={edgeId} data-coast-edge={edgeId}>
+          <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} className="coast-waterline" />
+          <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} className="coast-foam" />
+          <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} className="coast-sand" />
+        </g>
+      );
+    })}
+  </g>
+);
+
 const HarborLayer = ({
   observation,
   geometry: g,
@@ -190,24 +200,35 @@ const HarborLayer = ({
       const at = { x: mid.x + normal.x * HARBOR_OFFSET, y: mid.y + normal.y * HARBOR_OFFSET };
       return (
         <g key={harbor.edgeId} data-harbor-edge={harbor.edgeId}>
-          <line x1={ends[0].x} y1={ends[0].y} x2={at.x} y2={at.y} className="harbor-line" />
-          <line x1={ends[1].x} y1={ends[1].y} x2={at.x} y2={at.y} className="harbor-line" />
-          <rect
-            x={at.x - HARBOR_CHIP.width / 2}
-            y={at.y - HARBOR_CHIP.height / 2}
-            width={HARBOR_CHIP.width}
-            height={HARBOR_CHIP.height}
-            rx="4"
-            className="harbor-chip"
-          />
-          <text x={at.x} y={at.y - 1} textAnchor="middle" className="harbor-label">
-            {harborRatio(harbor.kind)}
-          </text>
-          <text x={at.x} y={at.y + 6.5} textAnchor="middle" className="harbor-resource">
-            {harborResource(harbor.kind)}
-          </text>
+          {ends.map((end) => (
+            <g key={`${end.x}:${end.y}`}>
+              <line x1={end.x} y1={end.y} x2={at.x} y2={at.y + 10} className="harbor-pier-shadow" />
+              <line x1={end.x} y1={end.y} x2={at.x} y2={at.y + 10} className="harbor-pier" />
+            </g>
+          ))}
+          <g transform={`translate(${at.x} ${at.y})`} className="harbor-boat">
+            <path d="M-14,8 Q0,15 14,8 L10,16 Q0,21 -10,16 Z" className="harbor-hull" />
+            <line x1="0" y1="-18" x2="0" y2="11" className="harbor-mast" />
+            <path d="M-1,-17 L-1,8 L13,5 Q8,-6 -1,-17 Z" className="harbor-sail" />
+            <path d="M1,-18 L10,-15 L1,-12 Z" className="harbor-flag" />
+            <text x="5" y="-3" textAnchor="middle" className="harbor-label">
+              {harborRatio(harbor.kind)}
+            </text>
+            <text x="5" y="3" textAnchor="middle" className="harbor-resource">
+              {harborResource(harbor.kind)}
+            </text>
+          </g>
         </g>
       );
+    })}
+  </g>
+);
+
+const IntersectionLayer = ({ observation }: { observation: GameObservation }) => (
+  <g className="intersection-layer" aria-hidden="true">
+    {observation.topology.vertices.map((vertex) => {
+      const at = point(vertex.x, vertex.y);
+      return <circle key={vertex.id} cx={at.x} cy={at.y} r="5.5" className="intersection" />;
     })}
   </g>
 );
@@ -366,8 +387,10 @@ export const Board = ({ observation, legalActions, onAction, interactive }: Boar
   const g = geometry(observation);
   return (
     <svg className="board" viewBox={VIEW_BOX} role="group" aria-label="Catan game board">
+      <CoastLayer observation={observation} geometry={g} />
       <HexLayer observation={observation} />
       <HarborLayer observation={observation} geometry={g} />
+      <IntersectionLayer observation={observation} />
       <RoadLayer observation={observation} geometry={g} />
       <BuildingLayer observation={observation} geometry={g} />
       {interactive ? (

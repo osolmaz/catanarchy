@@ -17,6 +17,8 @@ describe("web simulator", () => {
     expect(screen.getByRole("group", { name: "Catan game board" })).toBeTruthy();
     expect(screen.getAllByRole("button", { name: /^Place settlement on / })).toHaveLength(54);
     expect(container.querySelectorAll("[data-hex-id]")).toHaveLength(19);
+    expect(container.querySelectorAll("[data-coast-edge]")).toHaveLength(30);
+    expect(container.querySelectorAll(".intersection")).toHaveLength(54);
     expect(container.querySelectorAll("[data-terrain-art]")).toHaveLength(19);
     expect(
       [...container.querySelectorAll("[data-terrain-art]")].every((image) =>
@@ -25,6 +27,8 @@ describe("web simulator", () => {
     ).toBe(true);
     expect(container.querySelector('.robber[href="/assets/colonist/robber.svg"]')).toBeTruthy();
     expect(container.querySelectorAll("[data-number-token]")).toHaveLength(18);
+    expect(container.querySelector(".number-token")?.getAttribute("width")).toBe("27");
+    expect(container.querySelector(".number-token")?.getAttribute("height")).toBe("30");
     expect(
       container.querySelectorAll('[data-number-token="6"] [data-probability-pips="5"]'),
     ).toHaveLength(2);
@@ -33,6 +37,7 @@ describe("web simulator", () => {
     ).toHaveLength(1);
     expect(container.querySelectorAll("[data-legal-vertex]")).toHaveLength(54);
     expect(container.querySelectorAll("[data-harbor-edge]")).toHaveLength(9);
+    expect(container.querySelectorAll(".harbor-boat")).toHaveLength(9);
   });
 
   it("places a settlement and then offers adjacent roads", () => {

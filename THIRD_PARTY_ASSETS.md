@@ -4,7 +4,7 @@ The web viewer includes board art from Colonist.
 
 ## Colonist board art
 
-Colonist publishes its asset pack and board builder from its [press kit](https://colonist.io/press-kit). The files below were downloaded from `https://cdn.colonist.io/dist/assets/` on September 11, 2026.
+Colonist publishes its [asset pack](https://tinyurl.com/Colonist-Assets) and [board builder](https://www.figma.com/community/file/1222835270932934554/colonist-io-board-builder) from its [press kit](https://colonist.io/press-kit). The files below were downloaded from `https://cdn.colonist.io/dist/assets/` on September 11, 2026.
 
 | Local files              | Colonist source names                            |
 | ------------------------ | ------------------------------------------------ |
@@ -19,6 +19,6 @@ Colonist publishes its asset pack and board builder from its [press kit](https:/
 | `settlement-{color}.svg` | `settlement_{color}.{content-hash}.svg`          |
 | `city-{color}.svg`       | `city_{color}.{content-hash}.svg`                |
 
-The four imported colors are red, blue, white, and orange. Colonist draws number tokens in its interface, so Catanarchy continues to draw accessible number text and probability pips over the imported tiles.
+The four imported colors are red, blue, white, and orange. Colonist does not publish separate number-token, coast, or harbor files in this asset set. Catanarchy draws these parts as semantic SVG over and around the imported tiles.
 
 These files remain Colonist material and are not covered by Catanarchy's MIT license. The simulator, protocol, agents, and run files do not depend on this art. Models receive structured game state rather than these images.

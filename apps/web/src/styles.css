@@ -6,7 +6,7 @@
   --muted: #6b746e;
   --accent: #2c6a55;
   --accent-soft: #e2eee6;
-  --sea: #cfdde3;
+  --sea: #08699f;
   --warn-bg: #f8e1dd;
   --warn: #7a2d28;
 
@@ -440,7 +440,7 @@ aside {
 .number-label {
   fill: #073c19;
   font-family: "Arial Black", system-ui, sans-serif;
-  font-size: 14px;
+  font-size: 12px;
   font-weight: 900;
 }
 
@@ -453,29 +453,90 @@ aside {
   fill: #073c19;
 }
 
-.harbor-line {
-  stroke: #5d7d86;
-  stroke-width: 1.5;
+.coast-layer,
+.harbor-layer,
+.intersection-layer {
+  pointer-events: none;
 }
 
-.harbor-chip {
-  fill: #f7f3e8;
-  stroke: #5d7d86;
+.coast-waterline,
+.coast-foam,
+.coast-sand {
+  stroke-linecap: round;
+}
+
+.coast-waterline {
+  stroke: #58bce1;
+  stroke-width: 32;
+}
+
+.coast-foam {
+  stroke: #d7f0ec;
+  stroke-width: 24;
+}
+
+.coast-sand {
+  stroke: #f0d17d;
+  stroke-width: 16;
+}
+
+.harbor-pier-shadow,
+.harbor-pier {
+  stroke-linecap: butt;
+}
+
+.harbor-pier-shadow {
+  stroke: #70451f;
+  stroke-width: 8;
+}
+
+.harbor-pier {
+  stroke: #d98e27;
+  stroke-dasharray: 4 2;
+  stroke-width: 5.5;
+}
+
+.harbor-hull {
+  fill: #a76024;
+  stroke: #6b3c1c;
   stroke-width: 1;
 }
 
+.harbor-mast {
+  stroke: #6b3c1c;
+  stroke-width: 1.2;
+}
+
+.harbor-sail {
+  fill: #f8f4e9;
+  stroke: #8b6747;
+  stroke-width: 0.8;
+}
+
+.harbor-flag {
+  fill: #f8f4e9;
+  stroke: #8b6747;
+  stroke-width: 0.6;
+}
+
 .harbor-label {
-  fill: #2f5560;
-  font-size: 7.5px;
-  font-weight: 700;
+  fill: #73401d;
+  font-size: 5.5px;
+  font-weight: 800;
 }
 
 .harbor-resource {
-  fill: #2f5560;
-  font-size: 5.5px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
+  fill: #73401d;
+  font-size: 3.4px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
   text-transform: uppercase;
+}
+
+.intersection {
+  fill: rgb(230 214 116 / 78%);
+  stroke: rgb(116 96 39 / 78%);
+  stroke-width: 1.8;
 }
 
 .legal-settlement,
