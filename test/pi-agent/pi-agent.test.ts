@@ -2,7 +2,13 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { createGame, handleCommand, legalActions, observe } from "@catanarchy/engine";
-import type { AgentDecisionRequest, AgentNegotiationRequest, SeatAgent } from "@catanarchy/harness";
+import {
+  AgentDecisionError,
+  AgentRunAbort,
+  type AgentDecisionRequest,
+  type AgentNegotiationRequest,
+  type SeatAgent,
+} from "@catanarchy/harness";
 import {
   ActionSelectionGate,
   applyEnvironmentAuthentication,
@@ -18,10 +24,13 @@ import {
   NegotiationSelectionGate,
   negotiationActionFromToolInput,
   parseModelReference,
+  PiCostBudget,
+  pinOpenRouterProvider,
   resolveSelection,
   selectActionFromText,
   selectNegotiationFromText,
   TurnBudget,
+  withPiCostBudget,
   type PiDecisionChannel,
   type PiModelReference,
   type PiSessionReference,
@@ -842,6 +851,129 @@ describe("Pi model setup", () => {
     });
     await expect(invalidOutputBudgetFactory(player)).rejects.toThrow(
       "smaller than the effective context window",
+    );
+  });
+
+  it("stops before a Pi request can exceed the run cost ceiling", async () => {
+    const budget = new PiCostBudget(1, 0.6);
+    const baseAgent: SeatAgent = {
+      async decide() {
+        return {
+          actionId: "action",
+          usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, total: 2, cost: 0.3 },
+        };
+      },
+      async negotiate() {
+        return {
+          action: { type: "pass" },
+          usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, total: 2, cost: 0.1 },
+        };
+      },
+      async cancel() {},
+      async dispose() {},
+    };
+    const createAgent = withPiCostBudget(async () => baseAgent, budget);
+    const agent = await createAgent(config.players[0]!);
+
+    await expect(agent.decide(request())).resolves.toMatchObject({ actionId: "action" });
+    if (agent.negotiate === undefined) throw new Error("Expected negotiation support.");
+    await expect(agent.negotiate(negotiationRequest())).resolves.toMatchObject({
+      action: { type: "pass" },
+    });
+    expect(budget.snapshot()).toMatchObject({ observedUsd: 0.4 });
+    await expect(agent.decide(request())).resolves.toMatchObject({ actionId: "action" });
+    await expect(agent.decide(request())).rejects.toBeInstanceOf(AgentRunAbort);
+  });
+
+  it("settles reported usage from a failed Pi request", async () => {
+    const budget = new PiCostBudget(0.5, 0.2);
+    await expect(
+      budget.run(async () => {
+        throw new AgentDecisionError({
+          message: "provider error",
+          usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, total: 2, cost: 0.4 },
+        });
+      }),
+    ).rejects.toBeInstanceOf(AgentDecisionError);
+    expect(budget.snapshot().observedUsd).toBe(0.4);
+    await expect(budget.run(async () => ({}))).rejects.toBeInstanceOf(AgentRunAbort);
+  });
+
+  it("rejects invalid Pi cost budgets", () => {
+    expect(() => new PiCostBudget(0, 0.1)).toThrow("positive finite");
+    expect(() => new PiCostBudget(1, 0)).toThrow("positive finite");
+    expect(() => new PiCostBudget(1, 2)).toThrow("exceeds");
+  });
+
+  it("loads the checked-in V4.1 Novita model definition", async () => {
+    const directory = await mkdtemp(resolve(tmpdir(), "catanarchy-model-runtime-"));
+    temporaryDirectories.push(directory);
+    const runtime = await ModelRuntime.create({
+      modelsPath: resolve("config/pi-models.json"),
+      modelsStorePath: resolve(directory, "models-store.json"),
+      authPath: resolve(directory, "auth.json"),
+      refreshOnCreate: false,
+    });
+
+    expect(runtime.getModel("huggingface", "deepseek-ai/DeepSeek-V4.1-Flash:novita")).toMatchObject(
+      {
+        contextWindow: 1_048_576,
+        maxTokens: 384_000,
+        reasoning: true,
+        cost: { input: 0.3, output: 1.2, cacheRead: 0.006, cacheWrite: 0 },
+      },
+    );
+  });
+
+  it("pins OpenRouter models to one provider without fallback routing", () => {
+    const model = {
+      id: "deepseek/deepseek-v4.1-flash",
+      name: "DeepSeek V4.1 Flash",
+      api: "openai-completions",
+      provider: "openrouter",
+      baseUrl: "https://openrouter.ai/api/v1",
+      reasoning: true,
+      input: ["text"],
+      cost: { input: 0.3, output: 1.2, cacheRead: 0.006, cacheWrite: 0 },
+      contextWindow: 1_048_576,
+      maxTokens: 384_000,
+      compat: { supportsDeveloperRole: true },
+    };
+    const registerProvider = vi.fn<ModelRuntime["registerProvider"]>();
+    const runtime = {
+      getModel: () => model,
+      registerProvider,
+    } as unknown as ModelRuntime;
+    const references = [
+      { provider: "openrouter", modelId: model.id },
+      { provider: "openrouter", modelId: model.id },
+    ];
+
+    pinOpenRouterProvider(runtime, references, "deepseek");
+
+    expect(registerProvider).toHaveBeenCalledOnce();
+    const registration = registerProvider.mock.calls[0];
+    expect(registration?.[0]).toBe("openrouter");
+    expect(registration?.[1].models).toHaveLength(1);
+    expect(registration?.[1].models?.[0]).toMatchObject({
+      id: model.id,
+      compat: {
+        supportsDeveloperRole: true,
+        openRouterRouting: { allow_fallbacks: false, only: ["deepseek"] },
+      },
+    });
+    expect(() => pinOpenRouterProvider(runtime, references, "DeepSeek!")).toThrow(
+      "lowercase provider slug",
+    );
+    expect(() =>
+      pinOpenRouterProvider(runtime, [{ provider: "huggingface", modelId: "model" }], "novita"),
+    ).toThrow("requires at least one OpenRouter model");
+    const missingRuntime = {
+      getModel: () => undefined,
+      registerProvider,
+    } as unknown as ModelRuntime;
+    expect(() => pinOpenRouterProvider(missingRuntime, references, "deepseek")).toThrow(
+      "Unknown Pi model",
     );
   });
 
