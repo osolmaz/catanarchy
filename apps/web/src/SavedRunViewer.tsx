@@ -1,5 +1,5 @@
 import { observe } from "@catanarchy/engine";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useState } from "react";
 import { Board } from "./Board.js";
 import { Controls } from "./Controls.js";
 import { Feed, type FeedItem } from "./Feed.js";
@@ -8,6 +8,7 @@ import { phaseText } from "./phase.js";
 import { Players } from "./Players.js";
 import type { LoadedRunReport } from "./RunReport.js";
 import { decisionFeedItems, sessionSummaries, sessionText } from "./traces.js";
+import { useTimestampPlayback } from "./useTimestampPlayback.js";
 
 export interface SavedRunViewerProps {
   readonly run: LoadedRunReport;
@@ -81,12 +82,14 @@ const gameFeedItems = (events: ReadonlyArray<LoadedRunReport["events"][number]>)
   }));
 
 export const SavedRunViewer = ({ run, live = false }: SavedRunViewerProps) => {
-  const [frameIndex, setFrameIndex] = useState(() => initialFrame(run.frames.length, live));
-  const [playing, setPlaying] = useState(false);
   const [speedIndex, setSpeedIndex] = useState(0);
-  const previousFrameCount = useRef(run.frames.length);
   const speed = SPEEDS[speedIndex] ?? 1;
-  const latestIndex = run.frames.length - 1;
+  const { frameIndex, playing, seek, togglePlaying } = useTimestampPlayback(
+    run.frames,
+    initialFrame(run.frames.length, live),
+    live,
+    speed,
+  );
   const frame = run.frames[frameIndex] ?? run.frames.at(-1);
   if (frame === undefined) throw new Error("The run has no replay frame.");
   const state = frame.state;
@@ -107,29 +110,6 @@ export const SavedRunViewer = ({ run, live = false }: SavedRunViewerProps) => {
     ...decisionFeedItems(visibleNegotiationDecisions, "negotiation-decision"),
   ];
 
-  useEffect(() => {
-    const oldCount = previousFrameCount.current;
-    previousFrameCount.current = run.frames.length;
-    setFrameIndex((current) =>
-      live && current >= oldCount - 1 ? latestIndex : Math.min(current, latestIndex),
-    );
-  }, [latestIndex, live, run.frames.length]);
-
-  useEffect(() => {
-    if (!playing || frameIndex >= latestIndex) return;
-    const duration = run.frameDurationsMs[frameIndex] ?? 1_000;
-    const timer = setTimeout(() => {
-      setFrameIndex((current) => current + 1);
-      if (frameIndex + 1 >= latestIndex) setPlaying(false);
-    }, duration / speed);
-    return () => clearTimeout(timer);
-  }, [frameIndex, latestIndex, playing, run.frameDurationsMs, speed]);
-
-  const seek = useCallback((index: number): void => {
-    setPlaying(false);
-    setFrameIndex(index);
-  }, []);
-  const togglePlaying = useCallback(() => setPlaying((current) => !current), []);
   const cycleSpeed = useCallback(() => setSpeedIndex((index) => (index + 1) % SPEEDS.length), []);
   const sessionSeats = new Set(run.sessionSeatIds);
 
