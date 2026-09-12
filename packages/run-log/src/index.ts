@@ -432,11 +432,22 @@ const truncateTimelineTo = async (path: string, recordCount: number): Promise<vo
   if (length < Buffer.byteLength(text, "utf8")) await truncate(path, length);
 };
 
-const completeLineBytes = (text: string, recordCount: number): number =>
-  text
-    .split("\n")
-    .slice(0, recordCount)
-    .reduce((total, line) => total + Buffer.byteLength(line, "utf8") + 1, 0);
+/**
+ * The byte offset just past the `recordCount`-th stored record. A blank line carries
+ * no record, so it is skipped here the same way the reader skips it, and the cut can
+ * never land on the wrong record.
+ */
+const completeLineBytes = (text: string, recordCount: number): number => {
+  let seen = 0;
+  let offset = 0;
+  for (const line of text.split("\n")) {
+    offset += Buffer.byteLength(line, "utf8") + 1;
+    if (line === "") continue;
+    seen += 1;
+    if (seen === recordCount) return offset;
+  }
+  return offset;
+};
 
 /** Every Pi seat must name a session file that still exists. */
 const missingSeatSessions = async (
@@ -1260,6 +1271,17 @@ const recordSpendUsd = (record: RunRecord, fromIndex: number): number => {
 const spendUsdFrom = (records: ReadonlyArray<RunRecord>, fromIndex: number): number =>
   records.reduce((total, record) => total + recordSpendUsd(record, fromIndex), 0);
 
+/**
+ * Every spend record must hold a non-negative number, whether or not the run can
+ * resume. A terminal package would otherwise pass unread with a corrupt spend.
+ */
+const assertRecordedSpend = (records: ReadonlyArray<RunRecord>): void => {
+  for (const record of records) {
+    if (record.kind === "run.resumed") carriedSpendUsd(record);
+    else decisionCostUsd(record);
+  }
+};
+
 const resumeAvailability = (
   manifest: RunManifest,
   records: ReadonlyArray<RunRecord>,
@@ -1305,6 +1327,7 @@ export const readRunPackage = async (directory: string): Promise<RunPackage> => 
   const records = parseCompleteLines(timelineText);
   validateTimelineOrder(manifest, records);
   validateTerminalRecord(manifest, records);
+  assertRecordedSpend(records);
   const timeline = await validateEventTimeline(manifest, records);
   const verification = await verificationFor(manifest, timeline.state);
   const availability = resumeAvailability(manifest, records, timeline, verification);

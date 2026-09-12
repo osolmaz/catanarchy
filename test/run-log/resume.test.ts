@@ -810,6 +810,59 @@ describe("resume", () => {
     await expect(readRunPackage(directory)).rejects.toThrow(/spend/u);
   });
 
+  it("keeps every record when the timeline holds a blank line", async () => {
+    const directory = await temporaryRunDirectory("blank-line");
+    const recorder = await startRun(directory, "run-blank-line");
+    let windows = 0;
+    const stopped = await playUntil(
+      recorder,
+      (activity) => {
+        if (activity.kind !== "negotiation.event") return false;
+        if (activity.payload.event.type !== "negotiation.window-opened") return false;
+        windows += 1;
+        return windows === 2;
+      },
+      { maxDecisions: 40, policy: negotiationPolicy },
+    );
+    expect(stopped).toBeInstanceOf(Error);
+    await recorder.close();
+
+    // A blank line carries no record, so the reader skips it. The cut must count records
+    // rather than physical lines, or it removes one committed record too many.
+    const path = resolve(directory, "timeline.jsonl");
+    const lines = (await readFile(path, "utf8")).split("\n");
+    await writeFile(path, [lines[0], "", ...lines.slice(1)].join("\n"));
+
+    const before = await readRunPackage(directory);
+    const nextIndex = before.resume?.nextIndex ?? -1;
+    expect(nextIndex).toBeLessThan(before.records.length);
+    const seam = await RunRecorder.open({ directory, mode: "cold", reason: "blank line" });
+    await seam.recorder.close();
+
+    const after = await readRunPackage(directory);
+    expect(after.records.map(({ index }) => index)).toEqual(
+      after.records.map((_record, index) => index),
+    );
+    expect(after.records.filter(({ index }) => index < nextIndex)).toHaveLength(nextIndex);
+  });
+
+  it("refuses a negative spend in a completed run", async () => {
+    const directory = await temporaryRunDirectory("terminal-spend");
+    const recorder = await startRun(directory, "run-terminal-spend");
+    const result = await play(recorder, { maxDecisions: 2 });
+    await recorder.complete(result);
+
+    await rewriteTimeline(directory, (records) => {
+      const decision = records.find((record) => record["kind"] === "game.decision");
+      if (decision === undefined) throw new Error("Expected a stored decision.");
+      const payload = decision["payload"] as Record<string, unknown>;
+      payload["usage"] = { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, total: 2, cost: -1 };
+    });
+
+    // A terminal run cannot resume, so its spend must still be checked on read.
+    await expect(readRunPackage(directory)).rejects.toThrow(/spend/u);
+  });
+
   it("counts only the decisions the prefix committed", async () => {
     const directory = await temporaryRunDirectory("tail-decision");
     const recorder = await startRun(directory, "run-tail-decision");
