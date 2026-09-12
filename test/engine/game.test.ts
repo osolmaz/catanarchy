@@ -204,7 +204,9 @@ describe("initial placement", () => {
     ).toBe(true);
   });
 
-  it("keeps every generated setup state valid", () => {
+  // This property test replays a full setup for each generated case, so it needs
+  // more than the default budget on a shared CI runner.
+  it("keeps every generated setup state valid", { timeout: 30_000 }, () => {
     expect.hasAssertions();
     fc.assert(
       fc.property(

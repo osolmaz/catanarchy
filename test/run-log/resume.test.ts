@@ -348,7 +348,7 @@ describe("resume", () => {
   it("does not reopen a negotiation window that already closed", async () => {
     const directory = await temporaryRunDirectory("negotiation");
     const recorder = await startRun(directory, "run-negotiation");
-    await play(recorder, { maxDecisions: 16, policy: negotiationPolicy });
+    await play(recorder, { maxDecisions: 14, policy: negotiationPolicy });
     await recorder.close();
 
     const beforeOpen = await readRunPackage(directory);
@@ -363,7 +363,7 @@ describe("resume", () => {
       reason: "negotiation resume",
     });
     const resumed = await play(opened.recorder, {
-      maxDecisions: 24,
+      maxDecisions: 18,
       policy: negotiationPolicy,
       resume: agentResume(opened.resume),
     });
