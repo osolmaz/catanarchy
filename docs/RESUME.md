@@ -97,7 +97,7 @@ Only these two stages exist. There is no merge stage and no forked run directory
 
 ### Command line
 
-21. Add a `resume` subcommand: `resume --run-dir=<path> --mode=warm|cold`. The existing flag set keeps its current meaning.
+21. Add a `resume` subcommand: `resume --run-dir=<path> --mode=warm|cold`. The existing flag set keeps its current meaning. `--negotiation-rounds` must repeat the round limit of the first negotiation window in the whole stored timeline, and a mismatch fails before the run is opened. The round limit is read from the whole timeline, because a stop can leave the first window in the records the resume removes.
 22. A run started without the subcommand behaves exactly as it does today.
 
 ## Validation

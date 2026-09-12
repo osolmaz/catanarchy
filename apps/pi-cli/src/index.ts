@@ -23,7 +23,7 @@ import {
   type PiAgentFactoryOptions,
   type PiModelReference,
 } from "@catanarchy/pi-agent";
-import type { GameConfig, NegotiationEvent } from "@catanarchy/protocol";
+import type { GameConfig } from "@catanarchy/protocol";
 import {
   readRunPackage,
   RunRecorder,
@@ -253,11 +253,28 @@ const totalUsage = (result: MatchRunResult): AgentUsage =>
     };
   }, EMPTY_USAGE);
 
-const summarize = (result: MatchRunResult) => ({
+/**
+ * The facts a summary reports about the run itself. A resume must report the run
+ * that it continued, not the flags of the current invocation.
+ */
+interface RunFacts {
+  readonly seed: number;
+  readonly models: ReadonlyArray<PiModelReference>;
+  readonly resumed: boolean;
+  /** Decisions the stored prefix already committed. Zero for a fresh run. */
+  readonly priorDecisions: number;
+  /** Spend the stored prefix already recorded. Zero for a fresh run. */
+  readonly priorSpendUsd: number;
+}
+
+const summarize = (result: MatchRunResult, facts: RunFacts) => ({
   matchId: result.state.matchId,
   modelsPath: modelsPathReport,
   openRouterProvider: openRouterProviderReport,
-  seed,
+  seed: facts.seed,
+  resumed: facts.resumed,
+  priorDecisions: facts.priorDecisions,
+  priorSpendUsd: facts.priorSpendUsd,
   sequence: result.state.sequence,
   phase: result.state.phase,
   buildings: result.state.occupancy.buildings.length,
@@ -273,7 +290,7 @@ const summarize = (result: MatchRunResult) => ({
     .length,
   negotiationEvents: result.negotiations.length,
   usage: totalUsage(result),
-  models: modelReferences,
+  models: facts.models,
 });
 
 const createModelRuntime = async (): Promise<ModelRuntime> => {
@@ -399,8 +416,9 @@ const reportResult = async (
   result: MatchRunResult,
   recorder: RunRecorder,
   budget: PiCostBudget,
+  facts: RunFacts,
 ): Promise<void> => {
-  const summary = { ...summarize(result), costBudget: budget.snapshot() };
+  const summary = { ...summarize(result, facts), costBudget: budget.snapshot() };
   console.log(JSON.stringify({ ...summary, runDirectory: recorder.directory }, undefined, 2));
   if (outputPath !== undefined) {
     await writeFile(outputPath, `${JSON.stringify({ summary, result }, undefined, 2)}\n`, {
@@ -487,7 +505,13 @@ const runFresh = async (runtime: ModelRuntime): Promise<void> => {
     );
     holder.value = result;
     await recorder.complete(result);
-    await reportResult(result, recorder, budget);
+    await reportResult(result, recorder, budget, {
+      seed,
+      models: modelReferences,
+      resumed: false,
+      priorDecisions: 0,
+      priorSpendUsd: 0,
+    });
   } catch (error) {
     if (recorder.manifest.status === "partial") {
       await recorder.fail(holder.value, "The Pi match failed.");
@@ -511,26 +535,15 @@ const resumeModeArgument = (): RunResumeMode => {
 };
 
 /**
- * The round limit of the first recorded negotiation window, or null when the run
- * never opened one. The record is the only place the original policy survives.
- */
-const recordedNegotiationRounds = (events: ReadonlyArray<NegotiationEvent>): number | null => {
-  for (const { event } of events) {
-    if (event.type === "negotiation.window-opened") return event.maxRounds;
-  }
-  return null;
-};
-
-/**
- * A resume must keep the negotiation policy the run started with, so the round
- * limit is checked before the run is opened rather than when the first window
- * opens. Message length and open-offer limits are not recorded in the timeline.
+ * A resume must keep the negotiation policy the run started with. The round limit
+ * comes from the first window in the whole timeline, because a stop can leave that
+ * window in the records the resume removes. Message length and open-offer limits
+ * are not recorded in the timeline.
  */
 const assertRecordedNegotiationRounds = (
-  events: ReadonlyArray<NegotiationEvent>,
+  recorded: number | null,
   policy: NegotiationPolicy | undefined,
 ): void => {
-  const recorded = recordedNegotiationRounds(events);
   if (recorded === null) return;
   const requested = policy?.maxRounds ?? 0;
   if (requested !== recorded) {
@@ -570,7 +583,7 @@ const runResume = async (runtime: ModelRuntime): Promise<void> => {
         : `The run at ${directory} cannot resume. ${existing.resumeBlockedReason}`,
     );
   }
-  assertRecordedNegotiationRounds(resume.negotiations, negotiationPolicy);
+  assertRecordedNegotiationRounds(resume.negotiationMaxRounds, negotiationPolicy);
   const references = seatModelsFromManifest(existing.manifest);
   configureProviderRouting(runtime, references);
   await applyEnvironmentAuthentication(runtime, references);
@@ -615,7 +628,13 @@ const runResume = async (runtime: ModelRuntime): Promise<void> => {
       resumedSessions,
     );
     await opened.recorder.complete(result);
-    await reportResult(result, opened.recorder, budget);
+    await reportResult(result, opened.recorder, budget, {
+      seed: opened.resume.config.seed,
+      models: references,
+      resumed: true,
+      priorDecisions: opened.resume.decisionCount,
+      priorSpendUsd: opened.resume.observedSpendUsd,
+    });
   } catch (error) {
     if (opened.recorder.manifest.status === "partial") {
       await opened.recorder.fail(holder.value, "The resumed Pi match failed.");
