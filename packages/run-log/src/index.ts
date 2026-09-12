@@ -250,6 +250,7 @@ const visibilityFor = (activity: MatchActivity): RunVisibility => {
 const safeReason = (reason: string): string => reason.replaceAll(/\s+/gu, " ").trim().slice(0, 300);
 
 const LOCK_FILE = "run.lock";
+const TAKEOVER_SUFFIX = ".takeover";
 
 const lockHolderPid = async (path: string): Promise<number | null> => {
   try {
@@ -339,25 +340,45 @@ const acquireRunLock = async (directory: string): Promise<() => Promise<void>> =
 
 /**
  * Remove a lock whose holder is gone. Only one process may take over the same
- * stale lock, so a taker first links the lock to a takeover name that carries the
- * dead holder. A second taker finds that name and leaves the lock alone. The lock
- * is removed only while it is still the file the taker linked, which no other
- * process can replace while it exists.
+ * stale lock, so a taker first claims a marker beside the lock. The lock is
+ * removed only while it is still the file the taker linked, which no other
+ * process can replace while it exists. A marker from a process that died mid
+ * takeover is cleared, so a stale lock never blocks every later opener.
  */
 const clearStaleLock = async (path: string, holder: number): Promise<void> => {
-  const takeover = `${path}.${holder}.takeover`;
+  const marker = `${path}${TAKEOVER_SUFFIX}`;
+  if (!(await claimTakeover(marker))) return;
+  const linked = `${path}.${process.pid}.stale`;
   try {
-    await link(path, takeover);
-  } catch {
-    return;
-  }
-  try {
-    if ((await lockHolderPid(path)) === holder && (await isSameFile(path, takeover))) {
+    await rm(linked, { force: true });
+    try {
+      await link(path, linked);
+    } catch {
+      return;
+    }
+    if ((await lockHolderPid(path)) === holder && (await isSameFile(path, linked))) {
       await rm(path, { force: true });
     }
   } finally {
-    await rm(takeover, { force: true });
+    await rm(linked, { force: true });
+    await rm(marker, { force: true });
   }
+};
+
+/** Claim the single right to clear a stale lock. A marker whose owner is gone is cleared. */
+const claimTakeover = async (marker: string): Promise<boolean> => {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      await writeFile(marker, `${process.pid}\n`, { encoding: "utf8", flag: "wx" });
+      return true;
+    } catch (error) {
+      if ((error as { readonly code?: string }).code !== "EEXIST") return false;
+      const owner = await lockHolderPid(marker);
+      if (owner !== null && processIsAlive(owner)) return false;
+      await rm(marker, { force: true });
+    }
+  }
+  return false;
 };
 
 /** True when two names still point at one file. */
@@ -1215,8 +1236,7 @@ const recordedSpendUsd = (value: unknown): number => {
 
 const carriedSpendUsd = (record: RunRecord): number => {
   if (record.kind !== "run.resumed") return 0;
-  const prior = record.payload.priorSpendUsd;
-  return prior === undefined ? 0 : recordedSpendUsd(prior);
+  return recordedSpendUsd(record.payload.priorSpendUsd);
 };
 
 const decisionCostUsd = (record: RunRecord): number | null => {
