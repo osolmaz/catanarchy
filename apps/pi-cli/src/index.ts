@@ -482,6 +482,7 @@ const runFresh = async (runtime: ModelRuntime): Promise<void> => {
     config,
     initialStateOrigin: { type: "generated", generatorId: STANDARD_BOARD_GENERATOR_ID, seed },
     piVersion,
+    negotiationRounds: negotiationPolicy?.maxRounds ?? null,
     seats: config.players.map((player, index) => ({
       seatId: player.id,
       agentType: "pi" as const,
@@ -627,6 +628,7 @@ const runResume = async (runtime: ModelRuntime): Promise<void> => {
       budget,
       resumedSessions,
     );
+    holder.value = result;
     await opened.recorder.complete(result);
     await reportResult(result, opened.recorder, budget, {
       seed: opened.resume.config.seed,

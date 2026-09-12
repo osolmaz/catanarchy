@@ -204,6 +204,12 @@ export interface CreateRunRecorderOptions {
   }>;
   readonly piVersion?: string;
   readonly clock?: RunClock;
+  /**
+   * The negotiation round limit the run starts with, or `null` when negotiation is
+   * off. A resume cannot recover this limit from a run that never opened a window,
+   * so the start record keeps it.
+   */
+  readonly negotiationRounds?: number | null;
 }
 
 export interface OpenRunRecorderOptions {
@@ -276,6 +282,31 @@ const assertResumable = (directory: string, pkg: RunPackage): RunResume => {
     throw new Error(`The run at ${directory} has no completed command to resume from.`);
   }
   return resume;
+};
+
+/**
+ * The round limit the run recorded at start. `null` means the run recorded that
+ * negotiation is off, and `undefined` means an older package has no such field.
+ */
+const startedNegotiationRounds = (record: RunRecord | undefined): number | null | undefined => {
+  if (record === undefined || record.kind !== "run.started") return undefined;
+  const payload = record.payload;
+  if (!isRecord(payload) || !("negotiationRounds" in payload)) return undefined;
+  const value = payload["negotiationRounds"];
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null;
+};
+
+/**
+ * The round limit the run started with. The start record wins, because a run that
+ * never opened a window has no other place to keep it. A package from before this
+ * field carries the limit on its first window instead.
+ */
+const recordedNegotiationRounds = (
+  records: ReadonlyArray<RunRecord>,
+  timeline: EventTimelineResult,
+): number | null => {
+  const started = startedNegotiationRounds(records[0]);
+  return started === undefined ? timeline.firstWindowRounds : started;
 };
 
 /**
@@ -491,7 +522,12 @@ export class RunRecorder {
         releaseLock,
       });
       await recorder.#writeManifest();
-      await recorder.#append("run.started", "public", { config: options.config });
+      await recorder.#append("run.started", "public", {
+        config: options.config,
+        ...(options.negotiationRounds === undefined
+          ? {}
+          : { negotiationRounds: options.negotiationRounds }),
+      });
       return recorder;
     } catch (error) {
       await releaseLock();
@@ -1226,7 +1262,7 @@ const resumeAvailability = (
       events: timeline.events,
       eventPayloads: timeline.eventPayloads,
       negotiations: timeline.negotiations,
-      negotiationMaxRounds: timeline.firstWindowRounds,
+      negotiationMaxRounds: recordedNegotiationRounds(records, timeline),
       decisionCount: completedDecisions(records, timeline.boundaryIndex),
       observedSpendUsd: spendUsdFrom(records, 0),
       nextIndex: timeline.boundaryIndex,
