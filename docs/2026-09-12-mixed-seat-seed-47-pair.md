@@ -42,7 +42,16 @@ Seat assignment:
 | White  | Luna     | DeepSeek |
 | Orange | DeepSeek | Luna     |
 
-Both games used one negotiation round per window, thinking level `high`, a 131072-token context window, 8 planning steps, a 600000 ms turn time, a 60000 ms finalization grace, and a per-game cost ceiling of $60. The run packages follow the [run log format](RUN_LOG.md). They are not published.
+Both games used one negotiation round per window, thinking level `high`, a 131072-token context window, 8 planning steps, a 600000 ms turn time, a 60000 ms finalization grace, and a per-game cost ceiling of $60. The run packages follow the [run log format](RUN_LOG.md).
+
+Both packages are published in the public Bucket:
+
+| Game   | Package                                                         |
+| ------ | --------------------------------------------------------------- |
+| Game A | `hf://buckets/osolmaz/catanarchy-runs/runs/luna-mixed-seed47-a` |
+| Game B | `hf://buckets/osolmaz/catanarchy-runs/runs/luna-mixed-seed47-b` |
+
+Each package holds `manifest.json`, `timeline.jsonl`, one Pi session per seat, `analysis.json`, `CHECKSUMS.sha256`, and this report as `REPORT.md`. It also holds `launch.json` and `resume.json`, which carry the launch configuration. The manifest does not record that configuration. The credential file paths in those two records are redacted.
 
 ## Result
 
@@ -292,7 +301,7 @@ The original games ran at commit `6980d4d`. The resume ran at commit `6606923`, 
 - The stop cause is unknown, and one resumed pair does not prove that it cannot happen again.
 - The behavioural findings rest on two games. Where the two games disagree, the note says so.
 - The seed 47 comparison uses a different model count per seat set. The seed 47 run held four DeepSeek seats, and the pair held two.
-- The run packages are local. They are not in the public Bucket.
+- Both packages are in the public Bucket `osolmaz/catanarchy-runs`. A scan found no credential. The provider `thinkingSignature` blobs in two Luna sessions match a `sk-` or `hf_` prefix by chance inside a long opaque string.
 
 ## Related documents
 
