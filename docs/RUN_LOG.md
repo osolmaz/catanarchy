@@ -20,7 +20,7 @@ A completed run uses this layout:
 
 `manifest.json` identifies the run and its files. `timeline.jsonl` contains ordered match records. Each file in `sessions/` is a normal Pi session file created by the public Pi `SessionManager` API. The manifest maps each generated Pi session file to its seat.
 
-A live run also holds `run.lock`. The lock is a transient runtime guard, not part of the package. It holds the process ID of the writer and the writer removes it on close. An opener that finds a lock whose process is gone takes it over.
+A live run also holds `run.lock`. The lock is a transient runtime guard, not part of the package. It holds the process ID of the writer and the writer removes it on close. The lock is claimed with its content already written, so it never appears empty and two openers cannot both take it. An opener that finds a lock whose process is gone takes it over. An opener that cannot read the lock treats it as held.
 
 A writer creates the run directory before the match starts. It writes each timeline record to disk before play continues. It updates `manifest.json` with an atomic file replacement. The manifest stays `partial` until the match ends. A stopped run keeps its records and remains clearly marked as partial, failed, or cancelled. If a failed or cancelled run ends during a game command, readers replay the last complete command and retain the unmarked event tail for inspection.
 
@@ -119,7 +119,7 @@ Version 1 defines these kinds:
 - `run.completed`: The final game and negotiation sequences and winner, if any.
 - `run.failed`: A short failure reason and the last saved sequence values.
 - `run.cancelled`: A short cancellation reason and the last saved sequence values.
-- `run.resumed`: The resume mode, the timeline index the run continues from, the replayed game sequence, the replay verification result, and a short reason.
+- `run.resumed`: The resume mode, the timeline index the run continues from, the replayed game sequence, the replay verification result, a short reason, and the spend that the removed records held before the resume.
 
 A game command can emit more than one game event. All events with the same `commandId` form one atomic replay batch. A viewer must reduce the complete batch before it displays the next board state.
 
