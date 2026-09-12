@@ -5,16 +5,20 @@ import { STANDARD_BOARD_GENERATOR_ID } from "@catanarchy/engine";
 import {
   createFirstLegalAgent,
   runGameSteps,
+  type AgentNegotiationRequest,
   type AgentResume,
+  type MatchActivity,
   type MatchRunResult,
   type NegotiationPolicy,
+  type SeatAgent,
 } from "@catanarchy/harness";
-import type { GameConfig } from "@catanarchy/protocol";
+import type { GameConfig, NegotiationAction, ResourceCounts } from "@catanarchy/protocol";
 import {
   readRunPackage,
   RunRecorder,
   type CreateRunRecorderOptions,
   type InitialStateOrigin,
+  type RunRecord,
   type RunResume,
 } from "@catanarchy/run-log";
 import { Effect } from "effect";
@@ -88,6 +92,108 @@ const agentResume = (resume: RunResume): AgentResume => ({
   decisionCount: resume.decisionCount,
 });
 
+const RESOURCE_KEYS = ["lumber", "brick", "wool", "grain", "ore"] as const;
+const NO_RESOURCES: ResourceCounts = { lumber: 0, brick: 0, wool: 0, grain: 0, ore: 0 };
+
+const canPay = (held: ResourceCounts, cost: ResourceCounts): boolean =>
+  RESOURCE_KEYS.every((key) => held[key] >= cost[key]);
+
+const acceptDirectedOffer = (
+  held: ResourceCounts,
+  request: AgentNegotiationRequest,
+): NegotiationAction | null => {
+  const directed = request.negotiation.offers.find(
+    (offer) => offer.status === "open" && offer.targetPlayerId === request.playerId,
+  );
+  if (directed === undefined || !canPay(held, directed.receive)) return null;
+  return { type: "accept-offer", offerId: directed.id };
+};
+
+const offerFromTurnPlayer = (
+  held: ResourceCounts,
+  request: AgentNegotiationRequest,
+  attempt: number,
+): NegotiationAction => {
+  const mine = request.negotiation.offers.some(
+    (offer) => offer.status === "open" && offer.proposerPlayerId === request.playerId,
+  );
+  if (mine || request.playerId !== request.turnPlayerId) return { type: "pass" };
+  const giveKey = RESOURCE_KEYS.find((key) => held[key] > 0);
+  if (giveKey === undefined) return { type: "pass" };
+  const candidates = RESOURCE_KEYS.filter((key) => key !== giveKey);
+  const receiveKey = candidates[attempt % candidates.length];
+  const others = config.players.filter(({ id }) => id !== request.playerId);
+  const target = others[Math.floor(attempt / candidates.length) % others.length];
+  if (receiveKey === undefined || target === undefined) return { type: "pass" };
+  return {
+    type: "make-offer",
+    targetPlayerId: target.id,
+    scope: { type: "public" },
+    give: { ...NO_RESOURCES, [giveKey]: 1 },
+    receive: { ...NO_RESOURCES, [receiveKey]: 1 },
+  };
+};
+
+/**
+ * One scripted negotiating action per window. The turn player offers one card of
+ * a resource it holds for one card of another resource, and every other seat
+ * accepts an offer it can pay for. The choice cycles over targets and resources,
+ * so a trade lands after a few turns without reading another seat's hand.
+ */
+const tradingAction = (request: AgentNegotiationRequest, attempt: number): NegotiationAction => {
+  const held = request.observation.ownResources ?? NO_RESOURCES;
+  return acceptDirectedOffer(held, request) ?? offerFromTurnPlayer(held, request, attempt);
+};
+
+const createTradingAgent = (): SeatAgent => {
+  const base = createFirstLegalAgent();
+  let attempt = 0;
+  return {
+    decide: (request) => base.decide(request),
+    cancel: () => base.cancel(),
+    dispose: () => base.dispose(),
+    negotiate: async (request) => {
+      const action = tradingAction(request, attempt);
+      attempt += 1;
+      return { action, reason: `scripted ${action.type}` };
+    },
+  };
+};
+
+/**
+ * Play until the stop condition matches. The sink writes the activity first and
+ * throws after it, so the run stops exactly at that record and keeps every
+ * record before it.
+ */
+const playUntil = async (
+  recorder: RunRecorder,
+  stop: (activity: MatchActivity) => boolean,
+  options: PlayOptions,
+  createAgent: () => SeatAgent = createFirstLegalAgent,
+): Promise<unknown> =>
+  Effect.runPromise(
+    runGameSteps({
+      config,
+      maxDecisions: options.maxDecisions,
+      createAgent: async () => createAgent(),
+      onActivity: async (activity) => {
+        await recorder.recordActivity(activity);
+        if (stop(activity)) throw new Error("scripted stop");
+      },
+      ...(options.policy === undefined ? {} : { negotiationPolicy: options.policy }),
+    }),
+  ).then(
+    () => null,
+    (error: unknown) => error,
+  );
+
+const windowTurns = (records: ReadonlyArray<RunRecord>): ReadonlyArray<number> =>
+  records.flatMap((record) => {
+    if (record.kind !== "negotiation.event") return [];
+    const { event } = record.payload;
+    return event.type === "negotiation.window-opened" ? [event.turn] : [];
+  });
+
 const recordKinds = (directory: string): Promise<ReadonlyArray<string>> =>
   readRunPackage(directory).then((pkg) => pkg.records.map(({ kind }) => kind));
 
@@ -98,6 +204,9 @@ const gameEvents = (directory: string): Promise<ReadonlyArray<unknown>> =>
 
 const timelineText = (directory: string): Promise<string> =>
   readFile(resolve(directory, "timeline.jsonl"), "utf8");
+
+const timelineLines = async (directory: string): Promise<ReadonlyArray<string>> =>
+  (await timelineText(directory)).trimEnd().split("\n");
 
 const rewriteTimeline = async (
   directory: string,
@@ -213,7 +322,19 @@ describe("resume", () => {
         reason: "operator stopped the run",
       },
     });
-    expect(after.resume?.nextIndex).toBe(after.records.length);
+    expect(after.resume?.nextIndex).toBe(after.records.length - 1);
+
+    // A resume that completes no command is replaced by the next one instead of
+    // growing the log, so the seam stays the first record after the prefix.
+    const reopened = await RunRecorder.open({
+      directory,
+      mode: "cold",
+      reason: "operator stopped the run again",
+    });
+    await reopened.recorder.close();
+    const reread = await readRunPackage(directory);
+    expect(reread.records).toHaveLength(after.records.length);
+    expect(reread.records.at(-1)).toMatchObject({ kind: "run.resumed" });
   });
 
   it("refuses a terminal run before it writes", async () => {
@@ -398,6 +519,76 @@ describe("resume", () => {
     const pkg = await readRunPackage(directory);
     expect(pkg.resume?.observedSpendUsd).toBeCloseTo(1, 10);
     expect(pkg.resume?.decisionCount).toBe(2);
+  });
+
+  it("resumes a run that stopped inside a negotiation window", async () => {
+    const directory = await temporaryRunDirectory("open-window");
+    const recorder = await startRun(directory, "run-open-window");
+    let windows = 0;
+    const stopped = await playUntil(
+      recorder,
+      (activity) => {
+        if (activity.kind !== "negotiation.event") return false;
+        if (activity.payload.event.type !== "negotiation.window-opened") return false;
+        windows += 1;
+        return windows === 3;
+      },
+      { maxDecisions: 40, policy: negotiationPolicy },
+    );
+    expect(stopped).toBeInstanceOf(Error);
+    await recorder.close();
+
+    const before = await readRunPackage(directory);
+    const boundary = before.records.findLastIndex(({ kind }) => kind === "game.command-completed");
+    expect(before.records.at(-1)?.kind).toBe("negotiation.event");
+    expect(before.resumeBlockedReason).toBeNull();
+    expect(before.resume?.nextIndex).toBe(boundary + 1);
+    expect(before.resume?.negotiations.at(-1)?.event.type).toBe("negotiation.window-closed");
+
+    const seam = await RunRecorder.open({ directory, mode: "cold", reason: "open window" });
+    const resumed = await play(seam.recorder, {
+      maxDecisions: seam.resume.decisionCount + 2,
+      policy: negotiationPolicy,
+      resume: agentResume(seam.resume),
+    });
+    await seam.recorder.complete(resumed);
+
+    const finished = await readRunPackage(directory);
+    expect(finished.manifest.status).toBe("completed");
+    expect(finished.records.map(({ index }) => index)).toEqual(
+      finished.records.map((_record, index) => index),
+    );
+    // The half-played window is gone, so the file holds exactly one line per record.
+    expect(await timelineLines(directory)).toHaveLength(finished.records.length);
+    const turns = windowTurns(finished.records);
+    expect(turns.length).toBeGreaterThan(2);
+    expect(new Set(turns).size).toBe(turns.length);
+  });
+
+  it("refuses a resume that stopped at an accepted trade", async () => {
+    const directory = await temporaryRunDirectory("trade");
+    const recorder = await startRun(directory, "run-trade");
+    const stopped = await playUntil(
+      recorder,
+      (activity) =>
+        activity.kind === "game.command-completed" &&
+        activity.payload.commandId.includes(":settle:"),
+      { maxDecisions: 60, policy: negotiationPolicy },
+      createTradingAgent,
+    );
+    expect(stopped).toBeInstanceOf(Error);
+    await recorder.close();
+
+    const before = await readRunPackage(directory);
+    expect(before.records.at(-1)?.kind).toBe("game.command-completed");
+    expect(before.resume).toBeNull();
+    expect(before.resumeBlockedReason).toMatch(/open negotiation window/u);
+
+    const bytes = await timelineText(directory);
+    await expect(RunRecorder.open({ directory, mode: "cold", reason: "trade" })).rejects.toThrow(
+      /open negotiation window/u,
+    );
+    expect(await timelineText(directory)).toBe(bytes);
   });
 
   it("trims a truncated final line and rejects a corrupt one", async () => {

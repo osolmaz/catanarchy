@@ -149,7 +149,9 @@ A stopped run can continue. The timeline is the state, so a resume replays the s
 
 `RunRecorder.create` starts a run and `RunRecorder.open` continues one. `open` validates the package, refuses a terminal run, refuses a prefix that does not replay, takes the run lock, and appends one `run.resumed` record before play continues. It returns the absolute session file of every Pi seat in `warm` mode. The recorder keeps the stored `runId`, `matchId`, `startedAt`, `initialStateOrigin`, and seats. New records continue the index and offset sequences without a gap and without a repeat.
 
-A resume starts at a completed command boundary and only at the end of the log. A torn final line is discarded, so an incomplete write cannot corrupt a resumed run. Reseating a model or changing the game configuration is out of scope.
+A resume starts at the last completed command. Everything the log holds after that record is incomplete work that no command covers, such as a negotiation window that stopped halfway. `open` removes that tail before it appends, so the file keeps exactly one line per record and the negotiation sequence stays contiguous. A torn final line is discarded the same way.
+
+One prefix cannot resume. An accepted trade writes its command marker while the window is open, so the last completed command can sit inside a live negotiation round. That run stays partial, `readRunPackage` reports `resume: null` with a `resumeBlockedReason`, and `open` refuses it before any write. Reseating a model or changing the game configuration stays out of scope.
 
 `RunRecorder.close` closes a recorder without a terminal record. The run stays partial and another process can resume it.
 

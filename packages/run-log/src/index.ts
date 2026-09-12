@@ -1,3 +1,4 @@
+import { Buffer } from "node:buffer";
 import {
   access,
   mkdir,
@@ -152,9 +153,11 @@ export interface RunResume {
   readonly events: ReadonlyArray<GameEvent>;
   /** Raw envelopes of the stored prefix. The prefix ends at a completed command. */
   readonly eventPayloads: ReadonlyArray<unknown>;
+  /** The negotiation events of the stored prefix. A half-played window is not one of them. */
   readonly negotiations: ReadonlyArray<NegotiationEvent>;
   readonly decisionCount: number;
   readonly observedSpendUsd: number;
+  /** The record index the resume continues from. Records after it are dropped. */
   readonly nextIndex: number;
   readonly lastOffsetMs: number;
   readonly replayedSequence: number;
@@ -167,6 +170,8 @@ export interface RunPackage {
   readonly verification: RunVerification;
   /** Null when the run is terminal, or when no command ever completed. */
   readonly resume: RunResume | null;
+  /** Why the stored prefix cannot resume, or null when it can. */
+  readonly resumeBlockedReason: string | null;
 }
 
 export interface RunClock {
@@ -245,6 +250,21 @@ const processIsAlive = (pid: number): boolean => {
   }
 };
 
+/** Refuse a stored package that cannot continue from its own timeline. */
+const assertResumable = (directory: string, pkg: RunPackage): RunResume => {
+  if (pkg.manifest.status !== "partial") {
+    throw new Error(`The run at ${directory} is ${pkg.manifest.status} and cannot resume.`);
+  }
+  if (pkg.resumeBlockedReason !== null) {
+    throw new Error(`The run at ${directory} cannot resume. ${pkg.resumeBlockedReason}`);
+  }
+  const resume = pkg.resume;
+  if (resume === null) {
+    throw new Error(`The run at ${directory} has no completed command to resume from.`);
+  }
+  return resume;
+};
+
 /**
  * A live run holds `run.lock`. The file is a transient runtime guard and not part
  * of the run package. A lock left by a dead process is taken over.
@@ -272,11 +292,23 @@ const acquireRunLock = async (directory: string): Promise<() => Promise<void>> =
   throw new Error(`The run lock at ${path} could not be acquired.`);
 };
 
-const trimIncompleteTail = async (path: string): Promise<void> => {
+/**
+ * Drop the records that the resumed prefix does not cover. A stop inside a
+ * negotiation window leaves records after the last completed command, and the
+ * resumed run plays that window again. The incomplete tail is removed first so
+ * the log keeps one record per index and one sequence number per event.
+ */
+const truncateTimelineTo = async (path: string, recordCount: number): Promise<void> => {
   const text = await readFile(path, "utf8");
-  if (text.length === 0 || text.endsWith("\n")) return;
-  await truncate(path, text.lastIndexOf("\n") + 1);
+  const length = completeLineBytes(text, recordCount);
+  if (length < text.length) await truncate(path, length);
 };
+
+const completeLineBytes = (text: string, recordCount: number): number =>
+  text
+    .split("\n")
+    .slice(0, recordCount)
+    .reduce((total, line) => total + Buffer.byteLength(line, "utf8") + 1, 0);
 
 /** Every Pi seat must name a session file that still exists. */
 const missingSeatSessions = async (
@@ -400,13 +432,7 @@ export class RunRecorder {
   static async open(options: OpenRunRecorderOptions): Promise<OpenedRun> {
     const directory = resolve(options.directory);
     const pkg = await readRunPackage(directory);
-    if (pkg.manifest.status !== "partial") {
-      throw new Error(`The run at ${directory} is ${pkg.manifest.status} and cannot resume.`);
-    }
-    const resume = pkg.resume;
-    if (resume === null) {
-      throw new Error(`The run at ${directory} has no completed command to resume from.`);
-    }
+    const resume = assertResumable(directory, pkg);
     if (options.mode === "warm") {
       const missing = await missingSeatSessions(directory, pkg.manifest);
       if (missing.length > 0) {
@@ -417,7 +443,7 @@ export class RunRecorder {
     const releaseLock = await acquireRunLock(directory);
     try {
       const timelinePath = resolve(directory, pkg.manifest.timeline);
-      await trimIncompleteTail(timelinePath);
+      await truncateTimelineTo(timelinePath, resume.nextIndex);
       const timeline = await open(timelinePath, "a");
       const recorder = new RunRecorder({
         directory,
@@ -826,7 +852,38 @@ interface GameTimelineValidation {
   readonly negotiations: NegotiationEvent[];
   completedEventCount: number;
   negotiationSequence: number;
+  /** Records that end at the last completed command. */
+  completedRecordCount: number;
+  /** Negotiation events that belong to the last completed command prefix. */
+  completedNegotiationCount: number;
+  /** True when a negotiation window is open at the last completed command. */
+  completedInsideWindow: boolean;
+  openWindows: number;
 }
+
+const countWindowEvent = (validation: GameTimelineValidation, event: NegotiationEvent): void => {
+  if (event.event.type === "negotiation.window-opened") validation.openWindows += 1;
+  if (event.event.type === "negotiation.window-closed") validation.openWindows -= 1;
+};
+
+const consumeNegotiationRecord = async (
+  validation: GameTimelineValidation,
+  manifest: RunManifest,
+  payload: unknown,
+): Promise<void> => {
+  const event = await decodeRecordedNegotiationEvent(payload);
+  assertEventIdentity(event, manifest, "negotiation event");
+  if (
+    !Number.isSafeInteger(event.gameSequence) ||
+    event.gameSequence < 0 ||
+    event.sequence !== validation.negotiationSequence + 1
+  ) {
+    throw new Error("The run timeline negotiation event sequence is invalid.");
+  }
+  validation.negotiationSequence = event.sequence;
+  validation.negotiations.push(event);
+  countWindowEvent(validation, event);
+};
 
 const consumeGameRecord = async (
   validation: GameTimelineValidation,
@@ -841,22 +898,15 @@ const consumeGameRecord = async (
     return;
   }
   if (record.kind === "negotiation.event") {
-    const event = await decodeRecordedNegotiationEvent(record.payload);
-    assertEventIdentity(event, manifest, "negotiation event");
-    if (
-      !Number.isSafeInteger(event.gameSequence) ||
-      event.gameSequence < 0 ||
-      event.sequence !== validation.negotiationSequence + 1
-    ) {
-      throw new Error("The run timeline negotiation event sequence is invalid.");
-    }
-    validation.negotiationSequence = event.sequence;
-    validation.negotiations.push(event);
+    await consumeNegotiationRecord(validation, manifest, record.payload);
     return;
   }
   if (record.kind !== "game.command-completed") return;
   assertCommandMarker(record, validation.events.slice(validation.completedEventCount), manifest);
   validation.completedEventCount = validation.events.length;
+  validation.completedRecordCount = record.index + 1;
+  validation.completedNegotiationCount = validation.negotiations.length;
+  validation.completedInsideWindow = validation.openWindows > 0;
 };
 
 const initialRecordedState = (
@@ -891,6 +941,10 @@ interface EventTimelineResult {
   readonly eventPayloads: ReadonlyArray<unknown>;
   readonly negotiations: ReadonlyArray<NegotiationEvent>;
   readonly replayedSequence: number;
+  /** Record index that the resume continues from. */
+  readonly boundaryIndex: number;
+  /** True when a negotiation window is open at that boundary. */
+  readonly boundaryInsideWindow: boolean;
 }
 
 const validateEventTimeline = async (
@@ -904,10 +958,18 @@ const validateEventTimeline = async (
     negotiations: [],
     completedEventCount: 0,
     negotiationSequence: -1,
+    completedRecordCount: 0,
+    completedNegotiationCount: 0,
+    completedInsideWindow: false,
+    openWindows: 0,
   };
   for (const record of records) await consumeGameRecord(validation, manifest, record);
   const initialState = initialRecordedState(validation, config);
   assertCompleteCommandTail(manifest, validation);
+  const boundary = {
+    boundaryIndex: validation.completedRecordCount,
+    boundaryInsideWindow: validation.completedInsideWindow,
+  };
   if (validation.completedEventCount === 0 || initialState === null) {
     return {
       config,
@@ -917,6 +979,7 @@ const validateEventTimeline = async (
       eventPayloads: [],
       negotiations: [],
       replayedSequence: -1,
+      ...boundary,
     };
   }
   const completeEvents = validation.rawEvents.slice(0, validation.completedEventCount);
@@ -938,8 +1001,11 @@ const validateEventTimeline = async (
     replayedState,
     events: validation.events.slice(0, validation.completedEventCount),
     eventPayloads: completeEvents,
-    negotiations: validation.negotiations,
+    // The window that a stop cut in half is not part of the prefix, because the
+    // resumed run plays that window again.
+    negotiations: validation.negotiations.slice(0, validation.completedNegotiationCount),
     replayedSequence: replayedState.sequence,
+    ...boundary,
   };
 };
 
@@ -965,6 +1031,19 @@ const verificationFor = async (
  * writes a failed record and then a fallback record, so the records that are not
  * failures count the decisions the run has already made.
  */
+/**
+ * A stop inside a negotiation window leaves records after the last completed
+ * command. A window cannot continue from its middle, so the run refuses to
+ * resume from its own timeline instead of silently dropping the round.
+ */
+const OPEN_WINDOW_RESUME_BLOCKED =
+  "The stored timeline ends inside an open negotiation window, so the run cannot resume from its own timeline.";
+
+interface ResumeAvailability {
+  readonly resume: RunResume | null;
+  readonly blockedReason: string | null;
+}
+
 const completedDecisions = (records: ReadonlyArray<RunRecord>): number =>
   records.filter(
     (record) =>
@@ -984,25 +1063,33 @@ const recordedSpendUsd = (records: ReadonlyArray<RunRecord>): number =>
     return typeof cost === "number" && Number.isFinite(cost) ? total + cost : total;
   }, 0);
 
-const resumeFor = (
+const resumeAvailability = (
   manifest: RunManifest,
   records: ReadonlyArray<RunRecord>,
   timeline: EventTimelineResult,
   verification: RunVerification,
-): RunResume | null => {
-  if (manifest.status !== "partial" || timeline.replayedState === null) return null;
+): ResumeAvailability => {
+  if (manifest.status !== "partial" || timeline.replayedState === null) {
+    return { resume: null, blockedReason: null };
+  }
+  if (timeline.boundaryInsideWindow) {
+    return { resume: null, blockedReason: OPEN_WINDOW_RESUME_BLOCKED };
+  }
   return {
-    config: timeline.config,
-    state: timeline.replayedState,
-    events: timeline.events,
-    eventPayloads: timeline.eventPayloads,
-    negotiations: timeline.negotiations,
-    decisionCount: completedDecisions(records),
-    observedSpendUsd: recordedSpendUsd(records),
-    nextIndex: records.length,
-    lastOffsetMs: records.at(-1)?.offsetMs ?? 0,
-    replayedSequence: timeline.replayedSequence,
-    verification: verification.commandVerification,
+    blockedReason: null,
+    resume: {
+      config: timeline.config,
+      state: timeline.replayedState,
+      events: timeline.events,
+      eventPayloads: timeline.eventPayloads,
+      negotiations: timeline.negotiations,
+      decisionCount: completedDecisions(records),
+      observedSpendUsd: recordedSpendUsd(records),
+      nextIndex: timeline.boundaryIndex,
+      lastOffsetMs: records[timeline.boundaryIndex - 1]?.offsetMs ?? 0,
+      replayedSequence: timeline.replayedSequence,
+      verification: verification.commandVerification,
+    },
   };
 };
 
@@ -1018,10 +1105,12 @@ export const readRunPackage = async (directory: string): Promise<RunPackage> => 
   validateTerminalRecord(manifest, records);
   const timeline = await validateEventTimeline(manifest, records);
   const verification = await verificationFor(manifest, timeline.state);
+  const availability = resumeAvailability(manifest, records, timeline, verification);
   return {
     manifest,
     records,
     verification,
-    resume: resumeFor(manifest, records, timeline, verification),
+    resume: availability.resume,
+    resumeBlockedReason: availability.blockedReason,
   };
 };
