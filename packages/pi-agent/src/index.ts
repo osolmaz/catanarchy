@@ -34,10 +34,28 @@ import { Type, type Static } from "typebox";
 
 export interface PiModelReference extends AgentModelIdentity {}
 
+/**
+ * The thinking levels a run accepts. Pi supports these seven levels, and the
+ * bundled model store maps each of them for the models this harness runs. The
+ * list is the single source for both the option type and the `--thinking`
+ * argument, so a new level reaches both.
+ */
+export const PI_THINKING_LEVELS = [
+  "off",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+] as const;
+
+export type PiThinkingLevel = (typeof PI_THINKING_LEVELS)[number];
+
 export interface PiAgentFactoryOptions {
   readonly models: ReadonlyArray<PiModelReference>;
   readonly modelRuntime: ModelRuntime;
-  readonly thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+  readonly thinkingLevel?: PiThinkingLevel;
   readonly maxOutputTokens?: number;
   readonly contextWindowTokens?: number;
   readonly turnTimeMs?: number;
