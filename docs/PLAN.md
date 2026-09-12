@@ -430,7 +430,7 @@ Implementation is complete only when the focused cases and the full project chec
 - [x] Specify the append-only run package, exact timing, privacy scopes, and native Pi session files.
 - [x] Save run records while each match is in progress.
 - [x] Mark stopped, failed, cancelled, and completed runs clearly.
-- [ ] Add resume support for a stopped match.
+- [ ] Add resume support for a stopped match. The implementation contract is `docs/RESUME.md`.
 - [ ] Export viewer-safe replay bundles and player-specific training examples.
 - [ ] Add resumable batch manifests without mixing partial and final results.
 - [ ] Measure engine time separately from model time.
