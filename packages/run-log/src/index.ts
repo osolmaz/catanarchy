@@ -98,7 +98,14 @@ type ActivityRunRecord = {
 
 export interface RunStartedRecord extends RunRecordBase {
   readonly kind: "run.started";
-  readonly payload: { readonly config: GameConfig };
+  readonly payload: {
+    readonly config: GameConfig;
+    /**
+     * The negotiation round limit the run starts with, or `null` when negotiation is
+     * off. Absent in a package from before the field existed.
+     */
+    readonly negotiationRounds?: number | null;
+  };
 }
 
 export interface RunCompletedRecord extends RunRecordBase {
