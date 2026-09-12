@@ -44,6 +44,11 @@ export interface PiAgentFactoryOptions {
   readonly finalizationGraceMs?: number;
   readonly maxPlanningSteps?: number;
   readonly sessionDirectory?: string;
+  /**
+   * Absolute session files to restore, keyed by seat. A warm resume restores the
+   * seat memory from the file that the run manifest already records.
+   */
+  readonly resumedSessions?: ReadonlyMap<string, string>;
   readonly onSessionCreated?: (
     player: PlayerConfig,
     session: PiSessionReference,
@@ -72,6 +77,7 @@ export interface PiDecisionChannelContext {
   readonly finalizationGraceMs: number;
   readonly maxPlanningSteps: number;
   readonly sessionDirectory?: string;
+  readonly resumedSessionFile?: string;
 }
 
 export type PiDecisionChannelFactory = (
@@ -872,6 +878,21 @@ export const compactionSettingsForContext = (
   };
 };
 
+const sessionManagerFor = (
+  cwd: string,
+  sessionDirectory: string | undefined,
+  resumedSessionFile: string | undefined,
+): SessionManager => {
+  if (resumedSessionFile !== undefined) {
+    return sessionDirectory === undefined
+      ? SessionManager.open(resumedSessionFile)
+      : SessionManager.open(resumedSessionFile, sessionDirectory);
+  }
+  return sessionDirectory === undefined
+    ? SessionManager.inMemory(cwd)
+    : SessionManager.create(cwd, sessionDirectory);
+};
+
 const createSdkDecisionChannel = async ({
   player,
   model,
@@ -881,6 +902,7 @@ const createSdkDecisionChannel = async ({
   finalizationGraceMs,
   maxPlanningSteps,
   sessionDirectory,
+  resumedSessionFile,
 }: PiDecisionChannelContext): Promise<PiDecisionChannel> => {
   const actionGate = new ActionSelectionGate();
   const negotiationGate = new NegotiationSelectionGate();
@@ -947,10 +969,7 @@ const createSdkDecisionChannel = async ({
     resourceLoader: emptyResourceLoader(systemPromptFor(player)),
     tools: ["inspect_game", "choose_action", "choose_negotiation"],
     customTools: [inspectGame, chooseAction, chooseNegotiation],
-    sessionManager:
-      sessionDirectory === undefined
-        ? SessionManager.inMemory(cwd)
-        : SessionManager.create(cwd, sessionDirectory),
+    sessionManager: sessionManagerFor(cwd, sessionDirectory, resumedSessionFile),
     settingsManager: SettingsManager.inMemory({
       compaction: compactionSettingsForContext(model.contextWindow),
       retry: { enabled: false },
@@ -1201,23 +1220,33 @@ export interface PiCostBudgetSnapshot {
   readonly observedUsd: number;
 }
 
+const assertPositiveFinite = (value: number, message: string): void => {
+  if (!Number.isFinite(value) || value <= 0) throw new Error(message);
+};
+
 export class PiCostBudget {
   readonly #ceilingUsd: number;
   readonly #nextRequestExposureUsd: number;
   #observedUsd = 0;
 
-  constructor(ceilingUsd: number, nextRequestExposureUsd: number) {
-    if (!Number.isFinite(ceilingUsd) || ceilingUsd <= 0) {
-      throw new Error("The cost ceiling must be a positive finite number.");
-    }
-    if (!Number.isFinite(nextRequestExposureUsd) || nextRequestExposureUsd <= 0) {
-      throw new Error("The next-request cost exposure must be a positive finite number.");
+  constructor(ceilingUsd: number, nextRequestExposureUsd: number, observedUsd = 0) {
+    assertPositiveFinite(ceilingUsd, "The cost ceiling must be a positive finite number.");
+    assertPositiveFinite(
+      nextRequestExposureUsd,
+      "The next-request cost exposure must be a positive finite number.",
+    );
+    if (!Number.isFinite(observedUsd) || observedUsd < 0) {
+      throw new Error("The observed cost must be a non-negative finite number.");
     }
     if (nextRequestExposureUsd > ceilingUsd) {
       throw new Error("The next-request cost exposure exceeds the cost ceiling.");
     }
+    if (observedUsd + nextRequestExposureUsd > ceilingUsd) {
+      throw new Error("The observed cost and the next-request exposure exceed the cost ceiling.");
+    }
     this.#ceilingUsd = ceilingUsd;
     this.#nextRequestExposureUsd = nextRequestExposureUsd;
+    this.#observedUsd = observedUsd;
   }
 
   snapshot(): PiCostBudgetSnapshot {
@@ -1364,8 +1393,9 @@ const createChannelForSeat = async (
   options: PiAgentFactoryOptions,
   player: PlayerConfig,
   model: PiModel,
-): Promise<PiDecisionChannel> =>
-  (options.createChannel ?? createSdkDecisionChannel)({
+): Promise<PiDecisionChannel> => {
+  const resumedSessionFile = options.resumedSessions?.get(player.id);
+  return (options.createChannel ?? createSdkDecisionChannel)({
     player,
     model,
     modelRuntime: options.modelRuntime,
@@ -1384,7 +1414,9 @@ const createChannelForSeat = async (
     ...(options.sessionDirectory === undefined
       ? {}
       : { sessionDirectory: options.sessionDirectory }),
+    ...(resumedSessionFile === undefined ? {} : { resumedSessionFile }),
   });
+};
 
 const registerChannelSession = async (
   options: PiAgentFactoryOptions,

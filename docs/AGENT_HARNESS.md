@@ -163,6 +163,28 @@ npm run play:pi -- \
 
 Four seats receive models in round-robin order. `--models-path` loads a checked-in Pi model catalog when a new model is not yet in Pi's bundled catalog. `--openrouter-provider` pins every OpenRouter model to one provider slug and disables provider fallback; the selected model path or route is included in the budget report and final summary. The runner rejects unknown models and missing provider authentication before it creates a game. `--decisions` defaults to 16, which completes four-player setup. A larger value continues into normal turns and stops safely at the robber boundary. `--max-attempts` defaults to one. `--thinking` defaults to `high`. `--turn-time-ms` defaults to 10 minutes of exploration for each seat and game turn. `--finalization-grace-ms` defaults to 60 seconds. `--max-planning-steps` defaults to eight inspection calls for each seat and game turn. `--context-window-tokens` defaults to 131,072 and must be at least 32,768. Pi compacts long seat sessions within that limit. `--max-output-tokens` is an optional operator limit. When omitted, the effective output limit is the smaller of the model limit and the configured context window. `--cost-ceiling-usd` defaults to $5 and applies to the complete run. Before every game or negotiation request, the runner requires enough remaining budget for the request's maximum provider-call exposure. It stops the run rather than applying repeated fallbacks when the next request does not fit. For an operational pause test, `--pause-after-decisions` waits at a completed command boundary until the path supplied by `--resume-signal` exists. `--output` is optional.
 
+`--pause-after-decisions` stops a live process and the `resume` subcommand restarts a dead one. Both use the same completed-command boundary.
+
+## Resume
+
+`runWithAgents` accepts an optional starting state and its recorded events. The harness replays the stored prefix and fails when it does not replay, when it disagrees with the supplied state, or when the state breaks an engine invariant. A resumed run continues the decision count, the negotiation window counter, and the negotiated-turn set, so it never reopens a window that already closed.
+
+Continue a stopped run with the `resume` subcommand:
+
+```bash
+npm run play:pi -- resume \
+  --run-dir=runs/pi-game-47-2026-09-11T05-39-19-000Z \
+  --mode=warm \
+  --decisions=900 \
+  --cost-ceiling-usd=60
+```
+
+`--run-dir` names an existing run. `--mode` is `warm` or `cold`. A `warm` resume restores each seat from the session file that the manifest records, so the seat keeps its earlier messages. A `cold` resume creates a new session for each seat and keeps only the board and the hands. The runner takes the seat count and the model of each seat from the manifest, so a resume cannot reassign a model by accident. `--reason` records a short operator note in the `run.resumed` record.
+
+`--decisions` is required and counts the whole run, not the part after the resume. The cost ceiling also applies to the whole run. The runner reads the spend already recorded in the timeline, prints it in the budget report, and refuses to start when the observed spend plus the next request cannot fit under the ceiling.
+
+The command fails before it writes when the run directory is missing, the package does not validate, the last record is terminal, the stored prefix does not replay to a complete command boundary, a warm seat session file is missing, or another process holds the run lock.
+
 ## Live-test limit
 
 Live model tests are opt-in and are not part of `npm run check`. A normal repository check uses fake agents and makes no network request.

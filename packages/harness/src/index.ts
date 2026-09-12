@@ -1,4 +1,12 @@
-import { createGame, handleCommand, legalActions, observe } from "@catanarchy/engine";
+import { isDeepStrictEqual } from "node:util";
+import {
+  checkInvariants,
+  createGame,
+  handleCommand,
+  legalActions,
+  observe,
+  replay,
+} from "@catanarchy/engine";
 import type {
   GameConfig,
   GameEvent,
@@ -14,8 +22,10 @@ import { Data, Effect } from "effect";
 import {
   applyNegotiationAction,
   closeNegotiationWindow,
+  negotiatedTurnsOf,
   openNegotiationWindow,
   projectNegotiation,
+  restoreNegotiationSession,
   type NegotiationActionResult,
   type NegotiationPolicy,
   type NegotiationSession,
@@ -26,8 +36,10 @@ export {
   applyNegotiationAction,
   closeNegotiationWindow,
   DEFAULT_NEGOTIATION_POLICY,
+  negotiatedTurnsOf,
   openNegotiationWindow,
   projectNegotiation,
+  restoreNegotiationSession,
   NegotiationViolation,
 } from "./negotiation.js";
 export type {
@@ -182,6 +194,8 @@ export interface AgentRunOptions {
   readonly maxAttempts?: number;
   readonly negotiationPolicy?: NegotiationPolicy;
   readonly onActivity?: MatchActivitySink;
+  /** Continue an existing match from a verified prefix of its timeline. */
+  readonly resume?: AgentResume;
 }
 
 export interface InitialPlacementOptions extends AgentRunOptions {}
@@ -858,6 +872,94 @@ const negotiateCurrentTurn = async (
   return negotiated.state;
 };
 
+/**
+ * A match continues from a stored prefix of its own timeline. The payloads are
+ * the canonical form of the prefix, so the harness can verify the state instead
+ * of trusting it.
+ */
+export interface AgentResume {
+  readonly state: GameState;
+  readonly events: ReadonlyArray<GameEvent>;
+  readonly eventPayloads: ReadonlyArray<unknown>;
+  readonly negotiations: ReadonlyArray<NegotiationEvent>;
+  readonly decisionCount: number;
+}
+
+const verifiedResumeState = async (resume: AgentResume): Promise<GameState> => {
+  const replayed = await Effect.runPromise(
+    replay(resume.eventPayloads).pipe(
+      Effect.mapError(() => new HarnessError({ message: "The resumed prefix does not replay." })),
+    ),
+  );
+  if (!isDeepStrictEqual(replayed, resume.state)) {
+    throw new HarnessError({
+      message: "The resumed prefix does not reproduce the stored starting state.",
+    });
+  }
+  const violations = checkInvariants(replayed);
+  if (violations.length > 0) {
+    throw new HarnessError({ message: `The resumed state is invalid: ${violations[0]}` });
+  }
+  return replayed;
+};
+
+const resumedNegotiationSession = (
+  options: AgentRunOptions,
+  resume: AgentResume,
+): NegotiationSession | null => {
+  if (resume.negotiations.length === 0) return null;
+  const policy = options.negotiationPolicy;
+  if (policy === undefined) {
+    throw new HarnessError({
+      message: "The resumed run has negotiation history but no negotiation policy.",
+    });
+  }
+  try {
+    return restoreNegotiationSession(policy, resume.negotiations);
+  } catch (error) {
+    throw new HarnessError({
+      message: error instanceof Error ? error.message : "The negotiation history is invalid.",
+    });
+  }
+};
+
+interface RunStart {
+  readonly state: GameState;
+  readonly events: ReadonlyArray<GameEvent>;
+  readonly negotiations: ReadonlyArray<NegotiationEvent>;
+  readonly decisionCount: number;
+  readonly negotiationSession: NegotiationSession | null;
+  readonly negotiatedTurns: ReadonlySet<number>;
+}
+
+const freshRunStart = async (
+  options: AgentRunOptions,
+  record: ActivityRecorder,
+): Promise<RunStart> => {
+  const created = await Effect.runPromise(createGame(options.config));
+  await recordGameEventBatch(record, created.events);
+  return {
+    state: created.state,
+    events: created.events,
+    negotiations: [],
+    decisionCount: 0,
+    negotiationSession: null,
+    negotiatedTurns: new Set<number>(),
+  };
+};
+
+const resumedRunStart = async (
+  options: AgentRunOptions,
+  resume: AgentResume,
+): Promise<RunStart> => ({
+  state: await verifiedResumeState(resume),
+  events: resume.events,
+  negotiations: resume.negotiations,
+  decisionCount: resume.decisionCount,
+  negotiationSession: resumedNegotiationSession(options, resume),
+  negotiatedTurns: new Set(negotiatedTurnsOf(resume.negotiations)),
+});
+
 const runWithAgents = async (
   options: AgentRunOptions,
   agents: ReadonlyMap<string, SeatAgent>,
@@ -869,24 +971,25 @@ const runWithAgents = async (
   positiveInteger(timeoutMs, "decisionTimeoutMs", MAX_TIMER_DELAY_MS);
   positiveInteger(maxAttempts, "maxAttempts");
   const record = activityRecorder(options.onActivity);
+  const started =
+    options.resume === undefined
+      ? await freshRunStart(options, record)
+      : await resumedRunStart(options, options.resume);
 
-  const created = await Effect.runPromise(createGame(options.config));
-  await recordGameEventBatch(record, created.events);
-  let state = created.state;
-  const events: GameEvent[] = [...created.events];
-  const negotiations: NegotiationEvent[] = [];
+  let state = started.state;
+  const events: GameEvent[] = [...started.events];
+  const negotiations: NegotiationEvent[] = [...started.negotiations];
   const decisions: DecisionTrace[] = [];
   const negotiationDecisions: NegotiationTrace[] = [];
   const unavailableAgents = new WeakSet<SeatAgent>();
-  const negotiatedTurns = new Set<number>();
   const runNegotiationState: RunNegotiationState = {
     events,
     negotiations,
-    negotiationSession: null,
+    negotiationSession: started.negotiationSession,
     negotiationDecisions,
-    negotiatedTurns,
+    negotiatedTurns: new Set(started.negotiatedTurns),
   };
-  let decisionCount = 0;
+  let decisionCount = started.decisionCount;
 
   while (shouldContinue(state, decisionCount)) {
     state = await negotiateCurrentTurn(
