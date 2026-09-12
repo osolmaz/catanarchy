@@ -108,7 +108,7 @@ The first record must have index and offset zero. The final record must have kin
 
 Version 1 defines these kinds:
 
-- `run.started`: The game configuration.
+- `run.started`: The game configuration, and the negotiation round limit the run starts with. The limit is `null` when negotiation is off, and absent in a package from before the field existed.
 - `game.event`: One authoritative `catanarchy.game-event.v1` envelope.
 - `game.command-completed`: The command ID and last game-event sequence in one complete command batch.
 - `negotiation.event`: One `catanarchy.negotiation-event.v1` envelope.
@@ -126,7 +126,7 @@ A game command can emit more than one game event. All events with the same `comm
 Example timeline:
 
 ```jsonl
-{"schema":"catanarchy.run-record.v1","runId":"run-42","index":0,"offsetMs":0,"recordedAt":"2026-09-10T10:00:00.000Z","kind":"run.started","visibility":"public","payload":{"config":{"schema":"catanarchy.game-config.v1","matchId":"game-42","seed":42,"players":[{"id":"red","name":"Red","color":"red"},{"id":"blue","name":"Blue","color":"blue"},{"id":"white","name":"White","color":"white"}]}}}
+{"schema":"catanarchy.run-record.v1","runId":"run-42","index":0,"offsetMs":0,"recordedAt":"2026-09-10T10:00:00.000Z","kind":"run.started","visibility":"public","payload":{"config":{"schema":"catanarchy.game-config.v1","matchId":"game-42","seed":42,"players":[{"id":"red","name":"Red","color":"red"},{"id":"blue","name":"Blue","color":"blue"},{"id":"white","name":"White","color":"white"}]},"negotiationRounds":1}}
 {"schema":"catanarchy.run-record.v1","runId":"run-42","index":1,"offsetMs":36064,"recordedAt":"2026-09-10T10:00:36.064Z","kind":"game.decision","visibility":"referee","payload":{"matchId":"game-42","sequence":0,"playerId":"red","attempt":1,"outcome":"selected","elapsedMs":36064,"actionId":"settlement:v:-1:-3"}}
 {"schema":"catanarchy.run-record.v1","runId":"run-42","index":2,"offsetMs":36066,"recordedAt":"2026-09-10T10:00:36.066Z","kind":"run.completed","visibility":"public","payload":{"gameSequence":1,"negotiationSequence":-1,"winnerPlayerId":null}}
 ```
@@ -151,7 +151,7 @@ A stopped run can continue. The timeline is the state, so a resume replays the s
 
 A resume starts at the last completed command. Everything the log holds after that record is incomplete work that no command covers, such as a negotiation window that stopped halfway. `open` removes that tail before it appends, so the file keeps exactly one line per record and the negotiation sequence stays contiguous. The removal measures the prefix in bytes, because a message can hold characters that take more than one byte. A torn final line is discarded the same way.
 
-The resume value reports the replayed state, the prefix events, the negotiation events of the prefix, the committed decision count, the recorded spend, the index the run continues from, and the round limit of the first negotiation window. That round limit comes from the whole timeline rather than from the prefix, because a stop can leave the first window in the tail that `open` removes.
+The resume value reports the replayed state, the prefix events, the negotiation events of the prefix, the committed decision count, the recorded spend, the index the run continues from, and the round limit of the first negotiation window. That round limit comes from the start record, and falls back to the first window for a package that predates the field, so a run that stopped before its first window still keeps the limit it began with.
 
 One prefix cannot resume. An accepted trade writes its command marker while the window is open, so the last completed command can sit inside a live negotiation round. That run stays partial, `readRunPackage` reports `resume: null` with a `resumeBlockedReason`, and `open` refuses it before any write. Reseating a model or changing the game configuration stays out of scope.
 

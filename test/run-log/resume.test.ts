@@ -678,6 +678,29 @@ describe("resume", () => {
     expect(second.resume?.observedSpendUsd).toBeCloseTo(0.5, 10);
   });
 
+  it("reads the round limit the run started with", async () => {
+    const directory = await temporaryRunDirectory("started-policy");
+    const recorder = await RunRecorder.create({
+      directory,
+      runId: "run-started-policy",
+      config,
+      initialStateOrigin,
+      seats: config.players.map(({ id }) => ({
+        seatId: id,
+        agentType: "scripted" as const,
+        model: null,
+      })),
+      negotiationRounds: 3,
+    });
+    // The window records another limit on purpose. The start record is the limit the
+    // run began with, and a run that never opens a window has no other record of it.
+    await play(recorder, { maxDecisions: 14, policy: negotiationPolicy });
+    await recorder.close();
+
+    const pkg = await readRunPackage(directory);
+    expect(pkg.resume?.negotiationMaxRounds).toBe(3);
+  });
+
   it("removes a tail whose bytes outnumber its characters", async () => {
     const directory = await temporaryRunDirectory("wide-tail");
     const recorder = await startRun(directory, "run-wide-tail");
