@@ -28,19 +28,19 @@ This is the same boundary that `--pause-after-decisions` already waits at. Pause
 
 A resumed match keeps its board and hands. Its agent memory depends on the mode, and the difference is recorded.
 
-| Mode | Board and hands | Seat agent memory |
-| --- | --- | --- |
-| `warm` | kept | kept, restored from each seat session file |
-| `cold` | kept | fresh session, no memory of the earlier play |
+| Mode   | Board and hands | Seat agent memory                            |
+| ------ | --------------- | -------------------------------------------- |
+| `warm` | kept            | kept, restored from each seat session file   |
+| `cold` | kept            | fresh session, no memory of the earlier play |
 
 A `cold` resume is a different experiment. Both modes must appear in the timeline, and analysis must read that record before it mixes a resumed match with an uninterrupted one.
 
 ## The stage model
 
-| Stage | Run directory | Timeline | Seat sessions |
-| --- | --- | --- | --- |
-| `create` | created | created | created |
-| `resume` | opened | appended | restored or created |
+| Stage    | Run directory | Timeline | Seat sessions       |
+| -------- | ------------- | -------- | ------------------- |
+| `create` | created       | created  | created             |
+| `resume` | opened        | appended | restored or created |
 
 Only these two stages exist. There is no merge stage and no forked run directory.
 
@@ -115,18 +115,18 @@ A reader of a resumed run reports:
 
 ## Tests
 
-| Test | Property |
-| --- | --- |
-| Resume a partial run with scripted agents and play to the end; compare with an uninterrupted run of the same length | Identical final state and identical events |
-| Resume a terminal run | Refused before any write |
-| Resume when the stored prefix does not replay | Refused before any write |
-| Two processes open one run | Exactly one proceeds |
-| Resume in `warm` mode | The seat session keeps its earlier messages |
-| Resume in `cold` mode | The state matches, the memory differs, and the timeline says so |
-| Resume across a replayed negotiation window | The closed window does not reopen |
-| Resume with a revised cost ceiling | Observed spend carries over and the ceiling covers the whole run |
-| Resume with a truncated final line | Rejected, or trimmed at the boundary, and never silently accepted |
-| Record `run.resumed` | A current reader accepts it and an analysis tool can find the seam |
+| Test                                                                                                                | Property                                                           |
+| ------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| Resume a partial run with scripted agents and play to the end; compare with an uninterrupted run of the same length | Identical final state and identical events                         |
+| Resume a terminal run                                                                                               | Refused before any write                                           |
+| Resume when the stored prefix does not replay                                                                       | Refused before any write                                           |
+| Two processes open one run                                                                                          | Exactly one proceeds                                               |
+| Resume in `warm` mode                                                                                               | The seat session keeps its earlier messages                        |
+| Resume in `cold` mode                                                                                               | The state matches, the memory differs, and the timeline says so    |
+| Resume across a replayed negotiation window                                                                         | The closed window does not reopen                                  |
+| Resume with a revised cost ceiling                                                                                  | Observed spend carries over and the ceiling covers the whole run   |
+| Resume with a truncated final line                                                                                  | Rejected, or trimmed at the boundary, and never silently accepted  |
+| Record `run.resumed`                                                                                                | A current reader accepts it and an analysis tool can find the seam |
 
 ## Out of scope
 
