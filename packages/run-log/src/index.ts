@@ -1,6 +1,7 @@
 import { Buffer } from "node:buffer";
 import {
   access,
+  link,
   mkdir,
   open,
   readFile,
@@ -124,6 +125,11 @@ export interface RunResumedRecord extends RunRecordBase {
     readonly replayedSequence: number;
     readonly verification: CommandVerification;
     readonly reason: string;
+    /**
+     * Spend that an earlier attempt already incurred and that this resume removes
+     * from the timeline. The seam carries it, so the whole-run ceiling still counts it.
+     */
+    readonly priorSpendUsd: number;
   };
 }
 
@@ -267,29 +273,45 @@ const assertResumable = (directory: string, pkg: RunPackage): RunResume => {
 
 /**
  * A live run holds `run.lock`. The file is a transient runtime guard and not part
- * of the run package. A lock left by a dead process is taken over.
+ * of the run package. The lock is claimed by linking a fully written candidate, so
+ * it never appears empty. A lock with a live holder is refused, a lock with a dead
+ * holder is taken over, and a lock that cannot be read counts as held.
  */
 const acquireRunLock = async (directory: string): Promise<() => Promise<void>> => {
   const path = resolve(directory, LOCK_FILE);
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    try {
-      const handle = await open(path, "wx");
-      await handle.writeFile(`${process.pid}\n`, "utf8");
-      await handle.sync();
-      await handle.close();
-      return async () => {
-        await rm(path, { force: true });
-      };
-    } catch (error) {
-      if ((error as { readonly code?: string }).code !== "EEXIST") throw error;
+  const staged = `${path}.${process.pid}.staged`;
+  await rm(staged, { force: true });
+  await writeFile(staged, `${process.pid}\n`, { encoding: "utf8", flag: "wx" });
+  try {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      if (await claimRunLock(staged, path)) return async () => releaseRunLock(path);
       const holder = await lockHolderPid(path);
-      if (holder !== null && processIsAlive(holder)) {
+      if (holder === null || processIsAlive(holder)) {
         throw new Error(`Another process holds the run lock at ${path}.`);
       }
       await rm(path, { force: true });
     }
+    throw new Error(`The run lock at ${path} could not be acquired.`);
+  } finally {
+    await rm(staged, { force: true });
   }
-  throw new Error(`The run lock at ${path} could not be acquired.`);
+};
+
+/** Claim the lock by linking a written candidate. `EEXIST` means another writer holds it. */
+const claimRunLock = async (staged: string, path: string): Promise<boolean> => {
+  try {
+    await link(staged, path);
+    return true;
+  } catch (error) {
+    if ((error as { readonly code?: string }).code !== "EEXIST") throw error;
+    return false;
+  }
+};
+
+/** Release only a lock that still names this process. */
+const releaseRunLock = async (path: string): Promise<void> => {
+  if ((await lockHolderPid(path)) !== process.pid) return;
+  await rm(path, { force: true });
 };
 
 /**
@@ -462,6 +484,7 @@ export class RunRecorder {
         replayedSequence: resume.replayedSequence,
         verification: resume.verification,
         reason: safeReason(options.reason),
+        priorSpendUsd: spendUsdFrom(pkg.records, resume.nextIndex),
       });
       return {
         recorder,
@@ -1044,24 +1067,41 @@ interface ResumeAvailability {
   readonly blockedReason: string | null;
 }
 
-const completedDecisions = (records: ReadonlyArray<RunRecord>): number =>
+const completedDecisions = (records: ReadonlyArray<RunRecord>, boundaryIndex: number): number =>
   records.filter(
     (record) =>
+      record.index < boundaryIndex &&
       record.kind === "game.decision" &&
       isRecord(record.payload) &&
       record.payload["outcome"] !== "failed",
   ).length;
 
-const recordedSpendUsd = (records: ReadonlyArray<RunRecord>): number =>
-  records.reduce((total, record) => {
-    if (record.kind !== "game.decision" && record.kind !== "negotiation.decision") return total;
-    const payload = record.payload;
-    if (!isRecord(payload)) return total;
-    const usage = payload["usage"];
-    if (!isRecord(usage)) return total;
-    const cost = usage["cost"];
-    return typeof cost === "number" && Number.isFinite(cost) ? total + cost : total;
-  }, 0);
+const carriedSpendUsd = (record: RunRecord): number => {
+  if (record.kind !== "run.resumed") return 0;
+  const prior = record.payload.priorSpendUsd;
+  return typeof prior === "number" && Number.isFinite(prior) ? prior : 0;
+};
+
+const decisionCostUsd = (record: RunRecord): number | null => {
+  if (record.kind !== "game.decision" && record.kind !== "negotiation.decision") return null;
+  const payload = record.payload;
+  if (!isRecord(payload)) return null;
+  const usage = payload["usage"];
+  if (!isRecord(usage)) return null;
+  const cost = usage["cost"];
+  return typeof cost === "number" && Number.isFinite(cost) ? cost : null;
+};
+
+/** The money one record brings to the whole-run ceiling from index `fromIndex` on. */
+const recordSpendUsd = (record: RunRecord, fromIndex: number): number => {
+  if (record.index < fromIndex) return 0;
+  if (record.kind === "run.resumed") return carriedSpendUsd(record);
+  return decisionCostUsd(record) ?? 0;
+};
+
+/** Spend the timeline holds at or after `fromIndex` for the whole run. */
+const spendUsdFrom = (records: ReadonlyArray<RunRecord>, fromIndex: number): number =>
+  records.reduce((total, record) => total + recordSpendUsd(record, fromIndex), 0);
 
 const resumeAvailability = (
   manifest: RunManifest,
@@ -1083,8 +1123,8 @@ const resumeAvailability = (
       events: timeline.events,
       eventPayloads: timeline.eventPayloads,
       negotiations: timeline.negotiations,
-      decisionCount: completedDecisions(records),
-      observedSpendUsd: recordedSpendUsd(records),
+      decisionCount: completedDecisions(records, timeline.boundaryIndex),
+      observedSpendUsd: spendUsdFrom(records, 0),
       nextIndex: timeline.boundaryIndex,
       lastOffsetMs: records[timeline.boundaryIndex - 1]?.offsetMs ?? 0,
       replayedSequence: timeline.replayedSequence,

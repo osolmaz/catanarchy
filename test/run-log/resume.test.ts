@@ -221,7 +221,11 @@ const rewriteTimeline = async (
   await writeFile(path, `${records.map((record) => JSON.stringify(record)).join("\n")}\n`);
 };
 
-const appendRecord = async (directory: string, payload: unknown): Promise<void> => {
+const appendRecord = async (
+  directory: string,
+  payload: unknown,
+  kind: RunRecord["kind"] = "negotiation.decision",
+): Promise<void> => {
   const pkg = await readRunPackage(directory);
   const last = pkg.records.at(-1);
   if (last === undefined) throw new Error("Expected a stored record.");
@@ -233,7 +237,7 @@ const appendRecord = async (directory: string, payload: unknown): Promise<void> 
       index: last.index + 1,
       offsetMs: last.offsetMs + 1,
       recordedAt: new Date(1_789_012_800_000 + last.offsetMs + 1).toISOString(),
-      kind: "negotiation.decision",
+      kind,
       visibility: "referee",
       payload,
     })}\n`,
@@ -404,6 +408,31 @@ describe("resume", () => {
     await opened.recorder.close();
   });
 
+  it("treats an unreadable lock as held", async () => {
+    const directory = await temporaryRunDirectory("empty-lock");
+    const recorder = await startRun(directory, "run-empty-lock");
+    await play(recorder, { maxDecisions: 2 });
+    await recorder.close();
+
+    await writeFile(resolve(directory, "run.lock"), "", "utf8");
+    await expect(
+      RunRecorder.open({ directory, mode: "cold", reason: "empty lock" }),
+    ).rejects.toThrow(/run lock/u);
+    expect(await readFile(resolve(directory, "run.lock"), "utf8")).toBe("");
+  });
+
+  it("keeps a lock that another writer replaced", async () => {
+    const directory = await temporaryRunDirectory("foreign-lock");
+    const recorder = await startRun(directory, "run-foreign-lock");
+    await play(recorder, { maxDecisions: 2 });
+    await recorder.close();
+
+    const opened = await RunRecorder.open({ directory, mode: "cold", reason: "first" });
+    await writeFile(resolve(directory, "run.lock"), "999999999\n", "utf8");
+    await opened.recorder.close();
+    expect(await readFile(resolve(directory, "run.lock"), "utf8")).toBe("999999999\n");
+  });
+
   it("refuses a warm resume when a seat session file is missing", async () => {
     const directory = await temporaryRunDirectory("warm-missing");
     const recorder = await startRun(
@@ -519,6 +548,57 @@ describe("resume", () => {
     const pkg = await readRunPackage(directory);
     expect(pkg.resume?.observedSpendUsd).toBeCloseTo(1, 10);
     expect(pkg.resume?.decisionCount).toBe(2);
+  });
+
+  it("carries the spend of a discarded tail into a later resume", async () => {
+    const directory = await temporaryRunDirectory("carried-spend");
+    const recorder = await startRun(directory, "run-carried-spend");
+    await play(recorder, { maxDecisions: 2 });
+    await recorder.close();
+
+    await appendRecord(directory, {
+      matchId: config.matchId,
+      usage: { input: 10, output: 20, cacheRead: 0, cacheWrite: 0, total: 30, cost: 0.5 },
+    });
+
+    const opened = await RunRecorder.open({ directory, mode: "cold", reason: "carried spend" });
+    expect(opened.resume.observedSpendUsd).toBeCloseTo(0.5, 10);
+    const seam = (await readRunPackage(directory)).records.at(-1);
+    expect(seam).toMatchObject({ kind: "run.resumed", payload: { priorSpendUsd: 0.5 } });
+
+    const resumed = await play(opened.recorder, {
+      maxDecisions: opened.resume.decisionCount + 2,
+      resume: agentResume(opened.resume),
+    });
+    await opened.recorder.close();
+    expect(resumed.state.sequence).toBeGreaterThan(0);
+
+    const second = await readRunPackage(directory);
+    expect(second.records.filter(({ kind }) => kind === "run.resumed")).toHaveLength(1);
+    expect(second.resume?.observedSpendUsd).toBeCloseTo(0.5, 10);
+  });
+
+  it("counts only the decisions the prefix committed", async () => {
+    const directory = await temporaryRunDirectory("tail-decision");
+    const recorder = await startRun(directory, "run-tail-decision");
+    await play(recorder, { maxDecisions: 3 });
+    await recorder.close();
+
+    const stored = await readRunPackage(directory);
+    const lastDecision = stored.records.findLast((record) => record.kind === "game.decision");
+    if (lastDecision === undefined) throw new Error("Expected a stored decision.");
+    // A stop between a decision and its command marker leaves that decision in the file.
+    await appendRecord(directory, lastDecision.payload, "game.decision");
+
+    const before = await readRunPackage(directory);
+    const nextIndex = before.resume?.nextIndex ?? -1;
+    const committed = before.records.filter(
+      (record) => record.index < nextIndex && record.kind === "game.decision",
+    ).length;
+    expect(before.records.at(-1)?.kind).toBe("game.decision");
+    expect(committed).toBeGreaterThan(0);
+    expect(before.records.length - nextIndex).toBe(1);
+    expect(before.resume?.decisionCount).toBe(committed);
   });
 
   it("resumes a run that stopped inside a negotiation window", async () => {

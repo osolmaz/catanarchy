@@ -58,7 +58,7 @@ Only these two stages exist. There is no merge stage and no forked run directory
 4. `open` restores `index` and `offsetMs` from the last record of the prefix. The next record continues the sequence with no gap and no repeat. Records after the prefix are removed first.
 5. `open` keeps `runId`, `matchId`, `startedAt`, and `initialStateOrigin` from the stored manifest unchanged. A resume must not rewrite the identity or the start time of the run.
 6. `open` opens the timeline for append. `create` keeps exclusive creation.
-7. `open` holds a lock for the life of the run. A second process that tries to open the same run fails before it writes.
+7. `open` holds a lock for the life of the run. The lock appears with its content already written, so two openers cannot both take it over. A second process that tries to open the same run fails before it writes. A lock with a live holder is refused, a lock with a dead holder is taken over, and a lock that cannot be read counts as held. A writer releases only a lock that still names it.
 8. `open` appends a `run.resumed` record as its first write.
 9. `complete`, `fail`, and `cancel` behave on a resumed run exactly as they do on a created one.
 
@@ -71,6 +71,7 @@ Only these two stages exist. There is no merge stage and no forked run directory
 - `replayedSequence`: The last game-event sequence in the replayed state.
 - `verification`: The replay verification result for the stored prefix.
 - `reason`: A bounded operator reason.
+- `priorSpendUsd`: Spend that an earlier attempt already incurred and that this resume removes from the timeline. The seam carries it, so the whole-run ceiling still counts it.
 
 `docs/RUN_LOG.md` states that unknown record kinds are rejected, so readers must learn this kind in the same change. The cutover rule applies: extend version 1 in place and update every reader. Do not add a version 2 for compatibility.
 
@@ -90,8 +91,8 @@ Only these two stages exist. There is no merge stage and no forked run directory
 
 ### Cost budget
 
-18. A resumed run recomputes observed spend from the usage records already in the timeline.
-19. The cost ceiling applies to the whole run, not to the part after the resume. A resume must not hand the run a second full ceiling.
+18. A resumed run recomputes observed spend from the usage records already in the timeline. Records after the prefix are removed, so the record that replaces them carries the spend they held in `priorSpendUsd`.
+19. The cost ceiling applies to the whole run, not to the part after the resume. A resume must not hand the run a second full ceiling. The carried spend keeps that true after a second and later resume.
 20. The next-request exposure check runs before the first resumed request, as it does on a fresh run.
 
 ### Command line
