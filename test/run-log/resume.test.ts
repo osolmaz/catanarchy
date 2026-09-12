@@ -1,4 +1,4 @@
-import { appendFile, link, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { STANDARD_BOARD_GENERATOR_ID } from "@catanarchy/engine";
@@ -480,11 +480,26 @@ describe("resume", () => {
     // One process may take over a stale lock. A second taker must leave the lock alone
     // instead of removing the lock that the first taker has already claimed.
     await writeFile(resolve(directory, "run.lock"), "999999999\n", "utf8");
-    await link(resolve(directory, "run.lock"), resolve(directory, "run.lock.999999999.takeover"));
+    await writeFile(resolve(directory, "run.lock.takeover"), `${process.pid}\n`, "utf8");
     await expect(RunRecorder.open({ directory, mode: "cold", reason: "contest" })).rejects.toThrow(
       /run lock/u,
     );
     expect(await readFile(resolve(directory, "run.lock"), "utf8")).toBe("999999999\n");
+  });
+
+  it("clears a takeover marker whose owner is gone", async () => {
+    const directory = await temporaryRunDirectory("stale-marker");
+    const recorder = await startRun(directory, "run-stale-marker");
+    await play(recorder, { maxDecisions: 2 });
+    await recorder.close();
+
+    // A process can die between the takeover marker and the removal of the lock. The
+    // marker must not block every later opener.
+    await writeFile(resolve(directory, "run.lock"), "999999999\n", "utf8");
+    await writeFile(resolve(directory, "run.lock.takeover"), "999999998\n", "utf8");
+    const opened = await RunRecorder.open({ directory, mode: "cold", reason: "stale marker" });
+    await opened.recorder.close();
+    expect((await readdir(directory)).filter((name) => name.includes("takeover"))).toEqual([]);
   });
 
   it("treats an unreadable lock as held", async () => {
@@ -773,6 +788,25 @@ describe("resume", () => {
       usage: { input: 10, output: 20, cacheRead: 0, cacheWrite: 0, total: 30, cost: -1 },
     });
 
+    await expect(readRunPackage(directory)).rejects.toThrow(/spend/u);
+  });
+
+  it("refuses a resume seam without its prior spend", async () => {
+    const directory = await temporaryRunDirectory("seam-spend");
+    const recorder = await startRun(directory, "run-seam-spend");
+    await play(recorder, { maxDecisions: 2 });
+    await recorder.close();
+    const opened = await RunRecorder.open({ directory, mode: "cold", reason: "seam spend" });
+    await opened.recorder.close();
+
+    await rewriteTimeline(directory, (records) => {
+      const seam = records.find((record) => record["kind"] === "run.resumed");
+      if (seam === undefined) throw new Error("Expected a stored seam.");
+      const payload = seam["payload"] as Record<string, unknown>;
+      delete payload["priorSpendUsd"];
+    });
+
+    // A seam without its spend would lower the observed spend of the next resume.
     await expect(readRunPackage(directory)).rejects.toThrow(/spend/u);
   });
 
