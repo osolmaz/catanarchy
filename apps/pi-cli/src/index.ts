@@ -9,6 +9,7 @@ import {
   type AgentUsage,
   type MatchActivity,
   type MatchRunResult,
+  type NegotiationPolicy,
 } from "@catanarchy/harness";
 import {
   applyEnvironmentAuthentication,
@@ -22,7 +23,7 @@ import {
   type PiAgentFactoryOptions,
   type PiModelReference,
 } from "@catanarchy/pi-agent";
-import type { GameConfig } from "@catanarchy/protocol";
+import type { GameConfig, NegotiationEvent } from "@catanarchy/protocol";
 import {
   readRunPackage,
   RunRecorder,
@@ -508,6 +509,36 @@ const resumeModeArgument = (): RunResumeMode => {
   return mode;
 };
 
+/**
+ * The round limit of the first recorded negotiation window, or null when the run
+ * never opened one. The record is the only place the original policy survives.
+ */
+const recordedNegotiationRounds = (events: ReadonlyArray<NegotiationEvent>): number | null => {
+  for (const { event } of events) {
+    if (event.type === "negotiation.window-opened") return event.maxRounds;
+  }
+  return null;
+};
+
+/**
+ * A resume must keep the negotiation policy the run started with, so the round
+ * limit is checked before the run is opened rather than when the first window
+ * opens. Message length and open-offer limits are not recorded in the timeline.
+ */
+const assertRecordedNegotiationRounds = (
+  events: ReadonlyArray<NegotiationEvent>,
+  policy: NegotiationPolicy | undefined,
+): void => {
+  const recorded = recordedNegotiationRounds(events);
+  if (recorded === null) return;
+  const requested = policy?.maxRounds ?? 0;
+  if (requested !== recorded) {
+    throw new Error(
+      `The run recorded ${recorded} negotiation rounds per window, but the resume asks for ${requested}.`,
+    );
+  }
+};
+
 const runResume = async (runtime: ModelRuntime): Promise<void> => {
   requiredArgument("decisions", "resume requires --decisions=<total decisions for the whole run>.");
   const directory = resolve(requiredArgument("run-dir", "resume requires --run-dir=<path>."));
@@ -515,8 +546,13 @@ const runResume = async (runtime: ModelRuntime): Promise<void> => {
   const existing = await readRunPackage(directory);
   const resume = existing.resume;
   if (resume === null) {
-    throw new Error(`The run at ${directory} cannot resume.`);
+    throw new Error(
+      existing.resumeBlockedReason === null
+        ? `The run at ${directory} cannot resume.`
+        : `The run at ${directory} cannot resume. ${existing.resumeBlockedReason}`,
+    );
   }
+  assertRecordedNegotiationRounds(resume.negotiations, negotiationPolicy);
   const references = seatModelsFromManifest(existing.manifest);
   configureProviderRouting(runtime, references);
   await applyEnvironmentAuthentication(runtime, references);

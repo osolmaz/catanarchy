@@ -24,6 +24,10 @@ A resume starts at a completed command boundary. It never starts inside a negoti
 
 This is the same boundary that `--pause-after-decisions` already waits at. Pause and resume share one boundary definition: pause stops a live process, resume restarts a dead one.
 
+A stop can leave records after that boundary. A negotiation window that stopped halfway, or game events of a command that never completed, are incomplete work. The resumed run plays them again. `open` therefore removes those records before it appends, so the log keeps one record per index and one sequence number per negotiation event. The removed tail is not a rewind: it holds no committed command.
+
+One stop cannot resume at all. An accepted trade writes its command marker while its window is still open, so the last completed command can sit inside a live negotiation round. That boundary cannot continue. The trade is already applied, the remaining rounds of the window are gone, a window cannot replay from its middle, and a committed command must not be discarded. `open` refuses such a run before it writes, and the package reports the reason.
+
 ## Resume modes
 
 A resumed match keeps its board and hands. Its agent memory depends on the mode, and the difference is recorded.
@@ -51,7 +55,7 @@ Only these two stages exist. There is no merge stage and no forked run directory
 1. Add `RunRecorder.open` beside `RunRecorder.create`. It accepts a run directory that already exists.
 2. `open` validates the package with `readRunPackage` before it appends anything.
 3. `open` refuses a run whose last record is `run.completed`, `run.failed`, or `run.cancelled`. A finished run is final.
-4. `open` restores `index` and `offsetMs` from the last stored record. The next record continues the sequence with no gap and no repeat.
+4. `open` restores `index` and `offsetMs` from the last record of the prefix. The next record continues the sequence with no gap and no repeat. Records after the prefix are removed first.
 5. `open` keeps `runId`, `matchId`, `startedAt`, and `initialStateOrigin` from the stored manifest unchanged. A resume must not rewrite the identity or the start time of the run.
 6. `open` opens the timeline for append. `create` keeps exclusive creation.
 7. `open` holds a lock for the life of the run. A second process that tries to open the same run fails before it writes.
@@ -74,7 +78,7 @@ Only these two stages exist. There is no merge stage and no forked run directory
 
 10. `runWithAgents` accepts an optional starting state and its events. When they are present it does not call `createGame`.
 11. The decision count continues from the resumed count. A resumed run with a `--decisions` limit must not receive a fresh full limit.
-12. The negotiation window counter and the negotiated-turn set continue from the replayed state. A resumed run must not reopen a negotiation window that already closed.
+12. The negotiation window counter and the negotiated-turn set continue from the replayed state. A resumed run must not reopen a negotiation window that already closed. The prefix ends with a closed window, or before the window that the stop cut in half.
 13. The harness verifies the replayed prefix before it plays. A prefix that does not replay is a hard failure, not a warning.
 
 ### Pi agent
@@ -103,6 +107,7 @@ A resumed run fails before it writes when:
 - the manifest or timeline does not validate
 - the last record is terminal
 - the stored prefix does not replay to a complete command boundary
+- the completed command at the end of the prefix is inside an open negotiation window
 - the state after replay fails an engine invariant
 - a seat session file named by the manifest is missing in `warm` mode
 - another process holds the run lock
@@ -115,24 +120,26 @@ A reader of a resumed run reports:
 
 ## Tests
 
-| Test                                                                                                                | Property                                                           |
-| ------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
-| Resume a partial run with scripted agents and play to the end; compare with an uninterrupted run of the same length | Identical final state and identical events                         |
-| Resume a terminal run                                                                                               | Refused before any write                                           |
-| Resume when the stored prefix does not replay                                                                       | Refused before any write                                           |
-| Two processes open one run                                                                                          | Exactly one proceeds                                               |
-| Resume in `warm` mode                                                                                               | The seat session keeps its earlier messages                        |
-| Resume in `cold` mode                                                                                               | The state matches, the memory differs, and the timeline says so    |
-| Resume across a replayed negotiation window                                                                         | The closed window does not reopen                                  |
-| Resume with a revised cost ceiling                                                                                  | Observed spend carries over and the ceiling covers the whole run   |
-| Resume with a truncated final line                                                                                  | Rejected, or trimmed at the boundary, and never silently accepted  |
-| Record `run.resumed`                                                                                                | A current reader accepts it and an analysis tool can find the seam |
+| Test                                                                                                                | Property                                                                              |
+| ------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| Resume a partial run with scripted agents and play to the end; compare with an uninterrupted run of the same length | Identical final state and identical events                                            |
+| Resume a terminal run                                                                                               | Refused before any write                                                              |
+| Resume when the stored prefix does not replay                                                                       | Refused before any write                                                              |
+| Two processes open one run                                                                                          | Exactly one proceeds                                                                  |
+| Resume in `warm` mode                                                                                               | The seat session keeps its earlier messages                                           |
+| Resume in `cold` mode                                                                                               | The state matches, the memory differs, and the timeline says so                       |
+| Resume across a replayed negotiation window                                                                         | The closed window does not reopen                                                     |
+| Resume a run that stopped inside a negotiation window                                                               | The half-played window is removed, the log stays readable, and that window opens once |
+| Resume a run that stopped at an accepted trade                                                                      | Refused before any write                                                              |
+| Resume with a revised cost ceiling                                                                                  | Observed spend carries over and the ceiling covers the whole run                      |
+| Resume with a truncated final line                                                                                  | Rejected, or trimmed at the boundary, and never silently accepted                     |
+| Record `run.resumed`                                                                                                | A current reader accepts it and an analysis tool can find the seam                    |
 
 ## Out of scope
 
 - Parallel match execution and batch manifests.
 - Work stealing, job queues, or a scheduler.
-- Rewinding to an earlier point. Resume continues from the end of the log only.
+- Rewinding to an earlier point. Resume continues from the last completed command only, and it never discards a committed command.
 - Replacing a seat model or a game configuration mid-run.
 - Changing a completed run.
 
