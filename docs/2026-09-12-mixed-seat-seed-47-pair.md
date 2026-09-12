@@ -17,6 +17,8 @@ Both games stopped early for an unknown reason. Both were then continued with th
 
 Two games on one seed are a behavioural case study. They are not a strength verdict. About 85 games are needed to detect a win-rate shift from 50% to 65%.
 
+A second pair followed with Luna at a higher thinking level. The section [Thinking level: high against xhigh](#thinking-level-high-against-xhigh) records that pair and compares it with this one.
+
 ## Run identity
 
 | Field                | Game A                                              | Game B                                              |
@@ -288,6 +290,93 @@ The mixed games never developed the board as far. The dead market in game A is t
 
 Two mixed games on one seed show a behavioural difference, not a strength difference. Games A and B disagree on the most important measure, the trade rate, so most findings above rest on a single game. The difference that holds in both mixed games is the reasoning style: DeepSeek raises its price and names rivals, and Luna holds its price and talks about its own build.
 
+## Thinking level: high against xhigh
+
+Luna has thinking levels above `high`. DeepSeek does not have usable headroom, so the second pair raises Luna only. The board, the seats, the flags, and the model set stay the same, so the level is the single change against the first pair.
+
+A one-decision probe settled the provider question first:
+
+| Model    | Level   | Output tokens | Latency |      Cost |
+| -------- | ------- | ------------: | ------: | --------: |
+| DeepSeek | `high`  |         2,004 |  10.3 s | $0.004684 |
+| DeepSeek | `xhigh` |         5,822 |  26.3 s | $0.007038 |
+| DeepSeek | `max`   |        28,110 | 120.1 s | $0.036280 |
+| Luna     | `xhigh` |         1,229 |  15.0 s | $0.003423 |
+
+The probe used one sample per row, so the output counts carry sampling noise. Three findings came out of it:
+
+1. The Hugging Face router accepts `xhigh` and `max` for the DeepSeek model, although Novita documents only `low` and `high` for it.
+2. `max` is not usable for a full game. One setup decision took 28,110 output tokens and 120 seconds. A game at that rate would cost tens of dollars and take most of a day.
+3. Luna accepts `xhigh` on the OpenAI Responses API.
+
+The CLI holds one `--thinking` level for the whole game. To raise Luna alone, the run used a copy of the model store in which the DeepSeek entry maps `xhigh` to `high`. Every other value, including the cost table, is unchanged. The resolved level maps were checked with a read-only tool before the launch. The launch record is `/home/onur/scratch/catanarchy-luna-xhigh-seed47-launch.json`, and it holds the full flag list and the resolved maps.
+
+### The xhigh pair
+
+| Field                | Game A                                              | Game B                                              |
+| -------------------- | --------------------------------------------------- | --------------------------------------------------- |
+| Run ID               | `luna-xhigh-seed47-a`                               | `luna-xhigh-seed47-b`                               |
+| Status               | Completed                                           | Completed                                           |
+| Winner               | Blue (DeepSeek)                                     | White (DeepSeek)                                    |
+| Winning turn         | 66                                                  | 75                                                  |
+| Turns ended          | 65                                                  | 74                                                  |
+| Started              | 2026-09-12 07:34:11 UTC                             | 2026-09-12 07:34:13 UTC                             |
+| Finished             | 2026-09-12 08:55:21 UTC                             | 2026-09-12 09:09:14 UTC                             |
+| Duration             | 81 minutes                                          | 95 minutes                                          |
+| Cost                 | $2.0057                                             | $2.5412                                             |
+| Local source package | `/home/onur/scratch/catanarchy-luna-xhigh-seed47-a` | `/home/onur/scratch/catanarchy-luna-xhigh-seed47-b` |
+
+The seats match the first pair: in game A Luna holds red and white, and in game B DeepSeek holds red and white. Each model starts one game and holds each of the four seats once across the pair.
+
+Effective victory points, from the replayed final state:
+
+| Pair  | Game | DeepSeek seats | Luna seats |
+| ----- | ---- | -------------: | ---------: |
+| high  | A    |             16 |          9 |
+| high  | B    |             16 |         10 |
+| xhigh | A    |             17 |         12 |
+| xhigh | B    |             19 |         15 |
+
+DeepSeek won all four games. Luna's share of the victory points rose from 19 of 51 to 27 of 63.
+
+### Cost, tokens, and time
+
+| Measure                   | high pair        | xhigh pair       |
+| ------------------------- | ---------------- | ---------------- |
+| Pair cost                 | $4.2114          | $4.5469          |
+| Luna cost                 | $1.4455          | $1.6377          |
+| DeepSeek cost             | $2.7659          | $2.9092          |
+| Luna output tokens        | 125,312          | 227,316          |
+| DeepSeek output tokens    | 1,156,861        | 1,242,826        |
+| Luna cache write          | 1,853,722        | 1,767,373        |
+| Calls, Luna               | 523              | 549              |
+| Calls, DeepSeek           | 562              | 602              |
+| Median decision, Luna     | 2,899 / 3,117 ms | 3,107 / 3,578 ms |
+| Median decision, DeepSeek | 4,089 / 6,022 ms | 4,450 / 4,362 ms |
+| Active minutes, A / B     | 73.2 / 77.2      | 81.2 / 95.0      |
+
+Luna's thinking output rose by 81%. Her cost rose by 13%, and the pair cost rose by 8%. DeepSeek ran at `high` in both pairs, so its own cost rise comes from the longer games and the larger number of calls.
+
+A deeper level is cheap on this harness. The wall clock is the real cost: the xhigh games took 11% and 23% longer.
+
+### Behaviour
+
+| Game    | Offers | Accepted | Counteroffers | Messages |
+| ------- | -----: | -------: | ------------: | -------: |
+| high A  |     66 |        3 |            15 |       30 |
+| xhigh A |     77 |        5 |            22 |       32 |
+| high B  |     64 |       13 |             6 |       28 |
+| xhigh B |     62 |       10 |             9 |       18 |
+
+Game A was a dead market at both levels. Game B traded normally at both levels. The level did not change the market behaviour in a consistent direction. The counteroffer count rose in game A and fell in game B.
+
+### Limits on the level comparison
+
+- Two games per level cannot support a strength claim. The outcome did not change, and deeper thinking flipped no game.
+- Luna's victory points improved in both games, from 9 to 12 and from 10 to 15. Two games cannot separate that from luck, and an improvement in points while losing every game is not a win-rate result.
+- DeepSeek changed level between the pairs only in the sense that the store held it at `high`. Its calls and output rose with the longer games, so its column is not a clean control either.
+- The probe rows are single samples. The `max` figure in particular comes from one call.
+
 ## Reproduction
 
 The launch record for the original pair is `/home/onur/scratch/catanarchy-luna-mixed-seed47-launch.json`. The resume record is `/home/onur/scratch/catanarchy-luna-mixed-seed47-resume.json`. Both hold the full flag list. The run manifest does not record the launch configuration, so these files are the source for it.
@@ -302,6 +391,8 @@ The original games ran at commit `6980d4d`. The resume ran at commit `6606923`, 
 - The behavioural findings rest on two games. Where the two games disagree, the note says so.
 - The seed 47 comparison uses a different model count per seat set. The seed 47 run held four DeepSeek seats, and the pair held two.
 - Both packages are in the public Bucket `osolmaz/catanarchy-runs`. A scan found no credential. The provider `thinkingSignature` blobs in two Luna sessions match a `sk-` or `hf_` prefix by chance inside a long opaque string.
+- The xhigh pair is published in the same Bucket at `runs/luna-xhigh-seed47-a` and `runs/luna-xhigh-seed47-b`. All four packages carry this report.
+- The level comparison rests on two games per level. Treat every difference in it as a case study, not as an effect size.
 
 ## Related documents
 
