@@ -455,13 +455,27 @@ const playResumedRun = async (
     }),
   );
 
-const seatModelsFromManifest = (manifest: RunManifest): ReadonlyArray<PiModelReference> =>
-  manifest.seats.map((seat) => {
+/**
+ * The model of every seat, in the order of the recorded players. The harness hands
+ * the list to the seats by position, so the stored seat order must not decide which
+ * model plays which seat.
+ */
+const seatModelsFromManifest = (
+  manifest: RunManifest,
+  playerIds: ReadonlyArray<string>,
+): ReadonlyArray<PiModelReference> => {
+  const seats = new Map(manifest.seats.map((seat) => [seat.seatId, seat]));
+  const mismatch = "The manifest seats do not match the recorded players of the run.";
+  if (seats.size !== playerIds.length) throw new Error(mismatch);
+  return playerIds.map((playerId) => {
+    const seat = seats.get(playerId);
+    if (seat === undefined) throw new Error(mismatch);
     if (seat.agentType !== "pi" || seat.model === null) {
-      throw new Error(`Seat ${seat.seatId} has no Pi model and cannot resume.`);
+      throw new Error(`Seat ${playerId} has no Pi model and cannot resume.`);
     }
     return { provider: seat.model.provider, modelId: seat.model.modelId };
   });
+};
 
 const runFresh = async (runtime: ModelRuntime): Promise<void> => {
   const references = modelReferences;
@@ -585,7 +599,10 @@ const runResume = async (runtime: ModelRuntime): Promise<void> => {
     );
   }
   assertRecordedNegotiationRounds(resume.negotiationMaxRounds, negotiationPolicy);
-  const references = seatModelsFromManifest(existing.manifest);
+  const references = seatModelsFromManifest(
+    existing.manifest,
+    resume.config.players.map(({ id }) => id),
+  );
   configureProviderRouting(runtime, references);
   await applyEnvironmentAuthentication(runtime, references);
   await assertModelsAvailable(runtime, references);

@@ -701,6 +701,29 @@ describe("resume", () => {
     expect(pkg.resume?.negotiationMaxRounds).toBe(3);
   });
 
+  it("treats a run that recorded negotiation as off as zero rounds", async () => {
+    const directory = await temporaryRunDirectory("off-policy");
+    const recorder = await RunRecorder.create({
+      directory,
+      runId: "run-off-policy",
+      config,
+      initialStateOrigin,
+      seats: config.players.map(({ id }) => ({
+        seatId: id,
+        agentType: "scripted" as const,
+        model: null,
+      })),
+      negotiationRounds: null,
+    });
+    // The window records another limit on purpose. The run began with negotiation off,
+    // and a resume must repeat that instead of enabling negotiation for the match.
+    await play(recorder, { maxDecisions: 14, policy: negotiationPolicy });
+    await recorder.close();
+
+    const pkg = await readRunPackage(directory);
+    expect(pkg.resume?.negotiationMaxRounds).toBe(0);
+  });
+
   it("removes a tail whose bytes outnumber its characters", async () => {
     const directory = await temporaryRunDirectory("wide-tail");
     const recorder = await startRun(directory, "run-wide-tail");
