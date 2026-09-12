@@ -55,10 +55,10 @@ Only these two stages exist. There is no merge stage and no forked run directory
 1. Add `RunRecorder.open` beside `RunRecorder.create`. It accepts a run directory that already exists.
 2. `open` validates the package with `readRunPackage` before it appends anything.
 3. `open` refuses a run whose last record is `run.completed`, `run.failed`, or `run.cancelled`. A finished run is final.
-4. `open` restores `index` and `offsetMs` from the last record of the prefix. The next record continues the sequence with no gap and no repeat. Records after the prefix are removed first.
+4. `open` restores `index` and `offsetMs` from the last record of the prefix. The next record continues the sequence with no gap and no repeat. Records after the prefix are removed first. The offset baseline moves back by the stored offset, so a resumed record reports the stored offset plus the time the new process took.
 5. `open` keeps `runId`, `matchId`, `startedAt`, and `initialStateOrigin` from the stored manifest unchanged. A resume must not rewrite the identity or the start time of the run.
 6. `open` opens the timeline for append. `create` keeps exclusive creation.
-7. `open` holds a lock for the life of the run. The lock appears with its content already written, so two openers cannot both take it over. A second process that tries to open the same run fails before it writes. A lock with a live holder is refused, a lock with a dead holder is taken over, and a lock that cannot be read counts as held. A writer releases only a lock that still names it.
+7. `open` takes the lock before it reads the package. The lock appears with its content already written, so two openers cannot both take it over. A second process that tries to open the same run fails before it writes. A lock with a live holder is refused, a lock with a dead holder is taken over, and a lock that cannot be read counts as held. A writer releases only a lock that still names it. The resume decision, the restored prefix, and the removal of later records all happen under the lock, so a stale read cannot act on a timeline that another writer changed.
 8. `open` appends a `run.resumed` record as its first write.
 9. `complete`, `fail`, and `cancel` behave on a resumed run exactly as they do on a created one.
 

@@ -320,6 +320,15 @@ const releaseRunLock = async (path: string): Promise<void> => {
  * resumed run plays that window again. The incomplete tail is removed first so
  * the log keeps one record per index and one sequence number per event.
  */
+/** A resume needs a run directory that already holds a stored package. */
+const assertRunDirectory = async (directory: string): Promise<void> => {
+  try {
+    await access(directory);
+  } catch {
+    throw new Error(`The run directory ${directory} does not exist.`);
+  }
+};
+
 const truncateTimelineTo = async (path: string, recordCount: number): Promise<void> => {
   const text = await readFile(path, "utf8");
   const length = completeLineBytes(text, recordCount);
@@ -449,21 +458,26 @@ export class RunRecorder {
 
   /**
    * Open a stopped run and continue it. The stored prefix becomes the state and
-   * the recorder appends to the same timeline.
+   * the recorder appends to the same timeline. The lock is taken before the
+   * package is read, so the resume decision cannot come from a stale read.
    */
   static async open(options: OpenRunRecorderOptions): Promise<OpenedRun> {
     const directory = resolve(options.directory);
-    const pkg = await readRunPackage(directory);
-    const resume = assertResumable(directory, pkg);
-    if (options.mode === "warm") {
-      const missing = await missingSeatSessions(directory, pkg.manifest);
-      if (missing.length > 0) {
-        throw new Error(`A warm resume needs every seat session: ${missing.join("; ")}.`);
-      }
-    }
     const clock = options.clock ?? systemClock();
+    await assertRunDirectory(directory);
+    // The lock is taken before the package is read. The resume decision and the
+    // records it removes must come from a timeline that no other writer can
+    // change, or a stale read could truncate a run that another process finished.
     const releaseLock = await acquireRunLock(directory);
     try {
+      const pkg = await readRunPackage(directory);
+      const resume = assertResumable(directory, pkg);
+      if (options.mode === "warm") {
+        const missing = await missingSeatSessions(directory, pkg.manifest);
+        if (missing.length > 0) {
+          throw new Error(`A warm resume needs every seat session: ${missing.join("; ")}.`);
+        }
+      }
       const timelinePath = resolve(directory, pkg.manifest.timeline);
       await truncateTimelineTo(timelinePath, resume.nextIndex);
       const timeline = await open(timelinePath, "a");
@@ -472,7 +486,10 @@ export class RunRecorder {
         manifest: pkg.manifest,
         timeline,
         clock,
-        startedAtMonotonic: clock.monotonicMs(),
+        // The baseline moves back by the stored offset, so the resumed records
+        // continue the stored offsets instead of restarting at zero. A long run
+        // would otherwise report every resumed record at its final offset.
+        startedAtMonotonic: clock.monotonicMs() - resume.lastOffsetMs,
         nextIndex: resume.nextIndex,
         lastOffsetMs: resume.lastOffsetMs,
         releaseLock,

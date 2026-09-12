@@ -341,6 +341,45 @@ describe("resume", () => {
     expect(reread.records.at(-1)).toMatchObject({ kind: "run.resumed" });
   });
 
+  it("continues the offset sequence of a long run after a resume", async () => {
+    const directory = await temporaryRunDirectory("offsets");
+    const recorder = await startRun(directory, "run-offsets");
+    await play(recorder, { maxDecisions: 2 });
+    await recorder.close();
+
+    // A long run reaches an offset far beyond the runtime of the resumed process, so
+    // a baseline that restarts at zero would report every resumed record at one time.
+    const stored = await readRunPackage(directory);
+    await rewriteTimeline(directory, (records) => {
+      for (const record of records) {
+        record["offsetMs"] = (record["offsetMs"] as number) + 5_000_000;
+      }
+    });
+    const lastOffset = (stored.records.at(-1)?.offsetMs ?? 0) + 5_000_000;
+
+    let now = 1_000_000;
+    const opened = await RunRecorder.open({
+      directory,
+      mode: "cold",
+      reason: "offsets",
+      clock: {
+        monotonicMs: () => (now += 250),
+        utcNow: () => new Date(1_789_012_800_000 + now),
+      },
+    });
+    await play(opened.recorder, {
+      maxDecisions: opened.resume.decisionCount + 2,
+      resume: agentResume(opened.resume),
+    });
+    await opened.recorder.close();
+
+    const after = await readRunPackage(directory);
+    const resumed = after.records.filter(({ index }) => index >= opened.resume.nextIndex);
+    expect(resumed.length).toBeGreaterThan(1);
+    expect(resumed.every(({ offsetMs }) => offsetMs >= lastOffset)).toBe(true);
+    expect(new Set(resumed.map(({ offsetMs }) => offsetMs)).size).toBeGreaterThan(1);
+  });
+
   it("refuses a terminal run before it writes", async () => {
     const directory = await temporaryRunDirectory("terminal");
     const recorder = await startRun(directory, "run-terminal");
@@ -431,6 +470,27 @@ describe("resume", () => {
     await writeFile(resolve(directory, "run.lock"), "999999999\n", "utf8");
     await opened.recorder.close();
     expect(await readFile(resolve(directory, "run.lock"), "utf8")).toBe("999999999\n");
+  });
+
+  it("takes the lock before it reads the resumable package", async () => {
+    const directory = await temporaryRunDirectory("lock-order");
+    const recorder = await startRun(directory, "run-lock-order");
+    const result = await play(recorder, { maxDecisions: 2 });
+    await recorder.complete(result);
+
+    // A terminal run is refused by the package read. The lock is checked first, so
+    // a live holder wins even when the stored run could not resume.
+    await writeFile(resolve(directory, "run.lock"), `${process.pid}\n`, "utf8");
+    await expect(RunRecorder.open({ directory, mode: "cold", reason: "ordering" })).rejects.toThrow(
+      /run lock/u,
+    );
+  });
+
+  it("refuses a run directory that does not exist", async () => {
+    const directory = await temporaryRunDirectory("absent");
+    await expect(RunRecorder.open({ directory, mode: "cold", reason: "absent" })).rejects.toThrow(
+      /does not exist/u,
+    );
   });
 
   it("refuses a warm resume when a seat session file is missing", async () => {

@@ -20,7 +20,7 @@ A completed run uses this layout:
 
 `manifest.json` identifies the run and its files. `timeline.jsonl` contains ordered match records. Each file in `sessions/` is a normal Pi session file created by the public Pi `SessionManager` API. The manifest maps each generated Pi session file to its seat.
 
-A live run also holds `run.lock`. The lock is a transient runtime guard, not part of the package. It holds the process ID of the writer and the writer removes it on close. The lock is claimed with its content already written, so it never appears empty and two openers cannot both take it. An opener that finds a lock whose process is gone takes it over. An opener that cannot read the lock treats it as held.
+A live run also holds `run.lock`. The lock is a transient runtime guard, not part of the package. It holds the process ID of the writer and the writer removes it on close. The lock is claimed with its content already written, so it never appears empty and two openers cannot both take it. An opener that finds a lock whose process is gone takes it over. An opener that cannot read the lock treats it as held. A resume takes the lock before it reads the package.
 
 A writer creates the run directory before the match starts. It writes each timeline record to disk before play continues. It updates `manifest.json` with an atomic file replacement. The manifest stays `partial` until the match ends. A stopped run keeps its records and remains clearly marked as partial, failed, or cancelled. If a failed or cancelled run ends during a game command, readers replay the last complete command and retain the unmarked event tail for inspection.
 
@@ -147,7 +147,7 @@ Imported runs that have only the old result JSON cannot recover raw Pi messages 
 
 A stopped run can continue. The timeline is the state, so a resume replays the stored prefix and appends to the same log. It creates no second state format and no forked run directory. `docs/RESUME.md` holds the full contract.
 
-`RunRecorder.create` starts a run and `RunRecorder.open` continues one. `open` validates the package, refuses a terminal run, refuses a prefix that does not replay, takes the run lock, and appends one `run.resumed` record before play continues. It returns the absolute session file of every Pi seat in `warm` mode. The recorder keeps the stored `runId`, `matchId`, `startedAt`, `initialStateOrigin`, and seats. New records continue the index and offset sequences without a gap and without a repeat.
+`RunRecorder.create` starts a run and `RunRecorder.open` continues one. `open` takes the run lock, then validates the package, refuses a terminal run, refuses a prefix that does not replay, and appends one `run.resumed` record before play continues. It returns the absolute session file of every Pi seat in `warm` mode. The recorder keeps the stored `runId`, `matchId`, `startedAt`, `initialStateOrigin`, and seats. New records continue the index and offset sequences without a gap and without a repeat. Because the offset baseline moves back by the stored offset, a record from a resumed process reports the stored offset plus the elapsed time of that process.
 
 A resume starts at the last completed command. Everything the log holds after that record is incomplete work that no command covers, such as a negotiation window that stopped halfway. `open` removes that tail before it appends, so the file keeps exactly one line per record and the negotiation sequence stays contiguous. A torn final line is discarded the same way.
 
