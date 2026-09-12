@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { createGame, handleCommand, legalActions, observe } from "@catanarchy/engine";
@@ -24,6 +24,7 @@ import {
   NegotiationSelectionGate,
   negotiationActionFromToolInput,
   parseModelReference,
+  PI_THINKING_LEVELS,
   PiCostBudget,
   pinOpenRouterProvider,
   resolveSelection,
@@ -1085,5 +1086,33 @@ describe("Pi model setup", () => {
     await expect(
       assertModelsAvailable(runtime, [{ provider: "test", modelId: "known" }]),
     ).rejects.toThrow("Authentication is not configured");
+  });
+});
+
+describe("Pi thinking levels", () => {
+  it("accepts every level the checked-in catalog maps", async () => {
+    const catalog = JSON.parse(await readFile(resolve("config", "pi-models.json"), "utf8")) as {
+      providers: Record<
+        string,
+        { models: ReadonlyArray<{ id: string; thinkingLevelMap?: Record<string, unknown> }> }
+      >;
+    };
+    const accepted = new Set<string>(PI_THINKING_LEVELS);
+    const models = Object.values(catalog.providers).flatMap((provider) => provider.models);
+    expect(models.length).toBeGreaterThan(0);
+
+    for (const model of models) {
+      const mapped = Object.entries(model.thinkingLevelMap ?? {})
+        .filter(([, value]) => value !== null)
+        .map(([level]) => level);
+      for (const level of mapped) {
+        expect(accepted, `${model.id} maps ${level}`).toContain(level);
+      }
+    }
+  });
+
+  it("reaches the deepest level Pi supports", () => {
+    expect(PI_THINKING_LEVELS.at(-1)).toBe("max");
+    expect(new Set(PI_THINKING_LEVELS).size).toBe(PI_THINKING_LEVELS.length);
   });
 });

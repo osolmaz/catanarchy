@@ -17,6 +17,7 @@ import {
   createPiAgentFactory,
   ModelRuntime,
   parseModelReference,
+  PI_THINKING_LEVELS,
   PiCostBudget,
   pinOpenRouterProvider,
   withPiCostBudget,
@@ -76,7 +77,7 @@ const numberArgument = (name: string, defaultValue: number): number => {
 
 const thinkingArgument = (): NonNullable<PiAgentFactoryOptions["thinkingLevel"]> => {
   const value = argument("thinking") ?? "high";
-  const levels = new Set(["off", "minimal", "low", "medium", "high", "xhigh"]);
+  const levels = new Set<string>(PI_THINKING_LEVELS);
   if (!levels.has(value)) throw new Error("--thinking is not a supported thinking level.");
   return value as NonNullable<PiAgentFactoryOptions["thinkingLevel"]>;
 };
