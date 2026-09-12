@@ -29,7 +29,7 @@ Two games on one seed are a behavioural case study. They are not a strength verd
 | Winning turn         | 68                                                  | 69                                                  |
 | Started              | 2026-09-11 17:13:29 UTC                             | 2026-09-11 17:13:29 UTC                             |
 | Finished             | 2026-09-12 05:41:55 UTC                             | 2026-09-12 05:46:10 UTC                             |
-| Resumed              | 2026-09-12 05:12:31 UTC, warm                       | 2026-09-12 05:12:31 UTC, warm                       |
+| Resumed              | 2026-09-12 05:11:28 UTC, warm                       | 2026-09-12 05:12:03 UTC, warm                       |
 | Pi version           | 0.85.1                                              | 0.85.1                                              |
 | Local source package | `/home/onur/scratch/catanarchy-luna-mixed-seed47-a` | `/home/onur/scratch/catanarchy-luna-mixed-seed47-b` |
 
@@ -85,15 +85,15 @@ The cause is still unknown. The evidence points to an external teardown of the w
 
 Both games were then continued from their own timelines. The resume took the last completed command as its boundary, replayed the prefix, and reopened the four seat sessions of each game.
 
-| Field                      | Game A      | Game B      |
-| -------------------------- | ----------- | ----------- |
-| Resume record index        | 1517        | 1032        |
-| Records dropped by the cut | 2           | 8           |
-| Spend carried by the seam  | $0.000000   | $0.002845   |
-| Replayed game sequence     | 198         | 140         |
-| State verification         | exact       | exact       |
-| Resumed segment duration   | 29 min 24 s | 33 min 39 s |
-| Stop repeated              | no          | no          |
+| Field                      | Game A      | Game B     |
+| -------------------------- | ----------- | ---------- |
+| Resume record index        | 1517        | 1032       |
+| Records dropped by the cut | 2           | 8          |
+| Spend carried by the seam  | $0.000000   | $0.002845  |
+| Replayed game sequence     | 198         | 140        |
+| State verification         | exact       | exact      |
+| Resumed segment duration   | 30 min 28 s | 34 min 7 s |
+| Stop repeated              | no          | no         |
 
 Both games wrote a terminal record and released the run lock. The resume added one `run.resumed` seam to each timeline. The item that remained untested in the resume verification plan, a real stopped match under `/home/onur/scratch`, is now covered twice.
 
@@ -157,20 +157,127 @@ The mixed pair played 78% more turns and cost 26% less. Two effects explain this
 
 ## Play observations
 
-| Measure                      | Game A | Game B |
-| ---------------------------- | -----: | -----: |
-| Game decisions               |    262 |    259 |
-| Failed game decisions        |      0 |      0 |
-| Negotiation decisions        |    280 |    284 |
-| Failed negotiation decisions |      8 |      8 |
-| Offers                       |     66 |     64 |
-| Accepted offers              |      3 |     13 |
-| Messages                     |     30 |     28 |
-| Robber moves                 |     13 |     16 |
-| Development cards bought     |     12 |     14 |
-| Knights played               |      4 |      7 |
+| Measure                      | Game A | Game B | Seed 47 |
+| ---------------------------- | -----: | -----: | ------: |
+| Game decisions               |    262 |    259 |     345 |
+| Failed game decisions        |      0 |      0 |      19 |
+| Negotiation decisions        |    280 |    284 |     322 |
+| Failed negotiation decisions |      8 |      8 |      14 |
+| Offers                       |     66 |     64 |      55 |
+| Accepted offers              |      3 |     13 |      11 |
+| Messages                     |     30 |     28 |       5 |
+| Robber moves                 |     13 |     16 |      16 |
+| Development cards bought     |     12 |     14 |      12 |
+| Knights played               |      4 |      7 |       5 |
+| Minutes per turn             |   1.09 |   1.14 |    3.73 |
 
 Game A is the low-trade game of the pair. Three accepted offers in 68 turns is far below the seed 47 run, which accepted 11 offers in 77 turns. Game B accepted 13.
+
+## Behaviour compared with the seed 47 run
+
+The three games hold the same board and the same seat count. Only the model set differs, and the seat sets are swapped inside the pair. The differences below are behavioural observations. They are not strength evidence.
+
+### The trade market decided the game
+
+| Game                 | Offers | Accepted | Acceptance rate |
+| -------------------- | -----: | -------: | --------------: |
+| Seed 47 (4 DeepSeek) |     55 |       11 |             20% |
+| Mixed A              |     66 |        3 |        **4.5%** |
+| Mixed B              |     64 |       13 |             20% |
+
+Game A held a dead market. No seat reached 9 public points, and the winner took its last two points from Longest Road on the final turn. Game B held a working market. The two mixed games differ from each other as much as the pair differs from the baseline.
+
+### Counteroffers appeared for the first time
+
+Seed 47 recorded zero counteroffers in 55 offers. Its seats refused an offer or let it expire. The mixed games recorded 15 counteroffers in game A (Luna 9, DeepSeek 6) and 6 in game B (all Luna). A second bargaining round is new behaviour in this corpus.
+
+### DeepSeek raises its price, Luna repeats its price
+
+| Seat set          | Offers | Offers giving two or more resources |
+| ----------------- | -----: | ----------------------------------: |
+| DeepSeek, seed 47 |     55 |                                  27 |
+| DeepSeek, mixed   |     62 |                                  16 |
+| Luna, mixed       |     68 |                                   1 |
+
+The chat shows the same split. DeepSeek wrote: "Orange: paying 2 ore for your 1 grain — post it and I'll accept instantly", after opening at one for one. Luna held one for one in every offer. In game A, all 23 of Luna's messages asked for lumber. In game B, 16 of 22 did.
+
+### The chat channel changed hands, and the coalition message disappeared
+
+| Game    | Messages | Anti-leader messages |
+| ------- | -------: | -------------------: |
+| Seed 47 |        5 |                    3 |
+| Mixed A |       30 |                    0 |
+| Mixed B |       28 |                    0 |
+
+In the seed 47 run, White used the public channel to organize a grain embargo against Red. No such message appears in either mixed game, even in game B where Red sat at 9 points for 16 turns. Luna sent 23 messages in game A and 22 in game B. DeepSeek sent 7 and 6.
+
+### The embargo became private, and the leader paid the port instead
+
+Game B, after Red reached 9 points on turn 54:
+
+| Turn | Red's offer              | Result   |
+| ---- | ------------------------ | -------- |
+| 53   | lumber for ore           | rejected |
+| 57   | wool for ore             | expired  |
+| 61   | wool for ore             | rejected |
+| 65   | lumber and brick for ore | rejected |
+
+DeepSeek recorded its motive in a refusal: "I already have enough grain for a city (which boosts grain production) and prefer to keep wool and avoid arming a rival."
+
+Red answered at the port rather than in the chat. It traded two lumber for one ore on turn 60, two lumber for one ore again on turn 60, and four for one on turn 68. It built the winning city on turn 69. Denial cost this leader 15 turns. In the seed 47 run, denial cost Red 28 turns.
+
+### DeepSeek reasons about the opponent, Luna reasons about itself
+
+Share of decision reasons that mention a rival, a threat, denial, or the race:
+
+| Seat set          | Reasons | Rival mentions |
+| ----------------- | ------: | -------------: |
+| DeepSeek, seed 47 |     291 |      22 (7.6%) |
+| DeepSeek, mixed A |     129 |       6 (4.7%) |
+| DeepSeek, mixed B |     134 |       8 (6.0%) |
+| Luna, mixed A     |     134 |       1 (0.7%) |
+| Luna, mixed B     |     133 |       1 (0.8%) |
+
+Luna's reasons read like build plans. One example: "Keep the ore because the offered brick does not address the missing lumber and wool."
+
+### Luna decides faster, and it makes malformed offers
+
+| Measure                     |      Luna |  DeepSeek | Seed 47 DeepSeek |
+| --------------------------- | --------: | --------: | ---------------: |
+| Median game decision        | 2.9–3.1 s | 4.1–6.2 s |            6.3 s |
+| Median negotiation decision | 3.5–3.6 s | 5.5–7.3 s |            7.9 s |
+| Decision failure rate       |  0.8–1.9% |  1.1–2.1% |             4.9% |
+| Offers the referee rejected |   7 of 68 |   0 of 62 |          0 of 55 |
+
+The last row counts offers the engine rejected as structurally invalid, four in game A and three in game B. One of them was a public offer with no target. The cause was not proven. The likely cause is a resource Luna did not hold. This is the clearest quality gap in the pair.
+
+### The robber followed the leader, and the winner was the magnet
+
+| Game    | Most robbed seat          | Outcome |
+| ------- | ------------------------- | ------- |
+| Seed 47 | Red, the leader, 10 hits  | won     |
+| Mixed A | Orange (DeepSeek), 7 hits | won     |
+| Mixed B | Red (DeepSeek), 7 hits    | won     |
+
+In game A the two DeepSeek seats spent 9 of 13 robber moves robbing each other. Luna's Red was never robbed.
+
+### No same-model cartel
+
+Cross-model offers outnumbered same-model offers by more than the pair count predicts, and completed trades did the same in game B: 10 cross-model trades against 3 same-model trades. The two seats of one model did not favour each other.
+
+### The economies stayed smaller
+
+| Measure           | Seed 47 | Mixed A | Mixed B |
+| ----------------- | ------: | ------: | ------: |
+| Cities built      |       8 |       3 |       3 |
+| Settlements built |      12 |       9 |       7 |
+| Maritime trades   |      26 |       4 |      12 |
+
+The mixed games never developed the board as far. The dead market in game A is the direct cause there.
+
+### Limits on these observations
+
+Two mixed games on one seed show a behavioural difference, not a strength difference. Games A and B disagree on the most important measure, the trade rate, so most findings above rest on a single game. The difference that holds in both mixed games is the reasoning style: DeepSeek raises its price and names rivals, and Luna holds its price and talks about its own build.
 
 ## Reproduction
 
@@ -183,6 +290,8 @@ The original games ran at commit `6980d4d`. The resume ran at commit `6606923`, 
 - Two games on one seed cannot support a strength claim about either model.
 - Hidden victory-point cards are private. Their count appears here because the final state was replayed from the run timeline.
 - The stop cause is unknown, and one resumed pair does not prove that it cannot happen again.
+- The behavioural findings rest on two games. Where the two games disagree, the note says so.
+- The seed 47 comparison uses a different model count per seat set. The seed 47 run held four DeepSeek seats, and the pair held two.
 - The run packages are local. They are not in the public Bucket.
 
 ## Related documents
