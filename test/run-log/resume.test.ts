@@ -1,4 +1,4 @@
-import { appendFile, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { appendFile, link, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { STANDARD_BOARD_GENERATOR_ID } from "@catanarchy/engine";
@@ -418,6 +418,29 @@ describe("resume", () => {
     expect(await timelineText(directory)).toBe(before);
   });
 
+  it("refuses a timeline that ends with a terminal record", async () => {
+    const directory = await temporaryRunDirectory("terminal-tail");
+    const recorder = await startRun(directory, "run-terminal-tail");
+    await play(recorder, { maxDecisions: 2 });
+    // A process can die between the terminal append and the manifest write, so the
+    // manifest still says partial while the timeline is already final.
+    await appendRecord(
+      directory,
+      { gameSequence: 1, negotiationSequence: -1, winnerPlayerId: null },
+      "run.completed",
+    );
+    await recorder.close();
+
+    const before = await readRunPackage(directory);
+    expect(before.manifest.status).toBe("partial");
+    expect(before.resumeBlockedReason).toMatch(/terminal record/u);
+    const text = await timelineText(directory);
+    await expect(
+      RunRecorder.open({ directory, mode: "cold", reason: "terminal tail" }),
+    ).rejects.toThrow(/cannot resume/u);
+    expect(await timelineText(directory)).toBe(text);
+  });
+
   it("lets exactly one opener hold the run lock", async () => {
     const directory = await temporaryRunDirectory("lock");
     const recorder = await startRun(directory, "run-lock");
@@ -445,6 +468,23 @@ describe("resume", () => {
     const opened = await RunRecorder.open({ directory, mode: "cold", reason: "stale lock" });
     expect(opened.resume.nextIndex).toBe((await readRunPackage(directory)).records.length - 1);
     await opened.recorder.close();
+    expect((await readdir(directory)).filter((name) => name.includes("takeover"))).toEqual([]);
+  });
+
+  it("waits for another taker before it clears a stale lock", async () => {
+    const directory = await temporaryRunDirectory("stale-contest");
+    const recorder = await startRun(directory, "run-stale-contest");
+    await play(recorder, { maxDecisions: 2 });
+    await recorder.close();
+
+    // One process may take over a stale lock. A second taker must leave the lock alone
+    // instead of removing the lock that the first taker has already claimed.
+    await writeFile(resolve(directory, "run.lock"), "999999999\n", "utf8");
+    await link(resolve(directory, "run.lock"), resolve(directory, "run.lock.999999999.takeover"));
+    await expect(RunRecorder.open({ directory, mode: "cold", reason: "contest" })).rejects.toThrow(
+      /run lock/u,
+    );
+    expect(await readFile(resolve(directory, "run.lock"), "utf8")).toBe("999999999\n");
   });
 
   it("treats an unreadable lock as held", async () => {
