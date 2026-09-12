@@ -162,6 +162,12 @@ export interface RunResume {
   readonly eventPayloads: ReadonlyArray<unknown>;
   /** The negotiation events of the stored prefix. A half-played window is not one of them. */
   readonly negotiations: ReadonlyArray<NegotiationEvent>;
+  /**
+   * The round limit of the first negotiation window in the whole stored timeline,
+   * or null when the run never opened one. A stop can leave the first window in the
+   * records a resume removes, so this value does not come from the prefix alone.
+   */
+  readonly negotiationMaxRounds: number | null;
   readonly decisionCount: number;
   readonly observedSpendUsd: number;
   /** The record index the resume continues from. Records after it are dropped. */
@@ -932,11 +938,20 @@ interface GameTimelineValidation {
   completedNegotiationCount: number;
   /** True when a negotiation window is open at the last completed command. */
   completedInsideWindow: boolean;
+  /**
+   * The round limit of the first negotiation window in the whole timeline. A stop
+   * can leave that window in the records the resume removes, so the policy comes
+   * from the whole timeline rather than from the stored prefix.
+   */
+  firstWindowRounds: number | null;
   openWindows: number;
 }
 
 const countWindowEvent = (validation: GameTimelineValidation, event: NegotiationEvent): void => {
-  if (event.event.type === "negotiation.window-opened") validation.openWindows += 1;
+  if (event.event.type === "negotiation.window-opened") {
+    validation.openWindows += 1;
+    validation.firstWindowRounds ??= event.event.maxRounds;
+  }
   if (event.event.type === "negotiation.window-closed") validation.openWindows -= 1;
 };
 
@@ -1015,6 +1030,8 @@ interface EventTimelineResult {
   readonly eventPayloads: ReadonlyArray<unknown>;
   readonly negotiations: ReadonlyArray<NegotiationEvent>;
   readonly replayedSequence: number;
+  /** Round limit of the first negotiation window in the whole timeline, or null. */
+  readonly firstWindowRounds: number | null;
   /** Record index that the resume continues from. */
   readonly boundaryIndex: number;
   /** True when a negotiation window is open at that boundary. */
@@ -1035,6 +1052,7 @@ const validateEventTimeline = async (
     completedRecordCount: 0,
     completedNegotiationCount: 0,
     completedInsideWindow: false,
+    firstWindowRounds: null,
     openWindows: 0,
   };
   for (const record of records) await consumeGameRecord(validation, manifest, record);
@@ -1053,6 +1071,7 @@ const validateEventTimeline = async (
       eventPayloads: [],
       negotiations: [],
       replayedSequence: -1,
+      firstWindowRounds: validation.firstWindowRounds,
       ...boundary,
     };
   }
@@ -1079,6 +1098,7 @@ const validateEventTimeline = async (
     // resumed run plays that window again.
     negotiations: validation.negotiations.slice(0, validation.completedNegotiationCount),
     replayedSequence: replayedState.sequence,
+    firstWindowRounds: validation.firstWindowRounds,
     ...boundary,
   };
 };
@@ -1192,6 +1212,7 @@ const resumeAvailability = (
       events: timeline.events,
       eventPayloads: timeline.eventPayloads,
       negotiations: timeline.negotiations,
+      negotiationMaxRounds: timeline.firstWindowRounds,
       decisionCount: completedDecisions(records, timeline.boundaryIndex),
       observedSpendUsd: spendUsdFrom(records, 0),
       nextIndex: timeline.boundaryIndex,

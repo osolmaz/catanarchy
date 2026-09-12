@@ -701,6 +701,31 @@ describe("resume", () => {
     expect(before.resume?.decisionCount).toBe(committed);
   });
 
+  it("reads the negotiation policy from the whole stored timeline", async () => {
+    const directory = await temporaryRunDirectory("policy-tail");
+    const recorder = await startRun(directory, "run-policy-tail");
+    let windows = 0;
+    const stopped = await playUntil(
+      recorder,
+      (activity) => {
+        if (activity.kind !== "negotiation.event") return false;
+        if (activity.payload.event.type !== "negotiation.window-opened") return false;
+        windows += 1;
+        return windows === 1;
+      },
+      { maxDecisions: 40, policy: negotiationPolicy },
+    );
+    expect(stopped).toBeInstanceOf(Error);
+    await recorder.close();
+
+    // The only window record is in the discarded tail, so the stored prefix holds no
+    // window at all. The policy must therefore come from the whole timeline.
+    const before = await readRunPackage(directory);
+    expect(before.resume?.negotiations).toEqual([]);
+    expect(before.resume?.negotiationMaxRounds).toBe(negotiationPolicy.maxRounds);
+    expect(before.resume?.nextIndex).toBeLessThan(before.records.length);
+  });
+
   it("resumes a run that stopped inside a negotiation window", async () => {
     const directory = await temporaryRunDirectory("open-window");
     const recorder = await startRun(directory, "run-open-window");

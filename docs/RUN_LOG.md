@@ -151,6 +151,8 @@ A stopped run can continue. The timeline is the state, so a resume replays the s
 
 A resume starts at the last completed command. Everything the log holds after that record is incomplete work that no command covers, such as a negotiation window that stopped halfway. `open` removes that tail before it appends, so the file keeps exactly one line per record and the negotiation sequence stays contiguous. A torn final line is discarded the same way.
 
+The resume value reports the replayed state, the prefix events, the negotiation events of the prefix, the committed decision count, the recorded spend, the index the run continues from, and the round limit of the first negotiation window. That round limit comes from the whole timeline rather than from the prefix, because a stop can leave the first window in the tail that `open` removes.
+
 One prefix cannot resume. An accepted trade writes its command marker while the window is open, so the last completed command can sit inside a live negotiation round. That run stays partial, `readRunPackage` reports `resume: null` with a `resumeBlockedReason`, and `open` refuses it before any write. Reseating a model or changing the game configuration stays out of scope.
 
 `RunRecorder.close` closes a recorder without a terminal record. The run stays partial and another process can resume it.
