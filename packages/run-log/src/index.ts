@@ -7,6 +7,7 @@ import {
   readFile,
   rename,
   rm,
+  stat,
   truncate,
   writeFile,
   type FileHandle,
@@ -283,17 +284,50 @@ const acquireRunLock = async (directory: string): Promise<() => Promise<void>> =
   await rm(staged, { force: true });
   await writeFile(staged, `${process.pid}\n`, { encoding: "utf8", flag: "wx" });
   try {
-    for (let attempt = 0; attempt < 2; attempt += 1) {
+    for (let attempt = 0; attempt < 4; attempt += 1) {
       if (await claimRunLock(staged, path)) return async () => releaseRunLock(path);
       const holder = await lockHolderPid(path);
       if (holder === null || processIsAlive(holder)) {
         throw new Error(`Another process holds the run lock at ${path}.`);
       }
-      await rm(path, { force: true });
+      await clearStaleLock(path, holder);
     }
     throw new Error(`The run lock at ${path} could not be acquired.`);
   } finally {
     await rm(staged, { force: true });
+  }
+};
+
+/**
+ * Remove a lock whose holder is gone. Only one process may take over the same
+ * stale lock, so a taker first links the lock to a takeover name that carries the
+ * dead holder. A second taker finds that name and leaves the lock alone. The lock
+ * is removed only while it is still the file the taker linked, which no other
+ * process can replace while it exists.
+ */
+const clearStaleLock = async (path: string, holder: number): Promise<void> => {
+  const takeover = `${path}.${holder}.takeover`;
+  try {
+    await link(path, takeover);
+  } catch {
+    return;
+  }
+  try {
+    if ((await lockHolderPid(path)) === holder && (await isSameFile(path, takeover))) {
+      await rm(path, { force: true });
+    }
+  } finally {
+    await rm(takeover, { force: true });
+  }
+};
+
+/** True when two names still point at one file. */
+const isSameFile = async (left: string, right: string): Promise<boolean> => {
+  try {
+    const [a, b] = await Promise.all([stat(left), stat(right)]);
+    return a.dev === b.dev && a.ino === b.ino;
+  } catch {
+    return false;
   }
 };
 
@@ -1079,6 +1113,20 @@ const verificationFor = async (
 const OPEN_WINDOW_RESUME_BLOCKED =
   "The stored timeline ends inside an open negotiation window, so the run cannot resume from its own timeline.";
 
+/**
+ * A process can die after it appends a terminal record but before it writes the
+ * terminal status to the manifest. That run is final even though the manifest
+ * still says `partial`.
+ */
+export const TERMINAL_TIMELINE_RESUME_BLOCKED =
+  "The stored timeline ends with a terminal record, so the run is final.";
+
+const TERMINAL_RECORD_KINDS: ReadonlySet<RunRecord["kind"]> = new Set([
+  "run.completed",
+  "run.failed",
+  "run.cancelled",
+]);
+
 interface ResumeAvailability {
   readonly resume: RunResume | null;
   readonly blockedReason: string | null;
@@ -1128,6 +1176,10 @@ const resumeAvailability = (
 ): ResumeAvailability => {
   if (manifest.status !== "partial" || timeline.replayedState === null) {
     return { resume: null, blockedReason: null };
+  }
+  const last = records.at(-1);
+  if (last !== undefined && TERMINAL_RECORD_KINDS.has(last.kind)) {
+    return { resume: null, blockedReason: TERMINAL_TIMELINE_RESUME_BLOCKED };
   }
   if (timeline.boundaryInsideWindow) {
     return { resume: null, blockedReason: OPEN_WINDOW_RESUME_BLOCKED };

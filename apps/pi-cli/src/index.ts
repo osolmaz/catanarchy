@@ -27,6 +27,7 @@ import type { GameConfig, NegotiationEvent } from "@catanarchy/protocol";
 import {
   readRunPackage,
   RunRecorder,
+  type OpenedRun,
   type RunManifest,
   type RunResume,
   type RunResumeMode,
@@ -539,6 +540,23 @@ const assertRecordedNegotiationRounds = (
   }
 };
 
+/**
+ * The ceiling must cover the prefix the lock protects, not the earlier read. A
+ * writer that added paid decisions in between would otherwise leave the budget
+ * short of the spend the resumed run holds.
+ */
+const createBudgetForResume = async (
+  estimate: Estimate,
+  opened: OpenedRun,
+): Promise<PiCostBudget> => {
+  try {
+    return createBudget(estimate, opened.resume.observedSpendUsd);
+  } catch (error) {
+    await opened.recorder.close();
+    throw error;
+  }
+};
+
 const runResume = async (runtime: ModelRuntime): Promise<void> => {
   requiredArgument("decisions", "resume requires --decisions=<total decisions for the whole run>.");
   const directory = resolve(requiredArgument("run-dir", "resume requires --run-dir=<path>."));
@@ -560,15 +578,6 @@ const runResume = async (runtime: ModelRuntime): Promise<void> => {
 
   const bounds = runBounds(resume.config.players.length, maxDecisions);
   const estimate = estimateCost(runtime, references, bounds);
-  const budget = createBudget(estimate, resume.observedSpendUsd);
-  console.error(
-    JSON.stringify({
-      event: "live-test-budget",
-      ...budgetReport(bounds, estimate, resume.observedSpendUsd, references),
-      resumeMode: mode,
-      resumedAtIndex: resume.nextIndex,
-    }),
-  );
 
   const opened = await RunRecorder.open({
     directory,
@@ -582,6 +591,15 @@ const runResume = async (runtime: ModelRuntime): Promise<void> => {
       mode,
       resumedAtIndex: opened.resume.nextIndex,
       restoredSeats: [...opened.sessions.keys()],
+    }),
+  );
+  const budget = await createBudgetForResume(estimate, opened);
+  console.error(
+    JSON.stringify({
+      event: "live-test-budget",
+      ...budgetReport(bounds, estimate, opened.resume.observedSpendUsd, references),
+      resumeMode: mode,
+      resumedAtIndex: opened.resume.nextIndex,
     }),
   );
   const resumedSessions = mode === "warm" ? opened.sessions : undefined;
