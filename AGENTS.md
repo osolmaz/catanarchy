@@ -14,5 +14,6 @@
 - Follow the dependency boundaries in `slophammer.yml`.
 - Do not add game artwork, copied rulebook text, or other game assets.
 - Do not add mutation testing. Use unit, property, replay, information-boundary, and conformance tests.
+- Start every model run at the deepest thinking level the harness accepts, which is `--thinking=max`. Use a lower level only when the user names another level, when the model does not accept the deepest level, or when its reasoning at that level makes the game unplayable. A run that used a lower level must say so, and give the reason, in its launch record.
 - Use Conventional Commits for commit messages and pull request titles.
 - Run `npm run check` before finishing a change.
