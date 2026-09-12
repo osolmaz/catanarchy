@@ -372,7 +372,10 @@ const assertRunDirectory = async (directory: string): Promise<void> => {
 const truncateTimelineTo = async (path: string, recordCount: number): Promise<void> => {
   const text = await readFile(path, "utf8");
   const length = completeLineBytes(text, recordCount);
-  if (length < text.length) await truncate(path, length);
+  // The prefix length is a byte count, so compare it with the byte length of the
+  // file. A timeline with multi-byte characters holds fewer characters than bytes,
+  // and a character count would hide the tail and leave duplicate record indexes.
+  if (length < Buffer.byteLength(text, "utf8")) await truncate(path, length);
 };
 
 const completeLineBytes = (text: string, recordCount: number): number =>
@@ -1161,10 +1164,21 @@ const completedDecisions = (records: ReadonlyArray<RunRecord>, boundaryIndex: nu
       record.payload["outcome"] !== "failed",
   ).length;
 
+/**
+ * Recorded spend is a count of dollars. A negative or invalid value would lower the
+ * observed spend of a resumed run and let it pass the whole-run ceiling.
+ */
+const recordedSpendUsd = (value: unknown): number => {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    throw new Error("The run timeline records a spend that is not a non-negative number.");
+  }
+  return value;
+};
+
 const carriedSpendUsd = (record: RunRecord): number => {
   if (record.kind !== "run.resumed") return 0;
   const prior = record.payload.priorSpendUsd;
-  return typeof prior === "number" && Number.isFinite(prior) ? prior : 0;
+  return prior === undefined ? 0 : recordedSpendUsd(prior);
 };
 
 const decisionCostUsd = (record: RunRecord): number | null => {
@@ -1174,7 +1188,7 @@ const decisionCostUsd = (record: RunRecord): number | null => {
   const usage = payload["usage"];
   if (!isRecord(usage)) return null;
   const cost = usage["cost"];
-  return typeof cost === "number" && Number.isFinite(cost) ? cost : null;
+  return cost === undefined ? null : recordedSpendUsd(cost);
 };
 
 /** The money one record brings to the whole-run ceiling from index `fromIndex` on. */

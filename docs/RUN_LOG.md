@@ -149,7 +149,7 @@ A stopped run can continue. The timeline is the state, so a resume replays the s
 
 `RunRecorder.create` starts a run and `RunRecorder.open` continues one. `open` takes the run lock, then validates the package, refuses a terminal run, refuses a prefix that does not replay, and appends one `run.resumed` record before play continues. It returns the absolute session file of every Pi seat in `warm` mode. The recorder keeps the stored `runId`, `matchId`, `startedAt`, `initialStateOrigin`, and seats. New records continue the index and offset sequences without a gap and without a repeat. Because the offset baseline moves back by the stored offset, a record from a resumed process reports the stored offset plus the elapsed time of that process.
 
-A resume starts at the last completed command. Everything the log holds after that record is incomplete work that no command covers, such as a negotiation window that stopped halfway. `open` removes that tail before it appends, so the file keeps exactly one line per record and the negotiation sequence stays contiguous. A torn final line is discarded the same way.
+A resume starts at the last completed command. Everything the log holds after that record is incomplete work that no command covers, such as a negotiation window that stopped halfway. `open` removes that tail before it appends, so the file keeps exactly one line per record and the negotiation sequence stays contiguous. The removal measures the prefix in bytes, because a message can hold characters that take more than one byte. A torn final line is discarded the same way.
 
 The resume value reports the replayed state, the prefix events, the negotiation events of the prefix, the committed decision count, the recorded spend, the index the run continues from, and the round limit of the first negotiation window. That round limit comes from the whole timeline rather than from the prefix, because a stop can leave the first window in the tail that `open` removes.
 
@@ -174,6 +174,8 @@ A reader rejects a package when:
 - IDs do not agree with the manifest
 - timeline indexes have a gap or duplicate
 - monotonic offsets decrease
+- a recorded spend is not a non-negative number
+- a timeline that ends with a terminal record presents itself as partial
 - a terminal manifest has no matching terminal record
 - the complete stored starting state does not decode or breaks an engine invariant
 - a game event sequence is invalid
