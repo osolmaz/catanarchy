@@ -299,14 +299,16 @@ const startedNegotiationRounds = (record: RunRecord | undefined): number | null 
 /**
  * The round limit the run started with. The start record wins, because a run that
  * never opened a window has no other place to keep it. A package from before this
- * field carries the limit on its first window instead.
+ * field carries the limit on its first window instead. A run that recorded that
+ * negotiation is off counts as zero rounds, which a resume must repeat.
  */
 const recordedNegotiationRounds = (
   records: ReadonlyArray<RunRecord>,
   timeline: EventTimelineResult,
 ): number | null => {
   const started = startedNegotiationRounds(records[0]);
-  return started === undefined ? timeline.firstWindowRounds : started;
+  if (started === undefined) return timeline.firstWindowRounds;
+  return started ?? 0;
 };
 
 /**

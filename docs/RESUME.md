@@ -87,7 +87,7 @@ Only these two stages exist. There is no merge stage and no forked run directory
 14. `PiAgentFactoryOptions` gains optional restored session entries for each seat.
 15. A `warm` resume restores each seat session from the file the manifest already records. The seat keeps its plans, its private knowledge, and its earlier messages.
 16. A `cold` resume creates a fresh session and records the new session file for that seat, replacing the stored value only after the new session exists.
-17. The seat count and the model assigned to each seat stay as the manifest records them. A resume must not silently reassign a model to a seat.
+17. The seat count and the model assigned to each seat stay as the manifest records them. A resume must not silently reassign a model to a seat. The runner matches the stored seats to the recorded players by seat ID, because the harness hands the model list to the seats by position and a stored seat order may differ.
 
 ### Cost budget
 
@@ -97,7 +97,7 @@ Only these two stages exist. There is no merge stage and no forked run directory
 
 ### Command line
 
-21. Add a `resume` subcommand: `resume --run-dir=<path> --mode=warm|cold`. The existing flag set keeps its current meaning. The run records its negotiation round limit in the start record, and `--negotiation-rounds` must repeat that limit; a mismatch fails before the run is opened. A package from before the start record held the limit falls back to the limit on its first window. A run that stopped before its first window still keeps the limit it began with.
+21. Add a `resume` subcommand: `resume --run-dir=<path> --mode=warm|cold`. The existing flag set keeps its current meaning. The run records its negotiation round limit in the start record, and `--negotiation-rounds` must repeat that limit; a mismatch fails before the run is opened. A package from before the start record held the limit falls back to the limit on its first window. A run that stopped before its first window still keeps the limit it began with, and a run that recorded negotiation as off reports zero rounds, so a resume cannot enable negotiation.
 22. A run started without the subcommand behaves exactly as it does today.
 
 ## Validation
