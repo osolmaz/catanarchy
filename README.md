@@ -66,6 +66,7 @@ Use `npm run probe:pi -- --model=provider/model-id` for one live model decision.
 - [Run log format](docs/RUN_LOG.md)
 - [Resume](docs/RESUME.md)
 - [DeepSeek V4.1 Flash seed 47 run report](docs/2026-09-11-deepseek-v4-1-flash-seed-47.md)
+- [Mixed-seat seed 47 paired run report](docs/2026-09-12-mixed-seat-seed-47-pair.md)
 - [Colonist compatibility profile](docs/COLONIST.md)
 
 ## Development

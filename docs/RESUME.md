@@ -149,3 +149,4 @@ A reader of a resumed run reports:
 - `docs/RUN_LOG.md` defines the run package and its validation rules.
 - `docs/ENGINE.md` defines deterministic replay.
 - `docs/AGENT_HARNESS.md` defines the seat harness and the pause boundary.
+- `docs/2026-09-12-mixed-seat-seed-47-pair.md` records the first field use of resume on two stopped matches.
