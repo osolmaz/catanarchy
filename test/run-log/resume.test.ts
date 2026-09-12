@@ -678,6 +678,58 @@ describe("resume", () => {
     expect(second.resume?.observedSpendUsd).toBeCloseTo(0.5, 10);
   });
 
+  it("removes a tail whose bytes outnumber its characters", async () => {
+    const directory = await temporaryRunDirectory("wide-tail");
+    const recorder = await startRun(directory, "run-wide-tail");
+    let windows = 0;
+    const stopped = await playUntil(
+      recorder,
+      (activity) => {
+        if (activity.kind !== "negotiation.event") return false;
+        if (activity.payload.event.type !== "negotiation.window-opened") return false;
+        windows += 1;
+        return windows === 2;
+      },
+      { maxDecisions: 40, policy: negotiationPolicy },
+    );
+    expect(stopped).toBeInstanceOf(Error);
+    await recorder.close();
+
+    // A message can hold characters that take more than one byte. The prefix then has
+    // more bytes than the whole file has characters, so the prefix length, which is a
+    // byte count, must not be compared with a character count.
+    await rewriteTimeline(directory, (records) => {
+      const decision = records.find((record) => record["kind"] === "game.decision");
+      if (decision === undefined) throw new Error("Expected a stored decision.");
+      const payload = decision["payload"] as Record<string, unknown>;
+      payload["note"] = "ü".repeat(4_000);
+    });
+
+    const before = await readRunPackage(directory);
+    expect(before.resume?.nextIndex).toBeLessThan(before.records.length);
+    const seam = await RunRecorder.open({ directory, mode: "cold", reason: "wide tail" });
+    await seam.recorder.close();
+
+    // A skipped removal leaves the tail records behind, so the seam repeats an index
+    // and the package stops reading.
+    const after = await readRunPackage(directory);
+    expect(await timelineLines(directory)).toHaveLength(after.records.length);
+  });
+
+  it("refuses a recorded spend that is negative", async () => {
+    const directory = await temporaryRunDirectory("negative-spend");
+    const recorder = await startRun(directory, "run-negative-spend");
+    await play(recorder, { maxDecisions: 2 });
+    await recorder.close();
+
+    await appendRecord(directory, {
+      matchId: config.matchId,
+      usage: { input: 10, output: 20, cacheRead: 0, cacheWrite: 0, total: 30, cost: -1 },
+    });
+
+    await expect(readRunPackage(directory)).rejects.toThrow(/spend/u);
+  });
+
   it("counts only the decisions the prefix committed", async () => {
     const directory = await temporaryRunDirectory("tail-decision");
     const recorder = await startRun(directory, "run-tail-decision");

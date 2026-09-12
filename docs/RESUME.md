@@ -91,7 +91,7 @@ Only these two stages exist. There is no merge stage and no forked run directory
 
 ### Cost budget
 
-18. A resumed run recomputes observed spend from the usage records already in the timeline. Records after the prefix are removed, so the record that replaces them carries the spend they held in `priorSpendUsd`.
+18. A resumed run recomputes observed spend from the usage records already in the timeline. Records after the prefix are removed, so the record that replaces them carries the spend they held in `priorSpendUsd`. Every recorded spend must be a non-negative number, and a timeline that holds any other value does not read.
 19. The cost ceiling applies to the whole run, not to the part after the resume. A resume must not hand the run a second full ceiling. The carried spend keeps that true after a second and later resume.
 20. The next-request exposure check runs before the first resumed request, as it does on a fresh run.
 
