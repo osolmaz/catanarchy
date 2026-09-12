@@ -23,11 +23,19 @@ import {
   type PiModelReference,
 } from "@catanarchy/pi-agent";
 import type { GameConfig } from "@catanarchy/protocol";
-import { RunRecorder } from "@catanarchy/run-log";
+import {
+  readRunPackage,
+  RunRecorder,
+  type RunManifest,
+  type RunResume,
+  type RunResumeMode,
+} from "@catanarchy/run-log";
 import { Effect } from "effect";
 
 const argument = (name: string): string | undefined =>
   process.argv.find((value) => value.startsWith(`--${name}=`))?.slice(name.length + 3);
+
+const subcommand = process.argv[2] === "resume" ? "resume" : "run";
 
 const integerArgument = (
   name: string,
@@ -91,6 +99,10 @@ const maxDecisions = integerArgument("decisions", 16, 1);
 const negotiationRounds = integerArgument("negotiation-rounds", 1, 0, 10);
 const maxMessageLength = integerArgument("max-message-length", 500, 1, 10_000);
 const maxOpenOffers = integerArgument("max-open-offers", 8, 1, 100);
+const negotiationPolicy =
+  negotiationRounds === 0
+    ? undefined
+    : { maxRounds: negotiationRounds, maxMessageLength, maxOpenOffers };
 const outputPath = argument("output");
 const modelsPath = argument("models-path");
 const modelsPathReport = modelsPath === undefined ? null : resolve(modelsPath);
@@ -125,15 +137,27 @@ if (!Number.isSafeInteger(outerDecisionTimeoutMs) || outerDecisionTimeoutMs > 0x
   throw new Error("The turn time, finalization grace, and outer safety margin are too large.");
 }
 
-const setupDecisionCount = config.players.length * 4;
-const maximumNegotiationWindows = Math.max(0, Math.floor((maxDecisions - setupDecisionCount) / 2));
-const maximumRequests =
-  maxDecisions * maxAttempts +
-  maximumNegotiationWindows * config.players.length * negotiationRounds * maxAttempts;
-const maximumModelMessagesPerRequest = maxPlanningSteps + 2;
-// Each model message can make the original call, two overflow-compaction calls, one recovery retry,
-// and two post-recovery compaction calls.
-const maximumProviderCalls = maximumRequests * maximumModelMessagesPerRequest * 6;
+interface RunBounds {
+  readonly maximumRequests: number;
+  readonly maximumModelMessagesPerRequest: number;
+  readonly maximumProviderCalls: number;
+}
+
+const runBounds = (playerCount: number, decisions: number): RunBounds => {
+  const setupDecisionCount = playerCount * 4;
+  const maximumNegotiationWindows = Math.max(0, Math.floor((decisions - setupDecisionCount) / 2));
+  const maximumRequests =
+    decisions * maxAttempts +
+    maximumNegotiationWindows * playerCount * negotiationRounds * maxAttempts;
+  const maximumModelMessagesPerRequest = maxPlanningSteps + 2;
+  // Each model message can make the original call, two overflow-compaction calls, one recovery retry,
+  // and two post-recovery compaction calls.
+  return {
+    maximumRequests,
+    maximumModelMessagesPerRequest,
+    maximumProviderCalls: maximumRequests * maximumModelMessagesPerRequest * 6,
+  };
+};
 
 interface Estimate {
   readonly lowUsd: number;
@@ -177,6 +201,7 @@ const modelCost = (
 const estimateCost = (
   runtime: ModelRuntime,
   references: ReadonlyArray<PiModelReference>,
+  bounds: RunBounds,
 ): Estimate => {
   if (references.length === 0) throw new Error("At least one model reference is required.");
   const lowPerRequest = Math.min(
@@ -195,9 +220,9 @@ const estimateCost = (
     }),
   );
   return {
-    lowUsd: maximumRequests * lowPerRequest,
-    highUsd: maximumProviderCalls * highPerRequest,
-    nextRequestHighUsd: maximumModelMessagesPerRequest * 6 * highPerRequest,
+    lowUsd: bounds.maximumRequests * lowPerRequest,
+    highUsd: bounds.maximumProviderCalls * highPerRequest,
+    nextRequestHighUsd: bounds.maximumModelMessagesPerRequest * 6 * highPerRequest,
   };
 };
 
@@ -296,48 +321,139 @@ const activityRecorder = (recorder: RunRecorder): ((activity: MatchActivity) => 
   };
 };
 
-const configureProviderRouting = (runtime: ModelRuntime): void => {
+const configureProviderRouting = (
+  runtime: ModelRuntime,
+  references: ReadonlyArray<PiModelReference>,
+): void => {
   if (openRouterProvider !== undefined) {
-    pinOpenRouterProvider(runtime, modelReferences, openRouterProvider);
+    pinOpenRouterProvider(runtime, references, openRouterProvider);
   }
 };
 
-const main = async (): Promise<void> => {
-  const runtime = await createModelRuntime();
-  configureProviderRouting(runtime);
-  await applyEnvironmentAuthentication(runtime, modelReferences);
-  await assertModelsAvailable(runtime, modelReferences);
+const budgetReport = (
+  bounds: RunBounds,
+  estimate: Estimate,
+  observedUsd: number,
+  references: ReadonlyArray<PiModelReference>,
+): Record<string, unknown> => ({
+  lowUsd: Number(estimate.lowUsd.toFixed(6)),
+  highUsd: Number(estimate.highUsd.toFixed(6)),
+  nextRequestHighUsd: Number(estimate.nextRequestHighUsd.toFixed(6)),
+  observedUsd: Number(observedUsd.toFixed(6)),
+  remainingUsd: Number((costCeilingUsd - observedUsd).toFixed(6)),
+  ceilingUsd: costCeilingUsd,
+  maximumRequests: bounds.maximumRequests,
+  maximumModelMessagesPerRequest: bounds.maximumModelMessagesPerRequest,
+  maximumProviderCalls: bounds.maximumProviderCalls,
+  maxOutputTokens: maxOutputTokens ?? null,
+  contextWindowTokens,
+  thinkingLevel,
+  turnTimeMs,
+  finalizationGraceMs,
+  maxPlanningSteps,
+  negotiationRounds,
+  models: references,
+  modelsPath: modelsPathReport,
+  openRouterProvider: openRouterProviderReport,
+  pauseAfterDecisions: pauseAfterDecisionsReport,
+  resumeSignalPath,
+  note: "The providers do not expose an immutable per-run billing cap. The fixed request and token limits bound this smoke test.",
+});
 
-  const estimate = estimateCost(runtime, modelReferences);
-  if (estimate.nextRequestHighUsd > costCeilingUsd) {
+const createBudget = (estimate: Estimate, observedUsd: number): PiCostBudget => {
+  if (observedUsd + estimate.nextRequestHighUsd > costCeilingUsd) {
     throw new Error(
-      `The next request can cost up to $${estimate.nextRequestHighUsd.toFixed(4)}, above the $${costCeilingUsd.toFixed(2)} cost ceiling.`,
+      `The observed spend of $${observedUsd.toFixed(4)} plus the next request of $${estimate.nextRequestHighUsd.toFixed(4)} exceeds the $${costCeilingUsd.toFixed(2)} cost ceiling.`,
     );
   }
-  const costBudget = new PiCostBudget(costCeilingUsd, estimate.nextRequestHighUsd);
-  console.error(
-    JSON.stringify({
-      event: "live-test-budget",
-      lowUsd: Number(estimate.lowUsd.toFixed(6)),
-      highUsd: Number(estimate.highUsd.toFixed(6)),
-      nextRequestHighUsd: Number(estimate.nextRequestHighUsd.toFixed(6)),
-      ceilingUsd: costCeilingUsd,
-      maximumRequests,
-      maximumModelMessagesPerRequest,
-      maximumProviderCalls,
-      maxOutputTokens: maxOutputTokens ?? null,
-      contextWindowTokens,
+  return new PiCostBudget(costCeilingUsd, estimate.nextRequestHighUsd, observedUsd);
+};
+
+const createAgentsFor = (
+  references: ReadonlyArray<PiModelReference>,
+  runtime: ModelRuntime,
+  recorder: RunRecorder,
+  budget: PiCostBudget,
+  resumedSessions: ReadonlyMap<string, string> | undefined,
+) =>
+  withPiCostBudget(
+    createPiAgentFactory({
+      models: references,
+      modelRuntime: runtime,
       thinkingLevel,
+      ...(maxOutputTokens === undefined ? {} : { maxOutputTokens }),
+      contextWindowTokens,
       turnTimeMs,
       finalizationGraceMs,
       maxPlanningSteps,
-      negotiationRounds,
-      modelsPath: modelsPathReport,
-      openRouterProvider: openRouterProviderReport,
-      pauseAfterDecisions: pauseAfterDecisionsReport,
-      resumeSignalPath,
-      note: "The providers do not expose an immutable per-run billing cap. The fixed request and token limits bound this smoke test.",
+      sessionDirectory: recorder.sessionsDirectory,
+      ...(resumedSessions === undefined ? {} : { resumedSessions }),
+      onSessionCreated: async (player, session) => recorder.registerPiSession(player.id, session),
     }),
+    budget,
+  );
+
+const reportResult = async (
+  result: MatchRunResult,
+  recorder: RunRecorder,
+  budget: PiCostBudget,
+): Promise<void> => {
+  const summary = { ...summarize(result), costBudget: budget.snapshot() };
+  console.log(JSON.stringify({ ...summary, runDirectory: recorder.directory }, undefined, 2));
+  if (outputPath !== undefined) {
+    await writeFile(outputPath, `${JSON.stringify({ summary, result }, undefined, 2)}\n`, {
+      encoding: "utf8",
+      flag: "wx",
+    });
+  }
+};
+
+const playResumedRun = async (
+  runtime: ModelRuntime,
+  recorder: RunRecorder,
+  resume: RunResume,
+  references: ReadonlyArray<PiModelReference>,
+  budget: PiCostBudget,
+  resumedSessions: ReadonlyMap<string, string> | undefined,
+): Promise<MatchRunResult> =>
+  Effect.runPromise(
+    runGameSteps({
+      config: resume.config,
+      maxDecisions,
+      createAgent: createAgentsFor(references, runtime, recorder, budget, resumedSessions),
+      decisionTimeoutMs: outerDecisionTimeoutMs,
+      maxAttempts,
+      onActivity: activityRecorder(recorder),
+      ...(negotiationPolicy === undefined ? {} : { negotiationPolicy }),
+      resume: {
+        state: resume.state,
+        events: resume.events,
+        eventPayloads: resume.eventPayloads,
+        negotiations: resume.negotiations,
+        decisionCount: resume.decisionCount,
+      },
+    }),
+  );
+
+const seatModelsFromManifest = (manifest: RunManifest): ReadonlyArray<PiModelReference> =>
+  manifest.seats.map((seat) => {
+    if (seat.agentType !== "pi" || seat.model === null) {
+      throw new Error(`Seat ${seat.seatId} has no Pi model and cannot resume.`);
+    }
+    return { provider: seat.model.provider, modelId: seat.model.modelId };
+  });
+
+const runFresh = async (runtime: ModelRuntime): Promise<void> => {
+  const references = modelReferences;
+  configureProviderRouting(runtime, references);
+  await applyEnvironmentAuthentication(runtime, references);
+  await assertModelsAvailable(runtime, references);
+
+  const bounds = runBounds(config.players.length, maxDecisions);
+  const estimate = estimateCost(runtime, references, bounds);
+  const budget = createBudget(estimate, 0);
+  console.error(
+    JSON.stringify({ event: "live-test-budget", ...budgetReport(bounds, estimate, 0, references) }),
   );
 
   const recorder = await RunRecorder.create({
@@ -349,63 +465,118 @@ const main = async (): Promise<void> => {
     seats: config.players.map((player, index) => ({
       seatId: player.id,
       agentType: "pi" as const,
-      model: modelReferences[index % modelReferences.length] ?? null,
+      model: references[index % references.length] ?? null,
     })),
   });
   console.error(JSON.stringify({ event: "run-created", runId, runDirectory }));
 
-  let result: MatchRunResult | null = null;
+  const holder: { value: MatchRunResult | null } = { value: null };
   try {
-    result = await Effect.runPromise(
+    const result = await Effect.runPromise(
       runGameSteps({
         config,
         maxDecisions,
-        createAgent: withPiCostBudget(
-          createPiAgentFactory({
-            models: modelReferences,
-            modelRuntime: runtime,
-            thinkingLevel,
-            ...(maxOutputTokens === undefined ? {} : { maxOutputTokens }),
-            contextWindowTokens,
-            turnTimeMs,
-            finalizationGraceMs,
-            maxPlanningSteps,
-            sessionDirectory: recorder.sessionsDirectory,
-            onSessionCreated: async (player, session) =>
-              recorder.registerPiSession(player.id, session),
-          }),
-          costBudget,
-        ),
+        createAgent: createAgentsFor(references, runtime, recorder, budget, undefined),
         decisionTimeoutMs: outerDecisionTimeoutMs,
         maxAttempts,
         onActivity: activityRecorder(recorder),
-        ...(negotiationRounds === 0
-          ? {}
-          : {
-              negotiationPolicy: {
-                maxRounds: negotiationRounds,
-                maxMessageLength,
-                maxOpenOffers,
-              },
-            }),
+        ...(negotiationPolicy === undefined ? {} : { negotiationPolicy }),
       }),
     );
+    holder.value = result;
     await recorder.complete(result);
+    await reportResult(result, recorder, budget);
   } catch (error) {
     if (recorder.manifest.status === "partial") {
-      await recorder.fail(result, "The Pi match failed.");
+      await recorder.fail(holder.value, "The Pi match failed.");
     }
     throw error;
   }
+};
 
-  const summary = { ...summarize(result), costBudget: costBudget.snapshot() };
-  console.log(JSON.stringify({ ...summary, runDirectory }, undefined, 2));
-  if (outputPath !== undefined) {
-    await writeFile(outputPath, `${JSON.stringify({ summary, result }, undefined, 2)}\n`, {
-      encoding: "utf8",
-      flag: "wx",
-    });
+const requiredArgument = (name: string, message: string): string => {
+  const value = argument(name);
+  if (value === undefined) throw new Error(message);
+  return value;
+};
+
+const resumeModeArgument = (): RunResumeMode => {
+  const mode = requiredArgument("mode", "resume requires --mode=warm or --mode=cold.");
+  if (mode !== "warm" && mode !== "cold") {
+    throw new Error("resume requires --mode=warm or --mode=cold.");
   }
+  return mode;
+};
+
+const runResume = async (runtime: ModelRuntime): Promise<void> => {
+  requiredArgument("decisions", "resume requires --decisions=<total decisions for the whole run>.");
+  const directory = resolve(requiredArgument("run-dir", "resume requires --run-dir=<path>."));
+  const mode = resumeModeArgument();
+  const existing = await readRunPackage(directory);
+  const resume = existing.resume;
+  if (resume === null) {
+    throw new Error(`The run at ${directory} cannot resume.`);
+  }
+  const references = seatModelsFromManifest(existing.manifest);
+  configureProviderRouting(runtime, references);
+  await applyEnvironmentAuthentication(runtime, references);
+  await assertModelsAvailable(runtime, references);
+
+  const bounds = runBounds(resume.config.players.length, maxDecisions);
+  const estimate = estimateCost(runtime, references, bounds);
+  const budget = createBudget(estimate, resume.observedSpendUsd);
+  console.error(
+    JSON.stringify({
+      event: "live-test-budget",
+      ...budgetReport(bounds, estimate, resume.observedSpendUsd, references),
+      resumeMode: mode,
+      resumedAtIndex: resume.nextIndex,
+    }),
+  );
+
+  const opened = await RunRecorder.open({
+    directory,
+    mode,
+    reason: argument("reason") ?? "operator resume",
+  });
+  console.error(
+    JSON.stringify({
+      event: "run-resumed",
+      runDirectory: opened.recorder.directory,
+      mode,
+      resumedAtIndex: opened.resume.nextIndex,
+      restoredSeats: [...opened.sessions.keys()],
+    }),
+  );
+  const resumedSessions = mode === "warm" ? opened.sessions : undefined;
+
+  const holder: { value: MatchRunResult | null } = { value: null };
+  try {
+    const result = await playResumedRun(
+      runtime,
+      opened.recorder,
+      opened.resume,
+      references,
+      budget,
+      resumedSessions,
+    );
+    await opened.recorder.complete(result);
+    await reportResult(result, opened.recorder, budget);
+  } catch (error) {
+    if (opened.recorder.manifest.status === "partial") {
+      await opened.recorder.fail(holder.value, "The resumed Pi match failed.");
+    }
+    throw error;
+  }
+};
+
+const main = async (): Promise<void> => {
+  const runtime = await createModelRuntime();
+  if (subcommand === "resume") {
+    await runResume(runtime);
+    return;
+  }
+  await runFresh(runtime);
 };
 
 await main();

@@ -672,6 +672,44 @@ describe("Pi model setup", () => {
     ]);
   });
 
+  it("restores the recorded seat session and leaves the other seats alone", async () => {
+    const runtime = await ModelRuntime.create();
+    const references: ReadonlyArray<PiModelReference> = [
+      { provider: "openai", modelId: "gpt-5.6-luna" },
+      { provider: "huggingface", modelId: "deepseek-ai/DeepSeek-V4-Flash" },
+    ];
+    const channel: PiDecisionChannel = {
+      async run() {
+        return { actionId: "unused" };
+      },
+      async negotiate() {
+        return { action: { type: "pass" } };
+      },
+      async cancel() {},
+      async dispose() {},
+    };
+    const restored = new Map<string, string>([["red", "/tmp/seat-red.jsonl"]]);
+    const seen: Array<{
+      readonly player: string;
+      readonly resumedSessionFile: string | undefined;
+    }> = [];
+    const factory = createPiAgentFactory({
+      models: references,
+      modelRuntime: runtime,
+      resumedSessions: restored,
+      createChannel: async ({ player, resumedSessionFile }) => {
+        seen.push({ player: player.id, resumedSessionFile });
+        return channel;
+      },
+    });
+    for (const player of config.players) await factory(player);
+    expect(seen).toEqual([
+      { player: "red", resumedSessionFile: "/tmp/seat-red.jsonl" },
+      { player: "blue", resumedSessionFile: undefined },
+      { player: "white", resumedSessionFile: undefined },
+    ]);
+  });
+
   it("uses the effective model output capacity when no output override is set", async () => {
     const runtime = await ModelRuntime.create();
     const reference = { provider: "openai", modelId: "gpt-5.6-luna" };
@@ -909,6 +947,17 @@ describe("Pi model setup", () => {
     expect(() => new PiCostBudget(0, 0.1)).toThrow("positive finite");
     expect(() => new PiCostBudget(1, 0)).toThrow("positive finite");
     expect(() => new PiCostBudget(1, 2)).toThrow("exceeds");
+  });
+
+  it("carries the observed spend of a resumed run into the cost budget", () => {
+    const budget = new PiCostBudget(2, 0.1, 1.5);
+    expect(budget.snapshot()).toEqual({
+      ceilingUsd: 2,
+      nextRequestExposureUsd: 0.1,
+      observedUsd: 1.5,
+    });
+    expect(() => new PiCostBudget(2, 0.1, 1.95)).toThrow("exceed the cost ceiling");
+    expect(() => new PiCostBudget(2, 0.1, -1)).toThrow("non-negative");
   });
 
   it("loads the checked-in V4.1 Novita model definition", async () => {

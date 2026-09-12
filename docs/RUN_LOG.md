@@ -20,6 +20,8 @@ A completed run uses this layout:
 
 `manifest.json` identifies the run and its files. `timeline.jsonl` contains ordered match records. Each file in `sessions/` is a normal Pi session file created by the public Pi `SessionManager` API. The manifest maps each generated Pi session file to its seat.
 
+A live run also holds `run.lock`. The lock is a transient runtime guard, not part of the package. It holds the process ID of the writer and the writer removes it on close. An opener that finds a lock whose process is gone takes it over.
+
 A writer creates the run directory before the match starts. It writes each timeline record to disk before play continues. It updates `manifest.json` with an atomic file replacement. The manifest stays `partial` until the match ends. A stopped run keeps its records and remains clearly marked as partial, failed, or cancelled. If a failed or cancelled run ends during a game command, readers replay the last complete command and retain the unmarked event tail for inspection.
 
 ## Manifest
@@ -117,6 +119,7 @@ Version 1 defines these kinds:
 - `run.completed`: The final game and negotiation sequences and winner, if any.
 - `run.failed`: A short failure reason and the last saved sequence values.
 - `run.cancelled`: A short cancellation reason and the last saved sequence values.
+- `run.resumed`: The resume mode, the timeline index the run continues from, the replayed game sequence, the replay verification result, and a short reason.
 
 A game command can emit more than one game event. All events with the same `commandId` form one atomic replay batch. A viewer must reduce the complete batch before it displays the next board state.
 
@@ -132,11 +135,32 @@ Example timeline:
 
 Catanarchy does not copy or redefine Pi's session schema. For Pi agents, it creates one persistent session per seat with the documented public call `SessionManager.create(cwd, sessionDirectory)`. Pi writes its native versioned JSONL entries. The manifest records the returned session ID and file path.
 
+A warm resume restores a seat with the documented public call `SessionManager.open(path)`, so the seat continues its recorded conversation instead of starting a new one.
+
 This gives each seat a session that Pi can open directly with `SessionManager.open(path)`. It also preserves Pi's normal message and tool-call structure without putting private seat messages in the public timeline.
 
 The trusted local viewer can download each native Pi session file. A future remote viewer will use a server-side projection. That projection can expose public chat, selected actions, short reasons, timing, and usage. It must not send hidden observations, directed messages for another seat, model reasoning, credentials, or raw provider data to a public browser.
 
 Imported runs that have only the old result JSON cannot recover raw Pi messages or exact wall-clock timing. Their viewer uses recorded model-call durations where available and a one-second fallback for missing intervals. The UI must label that timing source.
+
+## Resume
+
+A stopped run can continue. The timeline is the state, so a resume replays the stored prefix and appends to the same log. It creates no second state format and no forked run directory. `docs/RESUME.md` holds the full contract.
+
+`RunRecorder.create` starts a run and `RunRecorder.open` continues one. `open` validates the package, refuses a terminal run, refuses a prefix that does not replay, takes the run lock, and appends one `run.resumed` record before play continues. It returns the absolute session file of every Pi seat in `warm` mode. The recorder keeps the stored `runId`, `matchId`, `startedAt`, `initialStateOrigin`, and seats. New records continue the index and offset sequences without a gap and without a repeat.
+
+A resume starts at a completed command boundary and only at the end of the log. A torn final line is discarded, so an incomplete write cannot corrupt a resumed run. Reseating a model or changing the game configuration is out of scope.
+
+`RunRecorder.close` closes a recorder without a terminal record. The run stays partial and another process can resume it.
+
+The resume mode is one of two values:
+
+| Mode   | Board and hands       | Seat memory                                              |
+| ------ | --------------------- | -------------------------------------------------------- |
+| `warm` | restored from the log | restored from the session file that the manifest records |
+| `cold` | restored from the log | a new session file, recorded after it exists             |
+
+A warm resume needs every Pi seat to name a session file that still exists. A cold resume is a different experiment, because the seat has no memory of the earlier play.
 
 ## Validation
 
@@ -154,7 +178,7 @@ A reader rejects a package when:
 - a seat session path escapes the package
 - a public projection contains a seat-private record
 
-Unknown record kinds are rejected in version 1. A later compatible addition must use a new schema identifier or an explicit extension record whose namespace is owned by its producer.
+Unknown record kinds are rejected in version 1. Adding a kind to version 1 requires a reader update in the same change, as `run.resumed` did. A reader that meets an unknown kind rejects the package instead of skipping the record.
 
 ## Loading and seeking
 

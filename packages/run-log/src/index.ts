@@ -1,4 +1,14 @@
-import { mkdir, open, readFile, rename, writeFile, type FileHandle } from "node:fs/promises";
+import {
+  access,
+  mkdir,
+  open,
+  readFile,
+  rename,
+  rm,
+  truncate,
+  writeFile,
+  type FileHandle,
+} from "node:fs/promises";
 import { isAbsolute, relative, resolve, sep as platformSeparator } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { matchesCurrentGenerator, replay, verifyNativeReplay } from "@catanarchy/engine";
@@ -103,12 +113,26 @@ export interface RunCancelledRecord extends RunRecordBase {
   readonly payload: RunTerminalSummary & { readonly reason: string };
 }
 
+export type RunResumeMode = "warm" | "cold";
+
+export interface RunResumedRecord extends RunRecordBase {
+  readonly kind: "run.resumed";
+  readonly payload: {
+    readonly mode: RunResumeMode;
+    readonly resumedAtIndex: number;
+    readonly replayedSequence: number;
+    readonly verification: CommandVerification;
+    readonly reason: string;
+  };
+}
+
 export type RunRecord =
   | RunStartedRecord
   | ActivityRunRecord
   | RunCompletedRecord
   | RunFailedRecord
-  | RunCancelledRecord;
+  | RunCancelledRecord
+  | RunResumedRecord;
 
 export interface RunTerminalSummary {
   readonly gameSequence: number;
@@ -116,10 +140,33 @@ export interface RunTerminalSummary {
   readonly winnerPlayerId: PlayerId | null;
 }
 
+/**
+ * Everything needed to continue a stopped run. The timeline is the state, so a
+ * resume reads the stored prefix and then appends to the same log.
+ */
+export interface RunResume {
+  readonly config: GameConfig;
+  /** The state after replaying the stored prefix. */
+  readonly state: GameState;
+  /** The game events of the stored prefix, in order. */
+  readonly events: ReadonlyArray<GameEvent>;
+  /** Raw envelopes of the stored prefix. The prefix ends at a completed command. */
+  readonly eventPayloads: ReadonlyArray<unknown>;
+  readonly negotiations: ReadonlyArray<NegotiationEvent>;
+  readonly decisionCount: number;
+  readonly observedSpendUsd: number;
+  readonly nextIndex: number;
+  readonly lastOffsetMs: number;
+  readonly replayedSequence: number;
+  readonly verification: CommandVerification;
+}
+
 export interface RunPackage {
   readonly manifest: RunManifest;
   readonly records: ReadonlyArray<RunRecord>;
   readonly verification: RunVerification;
+  /** Null when the run is terminal, or when no command ever completed. */
+  readonly resume: RunResume | null;
 }
 
 export interface RunClock {
@@ -139,6 +186,20 @@ export interface CreateRunRecorderOptions {
   }>;
   readonly piVersion?: string;
   readonly clock?: RunClock;
+}
+
+export interface OpenRunRecorderOptions {
+  readonly directory: string;
+  readonly mode: RunResumeMode;
+  readonly reason: string;
+  readonly clock?: RunClock;
+}
+
+export interface OpenedRun {
+  readonly recorder: RunRecorder;
+  readonly resume: RunResume;
+  /** Absolute session files restored for a warm resume. Empty in cold mode. */
+  readonly sessions: ReadonlyMap<string, string>;
 }
 
 const systemClock = (): RunClock => ({
@@ -164,6 +225,93 @@ const visibilityFor = (activity: MatchActivity): RunVisibility => {
 
 const safeReason = (reason: string): string => reason.replaceAll(/\s+/gu, " ").trim().slice(0, 300);
 
+const LOCK_FILE = "run.lock";
+
+const lockHolderPid = async (path: string): Promise<number | null> => {
+  try {
+    const pid = Number.parseInt((await readFile(path, "utf8")).trim(), 10);
+    return Number.isSafeInteger(pid) && pid > 0 ? pid : null;
+  } catch {
+    return null;
+  }
+};
+
+const processIsAlive = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as { readonly code?: string }).code === "EPERM";
+  }
+};
+
+/**
+ * A live run holds `run.lock`. The file is a transient runtime guard and not part
+ * of the run package. A lock left by a dead process is taken over.
+ */
+const acquireRunLock = async (directory: string): Promise<() => Promise<void>> => {
+  const path = resolve(directory, LOCK_FILE);
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const handle = await open(path, "wx");
+      await handle.writeFile(`${process.pid}\n`, "utf8");
+      await handle.sync();
+      await handle.close();
+      return async () => {
+        await rm(path, { force: true });
+      };
+    } catch (error) {
+      if ((error as { readonly code?: string }).code !== "EEXIST") throw error;
+      const holder = await lockHolderPid(path);
+      if (holder !== null && processIsAlive(holder)) {
+        throw new Error(`Another process holds the run lock at ${path}.`);
+      }
+      await rm(path, { force: true });
+    }
+  }
+  throw new Error(`The run lock at ${path} could not be acquired.`);
+};
+
+const trimIncompleteTail = async (path: string): Promise<void> => {
+  const text = await readFile(path, "utf8");
+  if (text.length === 0 || text.endsWith("\n")) return;
+  await truncate(path, text.lastIndexOf("\n") + 1);
+};
+
+/** Every Pi seat must name a session file that still exists. */
+const missingSeatSessions = async (
+  directory: string,
+  manifest: RunManifest,
+): Promise<ReadonlyArray<string>> => {
+  const missing: string[] = [];
+  for (const seat of manifest.seats) {
+    if (seat.agentType !== "pi") continue;
+    if (seat.sessionFile === null) {
+      missing.push(`${seat.seatId} has no recorded session file`);
+      continue;
+    }
+    try {
+      await access(resolve(directory, seat.sessionFile));
+    } catch {
+      missing.push(`${seat.seatId} is missing ${seat.sessionFile}`);
+    }
+  }
+  return missing;
+};
+
+/** Absolute session files for the Pi seats that already record one. */
+const seatSessionFiles = (
+  directory: string,
+  manifest: RunManifest,
+): ReadonlyMap<string, string> => {
+  const sessions = new Map<string, string>();
+  for (const seat of manifest.seats) {
+    if (seat.agentType !== "pi" || seat.sessionFile === null) continue;
+    sessions.set(seat.seatId, resolve(directory, seat.sessionFile));
+  }
+  return sessions;
+};
+
 export class RunRecorder {
   readonly directory: string;
   readonly sessionsDirectory: string;
@@ -172,24 +320,31 @@ export class RunRecorder {
   readonly #startedAtMonotonic: number;
   readonly #timeline: FileHandle;
   #manifest: RunManifest;
-  #nextIndex = 0;
-  #lastOffsetMs = 0;
+  #nextIndex: number;
+  #lastOffsetMs: number;
   #closed = false;
+  readonly #releaseLock: () => Promise<void>;
 
-  private constructor(
-    directory: string,
-    manifest: RunManifest,
-    timeline: FileHandle,
-    clock: RunClock,
-    startedAtMonotonic: number,
-  ) {
-    this.directory = directory;
-    this.sessionsDirectory = resolve(directory, "sessions");
-    this.timelinePath = resolve(directory, manifest.timeline);
-    this.#manifest = manifest;
-    this.#timeline = timeline;
-    this.#clock = clock;
-    this.#startedAtMonotonic = startedAtMonotonic;
+  private constructor(options: {
+    readonly directory: string;
+    readonly manifest: RunManifest;
+    readonly timeline: FileHandle;
+    readonly clock: RunClock;
+    readonly startedAtMonotonic: number;
+    readonly nextIndex: number;
+    readonly lastOffsetMs: number;
+    readonly releaseLock: () => Promise<void>;
+  }) {
+    this.directory = options.directory;
+    this.sessionsDirectory = resolve(options.directory, "sessions");
+    this.timelinePath = resolve(options.directory, options.manifest.timeline);
+    this.#manifest = options.manifest;
+    this.#timeline = options.timeline;
+    this.#clock = options.clock;
+    this.#startedAtMonotonic = options.startedAtMonotonic;
+    this.#nextIndex = options.nextIndex;
+    this.#lastOffsetMs = options.lastOffsetMs;
+    this.#releaseLock = options.releaseLock;
   }
 
   static async create(options: CreateRunRecorderOptions): Promise<RunRecorder> {
@@ -197,30 +352,114 @@ export class RunRecorder {
     await mkdir(resolve(directory, ".."), { recursive: true });
     await mkdir(directory);
     await mkdir(resolve(directory, "sessions"));
+    const releaseLock = await acquireRunLock(directory);
+    try {
+      const clock = options.clock ?? systemClock();
+      const startedAtMonotonic = clock.monotonicMs();
+      const manifest: RunManifest = {
+        schema: RUN_MANIFEST_SCHEMA,
+        runId: options.runId,
+        matchId: options.config.matchId,
+        status: "partial",
+        startedAt: clock.utcNow().toISOString(),
+        finishedAt: null,
+        timeline: "timeline.jsonl",
+        timing: "monotonic",
+        piVersion: options.piVersion ?? null,
+        initialStateOrigin: options.initialStateOrigin,
+        seats: options.seats.map((seat) => ({
+          ...seat,
+          sessionId: null,
+          sessionFile: null,
+        })),
+      };
+      const timeline = await open(resolve(directory, manifest.timeline), "ax");
+      const recorder = new RunRecorder({
+        directory,
+        manifest,
+        timeline,
+        clock,
+        startedAtMonotonic,
+        nextIndex: 0,
+        lastOffsetMs: 0,
+        releaseLock,
+      });
+      await recorder.#writeManifest();
+      await recorder.#append("run.started", "public", { config: options.config });
+      return recorder;
+    } catch (error) {
+      await releaseLock();
+      throw error;
+    }
+  }
+
+  /**
+   * Open a stopped run and continue it. The stored prefix becomes the state and
+   * the recorder appends to the same timeline.
+   */
+  static async open(options: OpenRunRecorderOptions): Promise<OpenedRun> {
+    const directory = resolve(options.directory);
+    const pkg = await readRunPackage(directory);
+    if (pkg.manifest.status !== "partial") {
+      throw new Error(`The run at ${directory} is ${pkg.manifest.status} and cannot resume.`);
+    }
+    const resume = pkg.resume;
+    if (resume === null) {
+      throw new Error(`The run at ${directory} has no completed command to resume from.`);
+    }
+    if (options.mode === "warm") {
+      const missing = await missingSeatSessions(directory, pkg.manifest);
+      if (missing.length > 0) {
+        throw new Error(`A warm resume needs every seat session: ${missing.join("; ")}.`);
+      }
+    }
     const clock = options.clock ?? systemClock();
-    const startedAtMonotonic = clock.monotonicMs();
-    const manifest: RunManifest = {
-      schema: RUN_MANIFEST_SCHEMA,
-      runId: options.runId,
-      matchId: options.config.matchId,
-      status: "partial",
-      startedAt: clock.utcNow().toISOString(),
-      finishedAt: null,
-      timeline: "timeline.jsonl",
-      timing: "monotonic",
-      piVersion: options.piVersion ?? null,
-      initialStateOrigin: options.initialStateOrigin,
-      seats: options.seats.map((seat) => ({
-        ...seat,
-        sessionId: null,
-        sessionFile: null,
-      })),
-    };
-    const timeline = await open(resolve(directory, manifest.timeline), "ax");
-    const recorder = new RunRecorder(directory, manifest, timeline, clock, startedAtMonotonic);
-    await recorder.#writeManifest();
-    await recorder.#append("run.started", "public", { config: options.config });
-    return recorder;
+    const releaseLock = await acquireRunLock(directory);
+    try {
+      const timelinePath = resolve(directory, pkg.manifest.timeline);
+      await trimIncompleteTail(timelinePath);
+      const timeline = await open(timelinePath, "a");
+      const recorder = new RunRecorder({
+        directory,
+        manifest: pkg.manifest,
+        timeline,
+        clock,
+        startedAtMonotonic: clock.monotonicMs(),
+        nextIndex: resume.nextIndex,
+        lastOffsetMs: resume.lastOffsetMs,
+        releaseLock,
+      });
+      await recorder.#writeManifest();
+      await recorder.#append("run.resumed", "public", {
+        mode: options.mode,
+        resumedAtIndex: resume.nextIndex,
+        replayedSequence: resume.replayedSequence,
+        verification: resume.verification,
+        reason: safeReason(options.reason),
+      });
+      return {
+        recorder,
+        resume,
+        sessions:
+          options.mode === "warm"
+            ? seatSessionFiles(directory, pkg.manifest)
+            : new Map<string, string>(),
+      };
+    } catch (error) {
+      await releaseLock();
+      throw error;
+    }
+  }
+
+  /**
+   * Close the recorder without writing a terminal record. The run stays partial
+   * and another process can resume it.
+   */
+  async close(): Promise<void> {
+    if (this.#closed) return;
+    await this.#timeline.close();
+    this.#closed = true;
+    await this.#releaseLock();
   }
 
   get manifest(): RunManifest {
@@ -320,6 +559,7 @@ export class RunRecorder {
     this.#manifest = manifest;
     await this.#timeline.close();
     this.#closed = true;
+    await this.#releaseLock();
   }
 
   async #writeManifest(manifest = this.#manifest): Promise<void> {
@@ -349,6 +589,7 @@ const RUN_KINDS = new Set<RunRecord["kind"]>([
   "run.completed",
   "run.failed",
   "run.cancelled",
+  "run.resumed",
 ]);
 
 const isRunStatus = (value: unknown): value is RunStatus =>
@@ -582,6 +823,7 @@ const assertCommandMarker = (
 interface GameTimelineValidation {
   readonly events: GameEvent[];
   readonly rawEvents: unknown[];
+  readonly negotiations: NegotiationEvent[];
   completedEventCount: number;
   negotiationSequence: number;
 }
@@ -609,6 +851,7 @@ const consumeGameRecord = async (
       throw new Error("The run timeline negotiation event sequence is invalid.");
     }
     validation.negotiationSequence = event.sequence;
+    validation.negotiations.push(event);
     return;
   }
   if (record.kind !== "game.command-completed") return;
@@ -640,23 +883,44 @@ const assertCompleteCommandTail = (
   }
 };
 
+interface EventTimelineResult {
+  readonly config: GameConfig;
+  readonly state: GameState | null;
+  readonly replayedState: GameState | null;
+  readonly events: ReadonlyArray<GameEvent>;
+  readonly eventPayloads: ReadonlyArray<unknown>;
+  readonly negotiations: ReadonlyArray<NegotiationEvent>;
+  readonly replayedSequence: number;
+}
+
 const validateEventTimeline = async (
   manifest: RunManifest,
   records: ReadonlyArray<RunRecord>,
-): Promise<GameState | null> => {
+): Promise<EventTimelineResult> => {
   const config = await decodeStartedConfig(manifest, records[0]);
   const validation: GameTimelineValidation = {
     events: [],
     rawEvents: [],
+    negotiations: [],
     completedEventCount: 0,
     negotiationSequence: -1,
   };
   for (const record of records) await consumeGameRecord(validation, manifest, record);
   const initialState = initialRecordedState(validation, config);
   assertCompleteCommandTail(manifest, validation);
-  if (validation.completedEventCount === 0 || initialState === null) return null;
+  if (validation.completedEventCount === 0 || initialState === null) {
+    return {
+      config,
+      state: null,
+      replayedState: null,
+      events: [],
+      eventPayloads: [],
+      negotiations: [],
+      replayedSequence: -1,
+    };
+  }
   const completeEvents = validation.rawEvents.slice(0, validation.completedEventCount);
-  await Effect.runPromise(
+  const replayedState = await Effect.runPromise(
     replay(completeEvents).pipe(
       Effect.mapError(() => new Error("The run timeline game events cannot replay.")),
     ),
@@ -668,7 +932,15 @@ const validateEventTimeline = async (
       ),
     );
   }
-  return initialState;
+  return {
+    config,
+    state: initialState,
+    replayedState,
+    events: validation.events.slice(0, validation.completedEventCount),
+    eventPayloads: completeEvents,
+    negotiations: validation.negotiations,
+    replayedSequence: replayedState.sequence,
+  };
 };
 
 const verificationFor = async (
@@ -688,6 +960,52 @@ const verificationFor = async (
   };
 };
 
+/**
+ * One harness loop iteration writes one decision record. A failed first attempt
+ * writes a failed record and then a fallback record, so the records that are not
+ * failures count the decisions the run has already made.
+ */
+const completedDecisions = (records: ReadonlyArray<RunRecord>): number =>
+  records.filter(
+    (record) =>
+      record.kind === "game.decision" &&
+      isRecord(record.payload) &&
+      record.payload["outcome"] !== "failed",
+  ).length;
+
+const recordedSpendUsd = (records: ReadonlyArray<RunRecord>): number =>
+  records.reduce((total, record) => {
+    if (record.kind !== "game.decision" && record.kind !== "negotiation.decision") return total;
+    const payload = record.payload;
+    if (!isRecord(payload)) return total;
+    const usage = payload["usage"];
+    if (!isRecord(usage)) return total;
+    const cost = usage["cost"];
+    return typeof cost === "number" && Number.isFinite(cost) ? total + cost : total;
+  }, 0);
+
+const resumeFor = (
+  manifest: RunManifest,
+  records: ReadonlyArray<RunRecord>,
+  timeline: EventTimelineResult,
+  verification: RunVerification,
+): RunResume | null => {
+  if (manifest.status !== "partial" || timeline.replayedState === null) return null;
+  return {
+    config: timeline.config,
+    state: timeline.replayedState,
+    events: timeline.events,
+    eventPayloads: timeline.eventPayloads,
+    negotiations: timeline.negotiations,
+    decisionCount: completedDecisions(records),
+    observedSpendUsd: recordedSpendUsd(records),
+    nextIndex: records.length,
+    lastOffsetMs: records.at(-1)?.offsetMs ?? 0,
+    replayedSequence: timeline.replayedSequence,
+    verification: verification.commandVerification,
+  };
+};
+
 export const readRunPackage = async (directory: string): Promise<RunPackage> => {
   const root = resolve(directory);
   const [manifestText, timelineText] = await Promise.all([
@@ -698,6 +1016,12 @@ export const readRunPackage = async (directory: string): Promise<RunPackage> => 
   const records = parseCompleteLines(timelineText);
   validateTimelineOrder(manifest, records);
   validateTerminalRecord(manifest, records);
-  const state = await validateEventTimeline(manifest, records);
-  return { manifest, records, verification: await verificationFor(manifest, state) };
+  const timeline = await validateEventTimeline(manifest, records);
+  const verification = await verificationFor(manifest, timeline.state);
+  return {
+    manifest,
+    records,
+    verification,
+    resume: resumeFor(manifest, records, timeline, verification),
+  };
 };

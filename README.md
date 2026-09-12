@@ -53,6 +53,8 @@ Four seats receive the models in round-robin order. The command runs 16 setup de
 
 Each run is saved under `runs/` by default. The command prints the exact path before the first model request. Use `--run-dir=/path/to/run` to choose another path. Add `--output=path.json` only when you also need the older single-file result format.
 
+Continue a stopped run with `npm run play:pi -- resume --run-dir=<path> --mode=warm|cold --decisions=<total decisions for the whole run>`. A warm resume keeps each seat's Pi session. A cold resume starts fresh seat sessions on the same board and hands. See [Resume](docs/RESUME.md).
+
 Use `npm run probe:pi -- --model=provider/model-id` for one live model decision. Live model commands are opt-in and are not part of the normal quality gate.
 
 ## Design
@@ -62,6 +64,7 @@ Use `npm run probe:pi -- --model=provider/model-id` for one live model decision.
 - [Engine design and correctness plan](docs/ENGINE.md)
 - [Web viewer design](docs/VIEWER.md)
 - [Run log format](docs/RUN_LOG.md)
+- [Resume](docs/RESUME.md)
 - [DeepSeek V4.1 Flash seed 47 run report](docs/2026-09-11-deepseek-v4-1-flash-seed-47.md)
 - [Colonist compatibility profile](docs/COLONIST.md)
 

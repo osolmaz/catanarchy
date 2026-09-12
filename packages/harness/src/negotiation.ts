@@ -130,6 +130,106 @@ const inheritHistory = (history: NegotiationSession | undefined): InheritedNegot
         evidence: history.evidence,
       };
 
+type NegotiationEventReducers = {
+  readonly [Kind in NegotiationEvent["event"]["type"]]: (
+    session: NegotiationSession,
+    event: Extract<NegotiationEvent["event"], { readonly type: Kind }>,
+  ) => NegotiationSession;
+};
+
+const negotiationEventReducers = (policy: NegotiationPolicy): NegotiationEventReducers => ({
+  "negotiation.window-opened": (session, event) => {
+    if (event.maxRounds !== policy.maxRounds) {
+      throw new Error("The recorded negotiation policy differs from the current policy.");
+    }
+    return {
+      ...session,
+      windowId: event.windowId,
+      turn: event.turn,
+      turnPlayerId: event.turnPlayerId,
+      closed: false,
+    };
+  },
+  "negotiation.message-sent": (session) => session,
+  "negotiation.player-passed": (session) => session,
+  "trade.offer-created": (session, event) => ({
+    ...session,
+    offers: [...session.offers, event.offer],
+  }),
+  "trade.offer-closed": (session, event) => ({
+    ...session,
+    offers: updateOfferStatus(session.offers, event.offerId, event.status),
+  }),
+  "trade.offer-accepted": (session, event) => ({
+    ...session,
+    offers: updateOfferStatus(session.offers, event.offerId, "accepted"),
+  }),
+  "trade.offer-failed": (session, event) => ({
+    ...session,
+    offers: updateOfferStatus(session.offers, event.offerId, "failed"),
+  }),
+  "negotiation.promise-recorded": (session, event) => ({
+    ...session,
+    promises: [...session.promises, event.promise],
+  }),
+  "negotiation.promise-evidence-recorded": (session, event) => ({
+    ...session,
+    evidence: [...session.evidence, event.evidence],
+  }),
+  "negotiation.window-closed": (session) => ({ ...session, closed: true }),
+});
+
+const applyNegotiationEvent = <Kind extends NegotiationEvent["event"]["type"]>(
+  reducers: NegotiationEventReducers,
+  session: NegotiationSession,
+  event: Extract<NegotiationEvent["event"], { readonly type: Kind }>,
+): NegotiationSession => reducers[event.type](session, event);
+
+/**
+ * Rebuild a negotiation session from its recorded events. Resume reads the
+ * timeline, so the session must come from the log and not from memory.
+ */
+export const restoreNegotiationSession = (
+  policy: NegotiationPolicy,
+  events: ReadonlyArray<NegotiationEvent>,
+): NegotiationSession | null => {
+  const first = events[0];
+  if (first === undefined) return null;
+  const reducers = negotiationEventReducers(policy);
+  let session: NegotiationSession = {
+    matchId: first.matchId,
+    windowId: "",
+    turn: -1,
+    turnPlayerId: "",
+    gameSequence: 0,
+    policy,
+    sequence: first.sequence,
+    events: [],
+    offers: [],
+    promises: [],
+    evidence: [],
+    closed: false,
+  };
+  for (const envelope of events) {
+    session = {
+      ...applyNegotiationEvent(reducers, session, envelope.event),
+      sequence: envelope.sequence,
+      gameSequence: envelope.gameSequence,
+      events: [...session.events, envelope],
+    };
+  }
+  return session;
+};
+
+/** The turns whose negotiation window already opened. */
+export const negotiatedTurnsOf = (events: ReadonlyArray<NegotiationEvent>): ReadonlySet<number> => {
+  const turns = new Set<number>();
+  for (const envelope of events) {
+    if (envelope.event.type === "negotiation.window-opened") turns.add(envelope.event.turn);
+  }
+  return turns;
+};
+
 export const openNegotiationWindow = (
   state: GameState,
   policy: NegotiationPolicy = DEFAULT_NEGOTIATION_POLICY,
