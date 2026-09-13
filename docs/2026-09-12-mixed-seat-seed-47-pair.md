@@ -17,7 +17,7 @@ Both games stopped early for an unknown reason. Both were then continued with th
 
 Two games on one seed are a behavioural case study. They are not a strength verdict. About 85 games are needed to detect a win-rate shift from 50% to 65%.
 
-A second pair followed with Luna at a higher thinking level. The section [Thinking level: high against xhigh](#thinking-level-high-against-xhigh) records that pair and compares it with this one.
+A second pair followed with Luna at a higher thinking level. The section [Thinking level: high against xhigh](#thinking-level-high-against-xhigh) records that pair and compares it with this one. A third pair followed with `openai/gpt-5.6-terra` at thinking `max`, recorded in the [Terra seed 47 run report at thinking max](2026-09-12-terra-seed-47.md).
 
 ## Run identity
 
@@ -400,3 +400,4 @@ The original games ran at commit `6980d4d`. The resume ran at commit `6606923`, 
 - [Resume](RESUME.md) defines the resume contract used by both games.
 - [Agent harness](AGENT_HARNESS.md) defines the seat harness and the pause boundary.
 - [DeepSeek V4.1 Flash seed 47 run report](2026-09-11-deepseek-v4-1-flash-seed-47.md) is the single-model run on the same board.
+- [Terra seed 47 run report at thinking max](2026-09-12-terra-seed-47.md) is the third pair on the same board.
