@@ -67,6 +67,12 @@ Each decision has a deadline and a bounded attempt count. An invalid action ID, 
 
 After all attempts fail, the harness selects the first legal action. The engine's legal-action order and the match seed make this fallback deterministic. The trace identifies the fallback and its cause. A failed attempt records the agent error text in `failureMessage`, and the fallback that follows it repeats that text, so one record explains the replaced decision. A decision with no legal actions is a harness error because it means that the engine and scheduler disagree.
 
+**The fallback action is not neutral. This is a known defect.** In a `turn.action` phase the engine lists builds, maritime trades, and development-card plays before `end-turn`, so the first legal action usually spends the seat's resources. A player may always end its turn after the roll, so that phase always has a pass. The terra seed 47 games show the cost: the 23 replaced decisions in game B were 6 road builds, 3 development-card purchases, 5 turn ends, 3 forced discards, 2 robber moves, 2 rolls, 1 maritime trade, and 1 knight play. The three discards belong to one `turn.discard` phase that required three cards, and the fallback took the first listed resource each time. The knight play shows the other ordering risk: in the `turn.robber` phase the engine lists development-card plays before robber moves, so a replacement can spend a knight card before it moves the robber.
+
+The planned policy is to prefer the action that spends nothing and changes no state: `end-turn` when it is legal, `roll` when the roll is owed, and the phase-forced action only where the rules leave no other choice. Setup placement, the discard on a seven, the robber move, and the free road have no neutral action, so a replacement there is unavoidable. The replacement is still a loss of that seat's decision, and the run record should count it.
+
+A second risk sits in the quarantine rule. A cancellation timeout adds the seat agent to the unavailable set, and both decision loops then break before any further request. That seat plays the fallback for the rest of the match, and no run-level record states it.
+
 The default attempt count is one. A caller must opt in to retries because every retry can spend model tokens.
 
 ## Pi session boundary
