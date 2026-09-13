@@ -96,6 +96,29 @@ type ActivityRunRecord = {
   [Activity in MatchActivity as Activity["kind"]]: RunRecordBase & Activity;
 }[MatchActivity["kind"]];
 
+/**
+ * The launch settings of a run. The record states its own configuration, so a reader
+ * never has to recover the flags that produced the package.
+ */
+export interface RunLaunchConfiguration {
+  readonly thinkingLevel: string;
+  /** The turn clock of one turn key. */
+  readonly turnTimeMs: number;
+  /** The finalization grace of one decision. */
+  readonly finalizationGraceMs: number;
+  /** The wall clock around one agent call: the turn time, the grace, and a margin. */
+  readonly decisionTimeoutMs: number;
+  readonly contextWindowTokens: number;
+  readonly maxPlanningSteps: number;
+  readonly maxAttempts: number;
+  /** The decision bound that stops the run. */
+  readonly maxDecisions: number;
+  readonly maxOutputTokens: number | null;
+  readonly maxMessageLength: number | null;
+  readonly maxOpenOffers: number | null;
+  readonly costCeilingUsd: number | null;
+}
+
 export interface RunStartedRecord extends RunRecordBase {
   readonly kind: "run.started";
   readonly payload: {
@@ -105,6 +128,8 @@ export interface RunStartedRecord extends RunRecordBase {
      * off. Absent in a package from before the field existed.
      */
     readonly negotiationRounds?: number | null;
+    /** The launch settings. Absent in a package from before the field existed. */
+    readonly launch?: RunLaunchConfiguration;
   };
 }
 
@@ -149,10 +174,31 @@ export type RunRecord =
   | RunCancelledRecord
   | RunResumedRecord;
 
+/**
+ * What the harness did in place of the seats. A replaced decision is one the harness
+ * chose itself after every attempt failed, and an exhausted pool is a failure that
+ * spent no model tokens because a time pool was already empty.
+ */
+export interface RunDecisionSummary {
+  readonly replacedDecisions: {
+    readonly game: number;
+    readonly negotiation: number;
+  };
+  readonly emptyPoolFailures: number;
+  /** Seats that a cancellation timeout quarantined, which then played fallbacks. */
+  readonly quarantinedSeats: ReadonlyArray<PlayerId>;
+}
+
 export interface RunTerminalSummary {
   readonly gameSequence: number;
   readonly negotiationSequence: number;
   readonly winnerPlayerId: PlayerId | null;
+  /**
+   * The replaced decisions, the exhausted pools, and the quarantined seats of the whole
+   * run, including any prefix that a resume replayed. Absent in a package from before
+   * the field existed.
+   */
+  readonly decisionSummary?: RunDecisionSummary;
 }
 
 /**
@@ -217,6 +263,8 @@ export interface CreateRunRecorderOptions {
    * so the start record keeps it.
    */
   readonly negotiationRounds?: number | null;
+  /** The launch settings, recorded in `run.started` so the package states its own flags. */
+  readonly launch?: RunLaunchConfiguration;
 }
 
 export interface OpenRunRecorderOptions {
@@ -238,10 +286,76 @@ const systemClock = (): RunClock => ({
   utcNow: () => new Date(),
 });
 
-const terminalSummary = (result: MatchRunResult): RunTerminalSummary => ({
+interface DecisionAccumulator {
+  replacementGame: number;
+  replacementNegotiation: number;
+  emptyPool: number;
+  readonly quarantinedSeats: Set<PlayerId>;
+}
+
+const emptyDecisionAccumulator = (): DecisionAccumulator => ({
+  replacementGame: 0,
+  replacementNegotiation: 0,
+  emptyPool: 0,
+  quarantinedSeats: new Set<PlayerId>(),
+});
+
+/** Count a decision the harness chose under its decision kind. */
+const countReplacedDecision = (accumulator: DecisionAccumulator, kind: string): void => {
+  if (kind === "game.decision") accumulator.replacementGame += 1;
+  else accumulator.replacementNegotiation += 1;
+};
+
+/** A failure that spent no tokens because a time pool was already empty. */
+const isEmptyPoolFailure = (payload: Readonly<Record<string, unknown>>): boolean =>
+  payload["remainingMs"] === 0 && typeof payload["pool"] === "string";
+
+/** The seat that a cancellation timeout quarantined, if this record reports one. */
+const quarantinedSeatOf = (payload: Readonly<Record<string, unknown>>): string | undefined => {
+  const playerId = payload["playerId"];
+  if (payload["failure"] !== "cancellation-timeout") return undefined;
+  return typeof playerId === "string" ? playerId : undefined;
+};
+
+/**
+ * Fold one record into the decision counts. A fallback is a decision the harness chose,
+ * and `remainingMs === 0` marks a failure that spent no tokens because a pool was empty.
+ * A cancellation timeout is what quarantines a seat agent.
+ */
+const accumulateDecisionRecord = (
+  accumulator: DecisionAccumulator,
+  kind: string,
+  payload: unknown,
+): void => {
+  if (kind !== "game.decision" && kind !== "negotiation.decision") return;
+  if (!isRecord(payload)) return;
+  if (payload["outcome"] === "fallback") {
+    countReplacedDecision(accumulator, kind);
+    return;
+  }
+  if (payload["outcome"] !== "failed") return;
+  if (isEmptyPoolFailure(payload)) accumulator.emptyPool += 1;
+  const seat = quarantinedSeatOf(payload);
+  if (seat !== undefined) accumulator.quarantinedSeats.add(seat);
+};
+
+const decisionSummaryFrom = (accumulator: DecisionAccumulator): RunDecisionSummary => ({
+  replacedDecisions: {
+    game: accumulator.replacementGame,
+    negotiation: accumulator.replacementNegotiation,
+  },
+  emptyPoolFailures: accumulator.emptyPool,
+  quarantinedSeats: [...accumulator.quarantinedSeats],
+});
+
+const terminalSummary = (
+  result: MatchRunResult,
+  decisionSummary: RunDecisionSummary,
+): RunTerminalSummary => ({
   gameSequence: result.state.sequence,
   negotiationSequence: result.negotiations.at(-1)?.sequence ?? -1,
   winnerPlayerId: result.state.result?.winnerId ?? null,
+  decisionSummary,
 });
 
 const visibilityFor = (activity: MatchActivity): RunVisibility => {
@@ -500,6 +614,7 @@ export class RunRecorder {
   #manifest: RunManifest;
   #nextIndex: number;
   #lastOffsetMs: number;
+  #decisions: DecisionAccumulator = emptyDecisionAccumulator();
   #closed = false;
   readonly #releaseLock: () => Promise<void>;
 
@@ -568,6 +683,7 @@ export class RunRecorder {
         ...(options.negotiationRounds === undefined
           ? {}
           : { negotiationRounds: options.negotiationRounds }),
+        ...(options.launch === undefined ? {} : { launch: options.launch }),
       });
       return recorder;
     } catch (error) {
@@ -614,6 +730,7 @@ export class RunRecorder {
         lastOffsetMs: resume.lastOffsetMs,
         releaseLock,
       });
+      recorder.#seedDecisionCounts(pkg.records.slice(0, resume.nextIndex));
       await recorder.#writeManifest();
       await recorder.#append("run.resumed", "public", {
         mode: options.mode,
@@ -686,15 +803,29 @@ export class RunRecorder {
   }
 
   async complete(result: MatchRunResult): Promise<void> {
-    await this.#append("run.completed", "public", terminalSummary(result));
+    await this.#append("run.completed", "public", terminalSummary(result, this.decisionSummary()));
     await this.#finish("completed");
+  }
+
+  /**
+   * What the harness chose in place of the seats, across the whole run including any
+   * prefix that a resume replayed. The counts describe records that are already written,
+   * so they stay readable after the recorder closes, like the manifest and the directory.
+   */
+  decisionSummary(): RunDecisionSummary {
+    return decisionSummaryFrom(this.#decisions);
   }
 
   async fail(result: MatchRunResult | null, reason: string): Promise<void> {
     const summary =
       result === null
-        ? { gameSequence: -1, negotiationSequence: -1, winnerPlayerId: null }
-        : terminalSummary(result);
+        ? {
+            gameSequence: -1,
+            negotiationSequence: -1,
+            winnerPlayerId: null,
+            decisionSummary: this.decisionSummary(),
+          }
+        : terminalSummary(result, this.decisionSummary());
     await this.#append("run.failed", "public", { ...summary, reason: safeReason(reason) });
     await this.#finish("failed");
   }
@@ -702,10 +833,22 @@ export class RunRecorder {
   async cancel(result: MatchRunResult | null, reason: string): Promise<void> {
     const summary =
       result === null
-        ? { gameSequence: -1, negotiationSequence: -1, winnerPlayerId: null }
-        : terminalSummary(result);
+        ? {
+            gameSequence: -1,
+            negotiationSequence: -1,
+            winnerPlayerId: null,
+            decisionSummary: this.decisionSummary(),
+          }
+        : terminalSummary(result, this.decisionSummary());
     await this.#append("run.cancelled", "public", { ...summary, reason: safeReason(reason) });
     await this.#finish("cancelled");
+  }
+
+  /** Count the records of a stored prefix, so a resume reports the whole run. */
+  #seedDecisionCounts(records: ReadonlyArray<RunRecord>): void {
+    for (const record of records) {
+      accumulateDecisionRecord(this.#decisions, record.kind, record.payload);
+    }
   }
 
   async #append(
@@ -714,6 +857,7 @@ export class RunRecorder {
     payload: unknown,
   ): Promise<void> {
     this.#assertOpen();
+    accumulateDecisionRecord(this.#decisions, kind, payload);
     const measuredOffset =
       this.#nextIndex === 0
         ? 0
