@@ -15,5 +15,6 @@
 - Do not add game artwork, copied rulebook text, or other game assets.
 - Do not add mutation testing. Use unit, property, replay, information-boundary, and conformance tests.
 - Start every model run at the deepest thinking level the harness accepts, which is `--thinking=max`. Use a lower level only when the user names another level, when the model does not accept the deepest level, or when its reasoning at that level makes the game unplayable. A run that used a lower level must say so, and give the reason, in its launch record.
+- Set `--finalization-grace-ms=300000` for a live model run. A turn key holds two time pools: the exploration pool, which is the turn window, and the finalization pool, which is the grace. When the grace pool is empty, the harness plays the first legal action instead of asking the model, and that loss is invisible in the result. A 60-second grace removed 41 terra decisions in the seed 47 games, and a 300-second grace removed all of them. A run that used a smaller grace must say so, and give the reason, in its launch record.
 - Use Conventional Commits for commit messages and pull request titles.
 - Run `npm run check` before finishing a change.
