@@ -115,6 +115,12 @@ export type DecisionFailure =
   | "deadline"
   | "invalid-action";
 
+/**
+ * The time pool that ran out. The turn clock is one key per turn, and the finalization
+ * grace is one key per decision, so the pool name says what the seat ran out of.
+ */
+export type AgentTimePool = "exploration" | "finalization";
+
 export interface DecisionTrace {
   readonly matchId: string;
   readonly sequence: number;
@@ -129,6 +135,15 @@ export interface DecisionTrace {
   readonly selectionMode?: "tool" | "text";
   readonly failure?: DecisionFailure;
   readonly failureMessage?: string;
+  /**
+   * The turn key of the decision. The game decision and the negotiation decisions of
+   * one turn share a key.
+   */
+  readonly turnKey?: string;
+  /** The pool that ran out, when a pool ran out. */
+  readonly pool?: AgentTimePool;
+  /** The milliseconds the named pool had left when the attempt ended. */
+  readonly remainingMs?: number;
 }
 
 export interface NegotiationTrace {
@@ -146,6 +161,12 @@ export interface NegotiationTrace {
   readonly selectionMode?: "tool" | "text";
   readonly failure?: DecisionFailure;
   readonly failureMessage?: string;
+  /** The turn key of the decision, shared with the game decision of the same turn. */
+  readonly turnKey?: string;
+  /** The pool that ran out, when a pool ran out. */
+  readonly pool?: AgentTimePool;
+  /** The milliseconds the named pool had left when the attempt ended. */
+  readonly remainingMs?: number;
 }
 
 export interface MatchRunResult {
@@ -213,6 +234,10 @@ export class HarnessError extends Data.TaggedError("HarnessError")<{
 export class AgentDecisionError extends Data.TaggedError("AgentDecisionError")<{
   readonly message: string;
   readonly usage?: AgentUsage;
+  /** The pool the seat ran out of, when a pool ran out. */
+  readonly pool?: AgentTimePool;
+  /** The milliseconds that pool had left, which is zero for an exhausted pool. */
+  readonly remainingMs?: number;
 }> {}
 
 export class AgentRunAbort extends Data.TaggedError("AgentRunAbort")<{
@@ -425,6 +450,7 @@ const baseTrace = (
     attempt,
     outcome,
     elapsedMs,
+    turnKey: request.turnKey,
   };
   return agent.model === undefined ? trace : { ...trace, model: agent.model };
 };
@@ -455,6 +481,17 @@ const selectedTrace = (
 const failureMessageOf = (error: unknown): string | undefined =>
   error instanceof Error && error.message.length > 0 ? error.message : undefined;
 
+/** The pool detail an agent attaches to an exhausted time pool. */
+const poolDetailOf = (
+  error: unknown,
+): { readonly pool?: AgentTimePool; readonly remainingMs?: number } =>
+  error instanceof AgentDecisionError
+    ? {
+        ...(error.pool === undefined ? {} : { pool: error.pool }),
+        ...(error.remainingMs === undefined ? {} : { remainingMs: error.remainingMs }),
+      }
+    : {};
+
 const lastFailureMessage = (
   traces: ReadonlyArray<{ readonly failureMessage?: string }>,
 ): string | undefined => traces.at(-1)?.failureMessage;
@@ -470,14 +507,19 @@ const failedAttemptTrace = (
   attempt: number,
   elapsedMs: number,
   failure: DecisionFailure,
-  usage?: AgentUsage,
-  failureMessage?: string,
-): DecisionTrace => ({
-  ...baseTrace(agent, request, attempt, "failed", elapsedMs),
-  ...(usage === undefined ? {} : { usage }),
-  ...(failureMessage === undefined ? {} : { failureMessage }),
-  failure,
-});
+  error: unknown,
+): DecisionTrace => {
+  const failureMessage = failureMessageOf(error);
+  return {
+    ...baseTrace(agent, request, attempt, "failed", elapsedMs),
+    ...(error instanceof AgentDecisionError && error.usage !== undefined
+      ? { usage: error.usage }
+      : {}),
+    ...(failureMessage === undefined ? {} : { failureMessage }),
+    ...poolDetailOf(error),
+    failure,
+  };
+};
 
 const invalidActionTrace = (
   agent: SeatAgent,
@@ -498,6 +540,33 @@ interface ChosenAction {
 
 const rethrowRunAbort = (error: unknown): void => {
   if (error instanceof AgentRunAbort) throw error;
+};
+
+/**
+ * The action types that leave the position unchanged. A player may always end its turn
+ * after the roll, may always roll when the roll is owed, and must always move the robber
+ * when a robber move is pending. The engine lists those actions after the optional ones,
+ * so the first legal action is not neutral.
+ */
+const NEUTRAL_ACTION_TYPES: ReadonlyArray<string> = ["end-turn", "roll-dice", "move-robber"];
+
+const neutralAction = (canonicalActions: ReadonlyArray<LegalAction>): LegalAction | undefined =>
+  canonicalActions.find((action) => NEUTRAL_ACTION_TYPES.includes(action.command.command.type));
+
+/**
+ * A forced decision has no neutral action, so the harness must choose one. The choice
+ * comes from a hash of the decision identity rather than from the engine's order, so a
+ * replacement carries no information about the board. Every replaced setup placement in
+ * the seed 47 series otherwise took the same corner.
+ */
+const fallbackIndex = (request: Omit<AgentDecisionRequest, "signal">, length: number): number => {
+  const seed = `${request.matchId}\u0000${request.playerId}\u0000${String(request.sequence)}\u0000${request.turnKey}`;
+  let hash = 0x811c_9dc5;
+  for (let index = 0; index < seed.length; index += 1) {
+    hash ^= seed.charCodeAt(index);
+    hash = Math.imul(hash, 0x0100_0193) >>> 0;
+  }
+  return length === 0 ? 0 : hash % length;
 };
 
 const chooseAction = async (
@@ -537,8 +606,7 @@ const chooseAction = async (
         attempt,
         performance.now() - startedAt,
         failure,
-        error instanceof AgentDecisionError ? error.usage : undefined,
-        failureMessageOf(error),
+        error,
       );
       traces.push(trace);
       await record({ kind: "game.decision", payload: trace });
@@ -546,7 +614,9 @@ const chooseAction = async (
     }
   }
 
-  const action = canonicalActions[0];
+  const action =
+    neutralAction(canonicalActions) ??
+    canonicalActions[fallbackIndex(request, canonicalActions.length)];
   if (action === undefined) {
     throw new HarnessError({ message: "The active player has no legal action." });
   }
@@ -607,6 +677,7 @@ const negotiationTraceBase = (
   attempt,
   outcome,
   elapsedMs,
+  turnKey: request.turnKey,
   ...(agent.model === undefined ? {} : { model: agent.model }),
 });
 
@@ -639,6 +710,7 @@ const failedNegotiationTrace = (
       ? { usage: error.usage }
       : {}),
     ...(failureMessage === undefined ? {} : { failureMessage }),
+    ...poolDetailOf(error),
   };
 };
 
