@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { STANDARD_BOARD_GENERATOR_ID } from "@catanarchy/engine";
 import {
+  AgentDecisionError,
   createFirstLegalAgent,
   runGameSteps,
   type AgentNegotiationRequest,
@@ -70,6 +71,7 @@ interface PlayOptions {
   readonly maxDecisions: number;
   readonly resume?: AgentResume;
   readonly policy?: NegotiationPolicy;
+  readonly createAgent?: () => Promise<SeatAgent>;
 }
 
 const play = (recorder: RunRecorder, options: PlayOptions): Promise<MatchRunResult> =>
@@ -77,12 +79,26 @@ const play = (recorder: RunRecorder, options: PlayOptions): Promise<MatchRunResu
     runGameSteps({
       config,
       maxDecisions: options.maxDecisions,
-      createAgent: async () => createFirstLegalAgent(),
+      createAgent: options.createAgent ?? (async () => createFirstLegalAgent()),
       onActivity: async (activity) => recorder.recordActivity(activity),
       ...(options.policy === undefined ? {} : { negotiationPolicy: options.policy }),
       ...(options.resume === undefined ? {} : { resume: options.resume }),
     }),
   );
+
+/** A seat that never answers, so the harness replaces every decision it owes. */
+const failingAgent = (): Promise<SeatAgent> =>
+  Promise.resolve({
+    async decide() {
+      throw new AgentDecisionError({
+        message: "The game-action finalization time expired.",
+        pool: "finalization",
+        remainingMs: 0,
+      });
+    },
+    async cancel() {},
+    async dispose() {},
+  });
 
 const agentResume = (resume: RunResume): AgentResume => ({
   state: resume.state,
@@ -295,6 +311,39 @@ describe("resume", () => {
     );
     const offsets = finished.records.map(({ offsetMs }) => offsetMs);
     expect(offsets.toSorted((left, right) => left - right)).toEqual(offsets);
+  });
+
+  it("counts the replaced decisions of the stored prefix after a resume", async () => {
+    const directory = await temporaryRunDirectory("decision-counts");
+    const recorder = await startRun(directory, "run-decision-counts");
+    await play(recorder, { maxDecisions: 4, createAgent: failingAgent });
+    expect(recorder.decisionSummary().replacedDecisions.game).toBeGreaterThan(0);
+    const beforeResume = recorder.decisionSummary();
+    await recorder.close();
+
+    const opened = await RunRecorder.open({
+      directory,
+      mode: "cold",
+      reason: "decision count test",
+    });
+    // The resumed recorder starts from the stored records, so the whole run is counted.
+    expect(opened.recorder.decisionSummary()).toEqual(beforeResume);
+
+    const resumed = await play(opened.recorder, {
+      maxDecisions: 6,
+      resume: agentResume(opened.resume),
+    });
+    const counted = opened.recorder.decisionSummary();
+    await opened.recorder.complete(resumed);
+
+    const saved = await readRunPackage(directory);
+    const completed = saved.records.find((record) => record.kind === "run.completed");
+    const summary =
+      completed?.kind === "run.completed" ? completed.payload.decisionSummary : undefined;
+    expect(counted.replacedDecisions.game).toBeGreaterThanOrEqual(
+      beforeResume.replacedDecisions.game,
+    );
+    expect(summary).toEqual(counted);
   });
 
   it("records the resume seam so a reader can find it", async () => {

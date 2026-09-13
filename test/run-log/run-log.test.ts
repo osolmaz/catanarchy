@@ -2,7 +2,13 @@ import { appendFile, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { replay, STANDARD_BOARD_GENERATOR_ID } from "@catanarchy/engine";
-import { createFirstLegalAgent, runGameSteps } from "@catanarchy/harness";
+import {
+  AgentDecisionError,
+  createFirstLegalAgent,
+  runGameSteps,
+  type NegotiationPolicy,
+  type SeatAgent,
+} from "@catanarchy/harness";
 import type { GameConfig } from "@catanarchy/protocol";
 import { parseRunRecord, readRunPackage, RunRecorder, type RunClock } from "@catanarchy/run-log";
 import { Effect } from "effect";
@@ -81,6 +87,37 @@ const changeStoredTerrainShuffle = async (directory: string): Promise<void> => {
   await writeFile(timelinePath, `${records.map((record) => JSON.stringify(record)).join("\n")}\n`);
 };
 
+const failingAgent = (): SeatAgent => ({
+  async decide() {
+    throw new AgentDecisionError({
+      message: "The game-action finalization time expired.",
+      pool: "finalization",
+      remainingMs: 0,
+    });
+  },
+  async negotiate() {
+    throw new AgentDecisionError({
+      message: "The negotiation finalization time expired.",
+      pool: "finalization",
+      remainingMs: 0,
+    });
+  },
+  async cancel() {},
+  async dispose() {},
+});
+
+const negotiationPolicy: NegotiationPolicy = {
+  maxRounds: 1,
+  maxMessageLength: 120,
+  maxOpenOffers: 2,
+};
+
+const seats = config.players.map(({ id }) => ({
+  seatId: id,
+  agentType: "scripted" as const,
+  model: null,
+}));
+
 afterEach(async () => {
   await Promise.all(
     roots.splice(0).map(async (root) => rm(root, { recursive: true, force: true })),
@@ -133,6 +170,98 @@ describe("run log", () => {
       record.kind === "game.event" ? [record.payload] : [],
     );
     expect(await Effect.runPromise(replay(events))).toEqual(result.state);
+  });
+
+  it("records the launch configuration of the run in the start record", async () => {
+    const directory = await temporaryRunDirectory();
+    const launch = {
+      thinkingLevel: "max",
+      turnTimeMs: 1_800_000,
+      finalizationGraceMs: 300_000,
+      decisionTimeoutMs: 2_160_000,
+      contextWindowTokens: 131_072,
+      maxPlanningSteps: 8,
+      maxAttempts: 1,
+      maxDecisions: 2_000,
+      maxOutputTokens: null,
+      maxMessageLength: 500,
+      maxOpenOffers: 8,
+      costCeilingUsd: 420,
+    };
+    const recorder = await RunRecorder.create({
+      directory,
+      runId: "run-42",
+      config,
+      initialStateOrigin,
+      seats,
+      clock: clock(),
+      launch,
+    });
+    await recorder.close();
+
+    const saved = await readRunPackage(directory);
+    const started = saved.records.find(({ kind }) => kind === "run.started");
+    expect(started?.payload).toMatchObject({ launch });
+  });
+
+  it("counts what the harness chose in place of the seats", async () => {
+    const directory = await temporaryRunDirectory();
+    const recorder = await RunRecorder.create({
+      directory,
+      runId: "run-42",
+      config,
+      initialStateOrigin,
+      seats,
+      clock: clock(),
+    });
+    const result = await Effect.runPromise(
+      runGameSteps({
+        config,
+        maxDecisions: 30,
+        createAgent: async () => failingAgent(),
+        negotiationPolicy,
+        onActivity: async (activity) => recorder.recordActivity(activity),
+      }),
+    );
+    // A cancellation timeout quarantines the seat, which the record must report even
+    // though the run continues with the seat's remaining decisions replaced.
+    await recorder.recordActivity({
+      kind: "game.decision",
+      payload: {
+        matchId: config.matchId,
+        sequence: result.state.sequence,
+        playerId: "red",
+        attempt: 1,
+        outcome: "failed",
+        elapsedMs: 1_200,
+        failure: "cancellation-timeout",
+        failureMessage: "Agent cancellation did not settle.",
+        turnKey: "turn:1",
+      },
+    });
+    const counted = recorder.decisionSummary();
+    await recorder.complete(result);
+
+    const saved = await readRunPackage(directory);
+    const completed = saved.records.find((record) => record.kind === "run.completed");
+    const summary =
+      completed?.kind === "run.completed" ? completed.payload.decisionSummary : undefined;
+    expect(summary).toBeDefined();
+    const counts = summary ?? {
+      replacedDecisions: { game: 0, negotiation: 0 },
+      emptyPoolFailures: -1,
+      quarantinedSeats: [] as ReadonlyArray<string>,
+    };
+    expect(counts.replacedDecisions.game).toBeGreaterThan(0);
+    expect(counts.replacedDecisions.negotiation).toBeGreaterThan(0);
+    // Every replaced decision came from one failed attempt whose pool was already empty.
+    expect(counts.emptyPoolFailures).toBe(
+      counts.replacedDecisions.game + counts.replacedDecisions.negotiation,
+    );
+    expect(counts.quarantinedSeats).toEqual(["red"]);
+    expect(counted).toEqual(summary);
+    // The summary is a report of written records, so it stays readable after the close.
+    expect(recorder.decisionSummary()).toEqual(summary);
   });
 
   it("reports a valid stored board that differs from the current generator", async () => {
