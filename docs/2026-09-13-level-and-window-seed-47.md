@@ -24,7 +24,7 @@ The run IDs name the model family, the thinking level, and the turn window in mi
 | `terra-max30-seed47-a`      | `max`  |        30 m |  60 s | Completed |    88 |       738 | $14.7280 |     253.5 m |
 | `terra-max30-seed47-b`      | `max`  |        30 m |  60 s | Partial   |    76 |       658 | $12.9164 |     253.7 m |
 | `terra-max30-g300-seed47-a` | `max`  |        30 m | 300 s | Completed |    59 |       488 | $10.2527 |     123.0 m |
-| `terra-max30-g300-seed47-b` | `max`  |        30 m | 300 s | Partial   |    69 |       546 | $12.8393 |     184.9 m |
+| `terra-max30-g300-seed47-b` | `max`  |        30 m | 300 s | Partial   |    72 |       561 | $13.1936 |     204.9 m |
 | `sol-high10-seed47-a`       | `high` |        10 m |  60 s | Partial   |    53 |       413 | $11.2071 |      74.9 m |
 | `sol-high10-seed47-b`       | `high` |        10 m |  60 s | Partial   |    52 |       410 | $11.6985 |      75.0 m |
 | `sol-max30-seed47-a`        | `max`  |        30 m |  60 s | Partial   |    40 |       324 | $10.2411 |      74.5 m |
@@ -36,7 +36,7 @@ The run IDs name the model family, the thinking level, and the turn window in mi
 
 The four `sol-*-seed47-a/b` runs are partial because the operator stopped them to restart the same cells with the 300-second grace. Their packages are kept as labelled partial runs, and they carry the evidence for the grace comparison.
 
-`terra-max30-seed47-b` and `terra-max30-g300-seed47-b` are partial for the same reason. `terra-max30-seed47-b` was stopped for the restart. `terra-max30-g300-seed47-b` was still running when this report was written.
+`terra-max30-seed47-b` and `terra-max30-g300-seed47-b` are partial for the same reason. `terra-max30-seed47-b` was stopped for the restart. `terra-max30-g300-seed47-b` was still running when this report was written, so its package holds a frozen snapshot of turn 72.
 
 Every run used seed 47, four seats, one negotiation round, eight planning steps, a 131,072-token context window, and a decision bound of 900 or 2000. No run reached its decision bound. No run reached its cost ceiling, which was $250 for the terra runs and $420 for the sol runs.
 
@@ -102,6 +102,8 @@ The remaining failures are steady. Every game has between 3 and 22 no-legal-acti
 
 An earlier report, `docs/2026-09-12-terra-seed-47.md`, named the turn window as the cause. That report is corrected. The harness now records the agent error text in the `failureMessage` field of a failed decision and of the fallback that follows it, so the two kinds are separated in the record itself. Before that change the split came from the recorded clocks, which is how the table above was built.
 
+One cell kept the 60-second grace. The terra `high` pair lost one decision to the empty finalization pool and none to the empty exploration pool, out of 788 and 773 decisions, so the operator did not repeat it. Every other cell that showed an empty-pool loss was repeated at the 300-second grace. This is the one asymmetry in the set.
+
 ## Cost
 
 | Run                         |     Cost | Per turn | Per minute | terra/sol | DeepSeek |
@@ -111,7 +113,7 @@ An earlier report, `docs/2026-09-12-terra-seed-47.md`, named the turn window as 
 | `terra-max30-seed47-a`      | $14.7280 |   $0.167 |     $0.058 |  $13.1898 |  $1.5382 |
 | `terra-max30-seed47-b`      | $12.9164 |   $0.170 |     $0.051 |  $11.2402 |  $1.6762 |
 | `terra-max30-g300-seed47-a` | $10.2527 |   $0.174 |     $0.083 |   $8.8448 |  $1.4079 |
-| `terra-max30-g300-seed47-b` | $12.8393 |   $0.186 |     $0.069 |  $11.5613 |  $1.2780 |
+| `terra-max30-g300-seed47-b` | $13.1936 |   $0.183 |     $0.064 |  $11.8529 |  $1.3407 |
 | `sol-high10-seed47-a`       | $11.2071 |   $0.211 |     $0.150 |  $10.0698 |  $1.1373 |
 | `sol-high10-seed47-b`       | $11.6985 |   $0.225 |     $0.156 |  $10.6163 |  $1.0822 |
 | `sol-max30-seed47-a`        | $10.2411 |   $0.256 |     $0.137 |   $9.4086 |  $0.8324 |
@@ -121,7 +123,7 @@ An earlier report, `docs/2026-09-12-terra-seed-47.md`, named the turn window as 
 | `sol-max30-g300-seed47-a`   | $17.5278 |   $0.262 |     $0.147 |  $16.0242 |  $1.5036 |
 | `sol-max30-g300-seed47-b`   | $23.0266 |   $0.291 |     $0.156 |  $21.3584 |  $1.6683 |
 
-The fourteen runs cost $198.4809 together. The DeepSeek seats cost $0.78 to $2.11 per game in every cell, so the difference between cells is the challenger's cost.
+The fourteen runs cost $198.8351 together. The DeepSeek seats cost $0.78 to $2.11 per game in every cell, so the difference between cells is the challenger's cost.
 
 Sol costs more than terra at the same level. Sol's `high` games cost $0.24 to $0.27 per turn against terra's $0.13 per turn. Sol also spends more per goal: it won three games on $14.7, $19.5, and $21.4 of its own model cost.
 
@@ -137,7 +139,7 @@ Costs are the recorded per-request usage from the run timeline, which is the sam
 | ------------------ | ------ | ----: | ---: | -------: | ------------: | ----------: | ---------------: |
 | `terra-high10`     | `high` |     2 |    1 | $25.5828 |        $0.134 |           1 | 2,921 / 2,955 ms |
 | `terra-max30`      | `max`  |     2 |    1 | $27.6444 |        $0.168 |          41 | 6,184 / 5,168 ms |
-| `terra-max30-g300` | `max`  |     2 |    0 | $23.0920 |        $0.181 |           0 | 5,257 / 4,426 ms |
+| `terra-max30-g300` | `max`  |     2 |    0 | $23.4462 |        $0.179 |           0 | 5,257 / 4,426 ms |
 | `sol-high10-g300`  | `high` |     2 |    2 | $37.1675 |        $0.256 |           0 | 5,377 / 5,377 ms |
 | `sol-max30-g300`   | `max`  |     2 |    1 | $40.5544 |        $0.277 |           0 | 8,661 / 8,017 ms |
 
@@ -181,7 +183,9 @@ Swap the run ID, the run directory, the models, and the two time values for the 
 
 ## Published location
 
-The fourteen run packages are published in the public bucket `osolmaz/catanarchy-runs`, under `runs/<run-id>`. Each package holds the manifest, the timeline, the four seat sessions, the decision analysis, the launch record, a copy of this report as `REPORT.md`, and `CHECKSUMS.sha256`.
+The fourteen run packages are published in the public bucket `osolmaz/catanarchy-runs`, under `runs/<run-id>`. Each package holds the manifest, the timeline, the four seat sessions, the decision analysis, the launch record, a copy of this report as `REPORT.md`, and `CHECKSUMS.sha256`. Every file in every package verifies against its checksum from the public URL.
+
+Thirteen packages hold a finished or stopped run. The package for `terra-max30-g300-seed47-b` holds a frozen copy of turn 72, because that run was still writing when the package was built. A live run changes its timeline and its session files, so a package built directly from it cannot verify. The final package replaces the snapshot when the run ends.
 
 ## Related documents
 
