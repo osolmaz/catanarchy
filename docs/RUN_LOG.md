@@ -108,15 +108,15 @@ The first record must have index and offset zero. The final record must have kin
 
 Version 1 defines these kinds:
 
-- `run.started`: The game configuration, and the negotiation round limit the run starts with. The limit is `null` when negotiation is off, and absent in a package from before the field existed.
+- `run.started`: The game configuration, the negotiation round limit the run starts with, and the launch settings. The limit is `null` when negotiation is off, and absent in a package from before the field existed. The `launch` object holds the thinking level, the turn window, the finalization grace, the outer wall clock of one agent call, the context window, the planning-step limit, the attempt limit, the decision bound, the output limit, the negotiation message limits, and the cost ceiling. It is absent in a package from before the field existed.
 - `game.event`: One authoritative `catanarchy.game-event.v1` envelope.
 - `game.command-completed`: The command ID and last game-event sequence in one complete command batch.
 - `negotiation.event`: One `catanarchy.negotiation-event.v1` envelope.
 - `game.agent-requested`: One game request with its seat observation, legal actions, and attempt number.
-- `game.decision`: One selected, failed, or fallback game decision with model, time, token, and cost data when available. A failed attempt and the fallback that follows it carry the agent error text in `failureMessage`.
+- `game.decision`: One selected, failed, or fallback game decision with model, time, token, and cost data when available. A failed attempt and the fallback that follows it carry the agent error text in `failureMessage`. The record carries the turn key of the decision, and a failure carries `pool` and `remainingMs` when one of the two time pools was already empty.
 - `negotiation.agent-requested`: One negotiation request with its seat observation, negotiation view, and attempt number.
-- `negotiation.decision`: One selected, failed, or fallback negotiation decision, with the same `failureMessage` rule as a game decision.
-- `run.completed`: The final game and negotiation sequences and winner, if any.
+- `negotiation.decision`: One selected, failed, or fallback negotiation decision, with the same `failureMessage`, turn key, and pool rule as a game decision.
+- `run.completed`: The final game and negotiation sequences and winner, if any, plus `decisionSummary`: the replaced game and negotiation decisions, the failures that spent no tokens because a time pool was empty, and the seats a cancellation timeout quarantined. The summary covers the whole run, including any prefix a resume replayed, and it is absent in a package from before the field existed.
 - `run.failed`: A short failure reason and the last saved sequence values.
 - `run.cancelled`: A short cancellation reason and the last saved sequence values.
 - `run.resumed`: The resume mode, the timeline index the run continues from, the replayed game sequence, the replay verification result, a short reason, and the spend that the removed records held before the resume.

@@ -179,7 +179,7 @@ Swap the run ID, the run directory, the models, and the two time values for the 
 - The four sol partial runs and two terra partial runs stop mid-game, so they have no winner.
 - `terra-max30-seed47-b` and `terra-max30-g300-seed47-b` were still running or stopped early, so their point totals are not final.
 - The trace records the agent error text only from this change forward. The split in the grace table comes from the recorded clocks of the earlier runs.
-- The harness default for the finalization grace is still 60 seconds. The runs here set it explicitly.
+- The harness default for the finalization grace was 60 seconds when these runs were made, and the runs here set the value explicitly. The numbers in this report stand as measured. A later change made 300 seconds the default, applied it to each decision instead of each turn, and made a replaced decision take a neutral action where the rules allow one.
 
 ## Published location
 
