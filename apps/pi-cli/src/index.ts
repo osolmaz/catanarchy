@@ -29,6 +29,7 @@ import {
   readRunPackage,
   RunRecorder,
   type OpenedRun,
+  type RunLaunchConfiguration,
   type RunManifest,
   type RunResume,
   type RunResumeMode,
@@ -84,7 +85,8 @@ const thinkingArgument = (): NonNullable<PiAgentFactoryOptions["thinkingLevel"]>
 
 const seed = integerArgument("seed", 42, 0, 0xffff_ffff);
 const turnTimeMs = integerArgument("turn-time-ms", 600_000, 1, 0x7fff_ffff);
-const finalizationGraceMs = integerArgument("finalization-grace-ms", 60_000, 1, 0x7fff_ffff);
+/** The finalization grace of one decision. A live run needs minutes, not seconds. */
+const finalizationGraceMs = integerArgument("finalization-grace-ms", 300_000, 1, 0x7fff_ffff);
 const maxPlanningSteps = integerArgument("max-planning-steps", 8, 1, 1_000);
 const maxAttempts = integerArgument("max-attempts", 1, 1);
 const maxOutputTokens = optionalIntegerArgument("max-output-tokens", 1);
@@ -139,6 +141,25 @@ const outerDecisionTimeoutMs = turnTimeMs + finalizationGraceMs + 60_000;
 if (!Number.isSafeInteger(outerDecisionTimeoutMs) || outerDecisionTimeoutMs > 0x7fff_ffff) {
   throw new Error("The turn time, finalization grace, and outer safety margin are too large.");
 }
+
+/**
+ * The settings this invocation runs with. The run record carries them, so a package
+ * states its own thinking level, time pools, and limits.
+ */
+const launchConfiguration: RunLaunchConfiguration = {
+  thinkingLevel,
+  turnTimeMs,
+  finalizationGraceMs,
+  decisionTimeoutMs: outerDecisionTimeoutMs,
+  contextWindowTokens,
+  maxPlanningSteps,
+  maxAttempts,
+  maxDecisions,
+  maxOutputTokens: maxOutputTokens ?? null,
+  maxMessageLength: negotiationPolicy === undefined ? null : maxMessageLength,
+  maxOpenOffers: negotiationPolicy === undefined ? null : maxOpenOffers,
+  costCeilingUsd,
+};
 
 interface RunBounds {
   readonly maximumRequests: number;
@@ -419,7 +440,13 @@ const reportResult = async (
   budget: PiCostBudget,
   facts: RunFacts,
 ): Promise<void> => {
-  const summary = { ...summarize(result, facts), costBudget: budget.snapshot() };
+  const decisionSummary = recorder.decisionSummary();
+  console.error(JSON.stringify({ event: "run-decision-summary", ...decisionSummary }));
+  const summary = {
+    ...summarize(result, facts),
+    decisionSummary,
+    costBudget: budget.snapshot(),
+  };
   console.log(JSON.stringify({ ...summary, runDirectory: recorder.directory }, undefined, 2));
   if (outputPath !== undefined) {
     await writeFile(outputPath, `${JSON.stringify({ summary, result }, undefined, 2)}\n`, {
@@ -498,6 +525,7 @@ const runFresh = async (runtime: ModelRuntime): Promise<void> => {
     initialStateOrigin: { type: "generated", generatorId: STANDARD_BOARD_GENERATOR_ID, seed },
     piVersion,
     negotiationRounds: negotiationPolicy?.maxRounds ?? null,
+    launch: launchConfiguration,
     seats: config.players.map((player, index) => ({
       seatId: player.id,
       agentType: "pi" as const,
