@@ -591,6 +591,47 @@ describe("agent harness", () => {
     });
   });
 
+  it("records the agent error text on the failed attempt and on the fallback", async () => {
+    const result = await Effect.runPromise(
+      runInitialPlacement({
+        config: config(3),
+        createAgent: async () =>
+          inertAgent(async () => {
+            throw new AgentDecisionError({
+              message: "The game-action finalization time expired.",
+            });
+          }),
+      }),
+    );
+
+    expect(result.decisions[0]).toMatchObject({
+      outcome: "failed",
+      failure: "agent-error",
+      failureMessage: "The game-action finalization time expired.",
+    });
+    expect(result.decisions[1]).toMatchObject({
+      outcome: "fallback",
+      failureMessage: "The game-action finalization time expired.",
+    });
+  });
+
+  it("records the error text of a plain error as the failure message", async () => {
+    const result = await Effect.runPromise(
+      runInitialPlacement({
+        config: config(3),
+        createAgent: async () =>
+          inertAgent(async () => {
+            throw new Error("The provider refused the request.");
+          }),
+      }),
+    );
+
+    expect(result.decisions[0]).toMatchObject({
+      outcome: "failed",
+      failureMessage: "The provider refused the request.",
+    });
+  });
+
   it("retries a failed decision only up to the configured limit", async () => {
     let calls = 0;
     const result = await Effect.runPromise(
@@ -718,6 +759,41 @@ describe("agent harness", () => {
       failure: "cancellation-timeout",
     });
     expect(redTraces.slice(1).every(({ outcome }) => outcome === "fallback")).toBe(true);
+  });
+
+  it("records the negotiation error text on the failed attempt and on the fallback", async () => {
+    const result = await Effect.runPromise(
+      runGameSteps({
+        config: config(3),
+        maxDecisions: 30,
+        maxAttempts: 1,
+        negotiationPolicy: { maxRounds: 1, maxMessageLength: 160, maxOpenOffers: 4 },
+        createAgent: async (player) =>
+          player.id === "red"
+            ? {
+                async decide(request) {
+                  return { actionId: firstAction(request).id };
+                },
+                async negotiate() {
+                  throw new Error("The negotiation finalization time expired.");
+                },
+                async cancel() {},
+                async dispose() {},
+              }
+            : createFirstLegalAgent(),
+      }),
+    );
+
+    const redTraces = result.negotiationDecisions.filter(({ playerId }) => playerId === "red");
+    expect(redTraces[0]).toMatchObject({
+      outcome: "failed",
+      failure: "agent-error",
+      failureMessage: "The negotiation finalization time expired.",
+    });
+    expect(redTraces[1]).toMatchObject({
+      outcome: "fallback",
+      failureMessage: "The negotiation finalization time expired.",
+    });
   });
 
   it("disposes agents that were created before factory failure", async () => {

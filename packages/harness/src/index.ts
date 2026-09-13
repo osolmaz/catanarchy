@@ -128,6 +128,7 @@ export interface DecisionTrace {
   readonly usage?: AgentUsage;
   readonly selectionMode?: "tool" | "text";
   readonly failure?: DecisionFailure;
+  readonly failureMessage?: string;
 }
 
 export interface NegotiationTrace {
@@ -144,6 +145,7 @@ export interface NegotiationTrace {
   readonly usage?: AgentUsage;
   readonly selectionMode?: "tool" | "text";
   readonly failure?: DecisionFailure;
+  readonly failureMessage?: string;
 }
 
 export interface MatchRunResult {
@@ -445,6 +447,23 @@ const selectedTrace = (
   };
 };
 
+/**
+ * The agent error text is kept because it separates two failures that share the
+ * `agent-error` category: an exhausted time pool, which spends no tokens, and a
+ * model answer that carried no legal action, which spends tokens.
+ */
+const failureMessageOf = (error: unknown): string | undefined =>
+  error instanceof Error && error.message.length > 0 ? error.message : undefined;
+
+const lastFailureMessage = (
+  traces: ReadonlyArray<{ readonly failureMessage?: string }>,
+): string | undefined => traces.at(-1)?.failureMessage;
+
+const withFailureMessage = <Trace extends { readonly failureMessage?: string }>(
+  trace: Trace,
+  failureMessage: string | undefined,
+): Trace => (failureMessage === undefined ? trace : { ...trace, failureMessage });
+
 const failedAttemptTrace = (
   agent: SeatAgent,
   request: Omit<AgentDecisionRequest, "signal">,
@@ -452,9 +471,11 @@ const failedAttemptTrace = (
   elapsedMs: number,
   failure: DecisionFailure,
   usage?: AgentUsage,
+  failureMessage?: string,
 ): DecisionTrace => ({
   ...baseTrace(agent, request, attempt, "failed", elapsedMs),
   ...(usage === undefined ? {} : { usage }),
+  ...(failureMessage === undefined ? {} : { failureMessage }),
   failure,
 });
 
@@ -517,6 +538,7 @@ const chooseAction = async (
         performance.now() - startedAt,
         failure,
         error instanceof AgentDecisionError ? error.usage : undefined,
+        failureMessageOf(error),
       );
       traces.push(trace);
       await record({ kind: "game.decision", payload: trace });
@@ -528,10 +550,13 @@ const chooseAction = async (
   if (action === undefined) {
     throw new HarnessError({ message: "The active player has no legal action." });
   }
-  const trace: DecisionTrace = {
-    ...baseTrace(agent, request, maxAttempts + 1, "fallback", 0),
-    actionId: action.id,
-  };
+  const trace: DecisionTrace = withFailureMessage(
+    {
+      ...baseTrace(agent, request, maxAttempts + 1, "fallback", 0),
+      actionId: action.id,
+    },
+    lastFailureMessage(traces),
+  );
   traces.push(trace);
   await record({ kind: "game.decision", payload: trace });
   return { action, traces };
@@ -605,13 +630,17 @@ const failedNegotiationTrace = (
   error: unknown,
   attempt: number,
   elapsedMs: number,
-): NegotiationTrace => ({
-  ...negotiationTraceBase(agent, request, attempt, "failed", elapsedMs),
-  failure: failureCategory(error),
-  ...(error instanceof AgentDecisionError && error.usage !== undefined
-    ? { usage: error.usage }
-    : {}),
-});
+): NegotiationTrace => {
+  const failureMessage = failureMessageOf(error);
+  return {
+    ...negotiationTraceBase(agent, request, attempt, "failed", elapsedMs),
+    failure: failureCategory(error),
+    ...(error instanceof AgentDecisionError && error.usage !== undefined
+      ? { usage: error.usage }
+      : {}),
+    ...(failureMessage === undefined ? {} : { failureMessage }),
+  };
+};
 
 const turnKeyForState = (state: GameState): string => {
   const phase = state.phase;
@@ -698,10 +727,13 @@ const chooseNegotiationAction = async (
     }
   }
   const applied = await applyNegotiationFallback(state, session, round, player.id);
-  const trace: NegotiationTrace = {
-    ...negotiationTraceBase(agent, request, maxAttempts + 1, "fallback", 0),
-    actionType: "pass",
-  };
+  const trace: NegotiationTrace = withFailureMessage(
+    {
+      ...negotiationTraceBase(agent, request, maxAttempts + 1, "fallback", 0),
+      actionType: "pass",
+    },
+    lastFailureMessage(traces),
+  );
   traces.push(trace);
   await record({ kind: "negotiation.decision", payload: trace });
   return { applied, traces };
