@@ -24,12 +24,14 @@ import {
   NegotiationSelectionGate,
   negotiationActionFromToolInput,
   parseModelReference,
+  PhaseExhaustedError,
   PI_THINKING_LEVELS,
   PiCostBudget,
   pinOpenRouterProvider,
   resolveSelection,
   selectActionFromText,
   selectNegotiationFromText,
+  timePoolDetailOf,
   TurnBudget,
   withPiCostBudget,
   type PiDecisionChannel,
@@ -228,6 +230,36 @@ describe("Pi action selection", () => {
     expect(budget.remaining("exploration")).toBe(90_000);
     expect(budget.remaining("finalization")).toBe(30_000);
     expect(budget.takePlanningStep()).toBe(true);
+  });
+
+  it("starts the finalization grace again for each decision of one turn", () => {
+    const budget = new TurnBudget(90_000, 30_000, 2);
+    budget.begin("turn:1");
+    budget.consume("finalization", 30_000);
+    budget.consume("exploration", 25_000);
+    expect(budget.remaining("finalization")).toBe(0);
+
+    budget.startDecision();
+    expect(budget.remaining("finalization")).toBe(30_000);
+    // The turn clock is the turn's, so the second decision does not get it back.
+    expect(budget.remaining("exploration")).toBe(65_000);
+
+    budget.consume("finalization", 12_000);
+    budget.startDecision();
+    expect(budget.remaining("finalization")).toBe(30_000);
+
+    budget.begin("turn:2");
+    expect(budget.remaining("exploration")).toBe(90_000);
+    expect(budget.remaining("finalization")).toBe(30_000);
+  });
+
+  it("reports the pool and the remaining time of an exhausted pool", () => {
+    expect(
+      timePoolDetailOf(
+        new PhaseExhaustedError("The game-action finalization time expired.", "finalization", 0),
+      ),
+    ).toEqual({ pool: "finalization", remainingMs: 0 });
+    expect(timePoolDetailOf(new Error("The provider refused the request."))).toEqual({});
   });
 
   it("accepts one unambiguous action ID from text-only providers", () => {
@@ -759,7 +791,7 @@ describe("Pi model setup", () => {
       maxTokens: Math.min(nativeModel.maxTokens, 65_535),
       contextWindow: Math.min(nativeModel.contextWindow, 65_536),
       turnTimeMs: 600_000,
-      finalizationGraceMs: 60_000,
+      finalizationGraceMs: 300_000,
       maxPlanningSteps: 8,
     });
   });
