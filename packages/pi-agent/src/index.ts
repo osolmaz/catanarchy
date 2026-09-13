@@ -288,6 +288,15 @@ export class TurnBudget {
     this.sentWarnings.clear();
   }
 
+  /**
+   * Start one decision of the current turn. The turn clock continues, because it bounds
+   * the whole turn, and the finalization grace starts again, because it bounds one
+   * answer. A turn with six decisions therefore does not share one grace between them.
+   */
+  startDecision(): void {
+    this.finalizationUsedMs = 0;
+  }
+
   remaining(phase: TurnPhase): number {
     const used = phase === "exploration" ? this.explorationUsedMs : this.finalizationUsedMs;
     const limit = phase === "exploration" ? this.explorationLimitMs : this.finalizationLimitMs;
@@ -651,11 +660,38 @@ const resolveNegotiationPhase = (
 const decisionErrorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : "The model request failed.";
 
+/**
+ * A seat ran out of one of its two time pools. The pool name and the time it had left
+ * travel with the error, so the run record states that a pool ran dry instead of only
+ * that the decision failed.
+ */
+export class PhaseExhaustedError extends Error {
+  constructor(
+    message: string,
+    readonly pool: TurnPhase,
+    readonly remainingMs: number,
+  ) {
+    super(message);
+  }
+}
+
+/**
+ * The pool detail a seat reports for a failed decision. It is empty unless one of the two
+ * time pools was already empty, which is the failure that spends no model tokens.
+ */
+export const timePoolDetailOf = (
+  error: unknown,
+): { readonly pool?: TurnPhase; readonly remainingMs?: number } =>
+  error instanceof PhaseExhaustedError ? { pool: error.pool, remainingMs: error.remainingMs } : {};
+
 const noSelectionError = (
   phase: PromptPhaseResult,
+  pool: TurnPhase,
+  remainingMs: number,
   timedOutMessage: string,
   settledMessage: string,
-): Error => new Error(phase.timedOut ? timedOutMessage : settledMessage);
+): Error =>
+  new PhaseExhaustedError(phase.timedOut ? timedOutMessage : settledMessage, pool, remainingMs);
 
 class SdkDecisionChannel implements PiDecisionChannel {
   readonly #session: AgentSession;
@@ -749,6 +785,7 @@ class SdkDecisionChannel implements PiDecisionChannel {
     const before = this.#session.getSessionStats();
     const legalActionIds = request.legalActions.map(({ id }) => id);
     this.#turnBudget.begin(request.turnKey);
+    this.#turnBudget.startDecision();
     this.#actionGate.begin(legalActionIds);
     this.#negotiationGate.disable();
     this.#inspectionGate.begin(inspectionSections(request), this.#turnBudget);
@@ -791,6 +828,8 @@ class SdkDecisionChannel implements PiDecisionChannel {
       if (finalized.selection === undefined) {
         throw noSelectionError(
           finalization,
+          "finalization",
+          this.#turnBudget.remaining("finalization"),
           "The game-action finalization time expired.",
           "The model did not select a legal action during finalization.",
         );
@@ -804,6 +843,7 @@ class SdkDecisionChannel implements PiDecisionChannel {
       throw new AgentDecisionError({
         message: decisionErrorMessage(error),
         usage: usageDifference(before, this.#session.getSessionStats()),
+        ...timePoolDetailOf(error),
       });
     } finally {
       this.#inspectionGate.disable();
@@ -813,6 +853,7 @@ class SdkDecisionChannel implements PiDecisionChannel {
   async negotiate(request: AgentNegotiationRequest): Promise<AgentNegotiationDecision> {
     const before = this.#session.getSessionStats();
     this.#turnBudget.begin(request.turnKey);
+    this.#turnBudget.startDecision();
     this.#actionGate.disable();
     this.#negotiationGate.begin();
     this.#inspectionGate.begin(inspectionSections(request), this.#turnBudget);
@@ -853,6 +894,8 @@ class SdkDecisionChannel implements PiDecisionChannel {
       if (finalized.selection === undefined) {
         throw noSelectionError(
           finalization,
+          "finalization",
+          this.#turnBudget.remaining("finalization"),
           "The negotiation finalization time expired.",
           "The model did not select a negotiation operation during finalization.",
         );
@@ -866,6 +909,7 @@ class SdkDecisionChannel implements PiDecisionChannel {
       throw new AgentDecisionError({
         message: decisionErrorMessage(error),
         usage: usageDifference(before, this.#session.getSessionStats()),
+        ...timePoolDetailOf(error),
       });
     } finally {
       this.#inspectionGate.disable();
@@ -1392,7 +1436,8 @@ const modelForSeat = (
 };
 
 const DEFAULT_TURN_TIME_MS = 600_000;
-const DEFAULT_FINALIZATION_GRACE_MS = 60_000;
+/** The finalization grace of one decision. A live model run needs minutes. */
+const DEFAULT_FINALIZATION_GRACE_MS = 300_000;
 const DEFAULT_MAX_PLANNING_STEPS = 8;
 
 const boundedPositiveInteger = (
