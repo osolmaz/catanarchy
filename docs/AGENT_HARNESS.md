@@ -65,7 +65,7 @@ The harness creates one agent instance for each player and keeps it for the matc
 
 Each decision has a deadline and a bounded attempt count. An invalid action ID, a model failure, or a deadline expiry consumes one attempt. The harness cancels an expired attempt before it starts another attempt. Cancellation and the original decision get a one-second grace period to settle. If cancellation fails or either operation remains pending, the harness quarantines that seat agent and uses deterministic fallbacks for its remaining decisions. Agent disposal also has a one-second bound.
 
-After all attempts fail, the harness selects the first legal action. The engine's legal-action order and the match seed make this fallback deterministic. The trace identifies the fallback and its cause. A decision with no legal actions is a harness error because it means that the engine and scheduler disagree.
+After all attempts fail, the harness selects the first legal action. The engine's legal-action order and the match seed make this fallback deterministic. The trace identifies the fallback and its cause. A failed attempt records the agent error text in `failureMessage`, and the fallback that follows it repeats that text, so one record explains the replaced decision. A decision with no legal actions is a harness error because it means that the engine and scheduler disagree.
 
 The default attempt count is one. A caller must opt in to retries because every retry can spend model tokens.
 
@@ -89,7 +89,9 @@ The integration does not use or change Pi internals. A normal Pi match uses `Ses
 
 The system prompt tells the model that it controls one Catan seat and must use only visible state. A seat can call the read-only `inspect_game` tool several times before it selects an action or negotiation operation. Each inspection returns one section of the current seat-scoped request. It never returns authoritative hidden state.
 
-The seat uses one exploration clock for all model messages and action decisions in the current game turn. Setup settlement and road placement for one seat use one setup clock. The Pi adapter sends time warnings while exploration remains. When the exploration clock or planning-message limit ends, inspection is disabled and Pi gets a separate finalization prompt. The finalization phase accepts only the current selection tool. If the finalization grace period ends without a valid selection, the harness records the failure and applies its legal fallback.
+The seat uses two time pools for each turn key. The exploration pool holds the turn window. The finalization pool holds the grace period. Both pools start again when the turn key changes. Setup settlement and road placement for one seat use one setup key. The game and negotiation decisions of one turn share the `turn:N` key, so they also share both pools. The Pi adapter sends time warnings while exploration remains. When the exploration pool or the planning-message limit ends, inspection is disabled and Pi gets a separate finalization prompt. The finalization phase accepts only the current selection tool.
+
+A pool with no time left returns an empty response. That path makes no model request, spends no tokens, and fails at once. A longer turn window does not restore the finalization pool, because the two pools are separate. The failed attempt and the fallback that follows it both record the error text in `failureMessage`. That field separates an empty pool, which says that a time limit expired, from a model answer that carried no legal action. Both outcomes reach the same deterministic fallback.
 
 The generic harness also keeps an outer wall-clock limit for an agent call and its cancellation. Its default is 12 minutes. The Pi CLI sets this limit to the 10-minute turn time plus the 60-second finalization grace and a 60-second cancellation margin.
 

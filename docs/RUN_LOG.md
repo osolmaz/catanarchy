@@ -113,9 +113,9 @@ Version 1 defines these kinds:
 - `game.command-completed`: The command ID and last game-event sequence in one complete command batch.
 - `negotiation.event`: One `catanarchy.negotiation-event.v1` envelope.
 - `game.agent-requested`: One game request with its seat observation, legal actions, and attempt number.
-- `game.decision`: One selected, failed, or fallback game decision with model, time, token, and cost data when available.
+- `game.decision`: One selected, failed, or fallback game decision with model, time, token, and cost data when available. A failed attempt and the fallback that follows it carry the agent error text in `failureMessage`.
 - `negotiation.agent-requested`: One negotiation request with its seat observation, negotiation view, and attempt number.
-- `negotiation.decision`: One selected, failed, or fallback negotiation decision.
+- `negotiation.decision`: One selected, failed, or fallback negotiation decision, with the same `failureMessage` rule as a game decision.
 - `run.completed`: The final game and negotiation sequences and winner, if any.
 - `run.failed`: A short failure reason and the last saved sequence values.
 - `run.cancelled`: A short cancellation reason and the last saved sequence values.
