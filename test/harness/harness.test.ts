@@ -192,6 +192,96 @@ const scoringAction = (request: AgentDecisionRequest): LegalAction => {
   );
 };
 
+const OPTIONAL_ACTION_TYPES: ReadonlyArray<string> = [
+  "build-road",
+  "build-settlement",
+  "build-city",
+  "buy-development-card",
+  "maritime-trade",
+  "play-knight",
+  "play-monopoly",
+  "play-road-building",
+  "play-year-of-plenty",
+];
+
+const NEUTRAL_ACTION_FOR_PHASE: Readonly<Record<string, string>> = {
+  "turn.action": "end-turn",
+  "turn.roll": "roll",
+};
+
+/** The action a replaced decision must take, or the reason the action was wrong. */
+const replacedDecisionViolation = (
+  request: Omit<AgentDecisionRequest, "signal">,
+  actionId: string,
+  playerId: string,
+): string | undefined => {
+  const chosen = request.legalActions.find(({ id }) => id === actionId);
+  const type = chosen?.command.command.type;
+  if (type === undefined) return `${playerId} chose ${actionId}, which is not a legal action`;
+  if (OPTIONAL_ACTION_TYPES.includes(type)) return `${playerId} chose the optional action ${type}`;
+  const phase = request.observation.phase.tag;
+  if (phase === "turn.robber") {
+    return actionId.startsWith("move-robber")
+      ? undefined
+      : `${playerId} chose ${actionId} while a robber move was owed`;
+  }
+  const neutral = NEUTRAL_ACTION_FOR_PHASE[phase];
+  if (neutral === undefined || actionId === neutral) return undefined;
+  return `${playerId} chose ${actionId} while ${neutral} was legal`;
+};
+
+/** Whether the position offered at least one action the seat did not need to take. */
+const phaseOffersOptionalAction = (request: Omit<AgentDecisionRequest, "signal">): boolean =>
+  request.legalActions.some(({ command }) => OPTIONAL_ACTION_TYPES.includes(command.command.type));
+
+type FallbackDecision = Extract<MatchActivity, { kind: "game.decision" }>;
+
+const isFallbackDecision = (activity: MatchActivity): activity is FallbackDecision =>
+  activity.kind === "game.decision" && activity.payload.outcome === "fallback";
+
+const requiredRequest = (
+  request: Omit<AgentDecisionRequest, "signal"> | undefined,
+): Omit<AgentDecisionRequest, "signal"> => {
+  if (request === undefined) throw new Error("Expected the request of a fallback.");
+  return request;
+};
+
+interface ReplacedDecisionReport {
+  readonly fallbacks: number;
+  readonly optionalWasLegal: number;
+  readonly violations: ReadonlyArray<string>;
+}
+
+/**
+ * Check every decision the harness chose in place of a seat. A replacement must not take
+ * an optional action, and must take the neutral action when the phase offers one.
+ */
+const replacedDecisionReport = (
+  activities: ReadonlyArray<MatchActivity>,
+): ReplacedDecisionReport => {
+  const violations: string[] = [];
+  let lastRequest: Omit<AgentDecisionRequest, "signal"> | undefined;
+  let fallbacks = 0;
+  let optionalWasLegal = 0;
+  for (const activity of activities) {
+    if (activity.kind === "game.agent-requested") {
+      lastRequest = activity.payload.request;
+      continue;
+    }
+    if (!isFallbackDecision(activity)) continue;
+    const request = requiredRequest(lastRequest);
+    fallbacks += 1;
+    if (phaseOffersOptionalAction(request)) optionalWasLegal += 1;
+    const violation = replacedDecisionViolation(
+      request,
+      activity.payload.actionId ?? "<none>",
+      activity.payload.playerId,
+    );
+    if (violation !== undefined) violations.push(violation);
+  }
+  return { fallbacks, optionalWasLegal, violations };
+};
+
 describe("agent harness", () => {
   it("stops a match when an agent aborts the complete run", async () => {
     const error = await Effect.runPromise(
@@ -548,7 +638,7 @@ describe("agent harness", () => {
     });
   });
 
-  it("falls back to the first legal action after an invalid selection", async () => {
+  it("falls back to a legal action after an invalid selection", async () => {
     const result = await Effect.runPromise(
       runInitialPlacement({
         config: config(3),
@@ -630,6 +720,92 @@ describe("agent harness", () => {
       outcome: "failed",
       failureMessage: "The provider refused the request.",
     });
+  });
+
+  it("records the exhausted pool and the turn key of a failed attempt", async () => {
+    const result = await Effect.runPromise(
+      runInitialPlacement({
+        config: config(3),
+        createAgent: async () =>
+          inertAgent(async () => {
+            throw new AgentDecisionError({
+              message: "The game-action finalization time expired.",
+              pool: "finalization",
+              remainingMs: 0,
+            });
+          }),
+      }),
+    );
+
+    expect(result.decisions[0]).toMatchObject({
+      outcome: "failed",
+      pool: "finalization",
+      remainingMs: 0,
+    });
+    expect(result.decisions[0]?.turnKey).toBeDefined();
+  });
+
+  it("never takes an optional action in place of a seat", async () => {
+    const activities: MatchActivity[] = [];
+    const result = await Effect.runPromise(
+      runGameSteps({
+        config: config(4),
+        maxDecisions: 160,
+        onActivity: async (activity) => {
+          activities.push(activity);
+        },
+        createAgent: async () =>
+          inertAgent(async (request) => {
+            const buy = actionOfType(request, "buy-development-card");
+            if (request.observation.phase.tag === "turn.action" && buy !== undefined) {
+              return { actionId: buy.id };
+            }
+            throw new AgentDecisionError({
+              message: "The game-action finalization time expired.",
+              pool: "finalization",
+              remainingMs: 0,
+            });
+          }),
+      }),
+    );
+
+    // An optional action is one the position does not require. A replaced decision must
+    // never take one, because it would spend the seat's resources or cards.
+    const report = replacedDecisionReport(activities);
+    expect(report.fallbacks).toBeGreaterThan(0);
+    // Without this the assertion above could pass on a position that offered no choice.
+    expect(report.optionalWasLegal).toBeGreaterThan(0);
+    expect(report.violations).toEqual([]);
+    expect(result.decisions.filter(({ outcome }) => outcome === "fallback").length).toBeGreaterThan(
+      0,
+    );
+  });
+
+  it("chooses a forced action deterministically, and not always the first legal one", async () => {
+    const firstSettlementOf = async (seed: number): Promise<string> => {
+      const result = await Effect.runPromise(
+        runInitialPlacement({
+          config: { ...config(4), matchId: `harness-placement-${String(seed)}`, seed },
+          createAgent: async () =>
+            inertAgent(async () => {
+              throw new AgentDecisionError({ message: "No selection." });
+            }),
+        }),
+      );
+      const settlement = result.decisions.find(
+        ({ outcome, actionId }) => outcome === "fallback" && actionId?.startsWith("settlement:"),
+      );
+      if (settlement?.actionId === undefined) throw new Error("Expected a replaced settlement.");
+      return settlement.actionId;
+    };
+
+    const first = await firstSettlementOf(42);
+    // The same decision identity must produce the same action.
+    expect(await firstSettlementOf(42)).toBe(first);
+    // The first-legal-vertex rule put every replaced first placement in one corner.
+    const corners = new Set<string>();
+    for (const seed of [1, 2, 3, 4, 5]) corners.add(await firstSettlementOf(seed));
+    expect(corners.size).toBeGreaterThan(1);
   });
 
   it("retries a failed decision only up to the configured limit", async () => {
