@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import {
   AgentDecisionError,
   AgentRunAbort,
@@ -17,7 +18,7 @@ import {
   type NegotiationScope,
   type PlayerConfig,
 } from "@catanarchy/protocol";
-import { StringEnum } from "@earendil-works/pi-ai";
+import { getSupportedThinkingLevels, StringEnum } from "@earendil-works/pi-ai";
 import {
   createAgentSession,
   createExtensionRuntime,
@@ -1591,6 +1592,345 @@ export const assertModelsAvailable = async (
       throw new Error(`Authentication is not configured for provider ${reference.provider}.`);
     }
   }
+};
+
+/**
+ * The thinking-levels config. One run names one file. The file states, for each provider and
+ * model, which provider value each harness thinking level sends, and it holds the deliberate
+ * run pins that hold a model at a level on purpose. The file is version-controlled, so a level
+ * map is reviewable, reproducible, and independent of a hand edit in a model cache.
+ */
+export const THINKING_LEVELS_SCHEMA = "catanarchy.thinking-levels.v1";
+
+/** The provider value of each harness level, or `null` when the model cannot express it. */
+export type ThinkingLevelMap = Readonly<Partial<Record<PiThinkingLevel, string | null>>>;
+
+/** One provider block: one level map for each model it names. */
+export interface ThinkingLevelsProvider {
+  readonly provider: string;
+  readonly api: string;
+  readonly parameter: string;
+  /** How the map was measured. Prose for the reader, not a rule. */
+  readonly evidence?: string;
+  readonly levelMap: ThinkingLevelMap;
+  readonly models: readonly string[];
+}
+
+/** One deliberate run pin, such as holding a model at a lower level while another is raised. */
+export interface ThinkingLevelsPin {
+  readonly provider: string;
+  readonly modelId: string;
+  readonly reason: string;
+  readonly levelMap: Readonly<Partial<Record<PiThinkingLevel, string>>>;
+}
+
+export interface ThinkingLevelsConfig {
+  readonly schema: string;
+  readonly probedAt: string;
+  readonly providers: readonly ThinkingLevelsProvider[];
+  readonly runPins: readonly ThinkingLevelsPin[];
+}
+
+/** What a config changed. The run record carries this list. */
+export interface ThinkingLevelsApplication {
+  readonly kind: "provider" | "pin";
+  readonly provider: string;
+  readonly modelId: string;
+  readonly levelMap: ThinkingLevelMap;
+  readonly reason?: string;
+}
+
+/** What one seat model sends for the level the run asked for. */
+export interface ThinkingLevelResolution {
+  readonly provider: string;
+  readonly modelId: string;
+  readonly requestedLevel: PiThinkingLevel;
+  readonly providerValue: string;
+  readonly source: "config" | "pin" | "catalog";
+}
+
+const isPlainObject = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const nonEmptyString = (value: unknown, field: string): string => {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error(`${field} must be a non-empty string.`);
+  }
+  return value;
+};
+
+const stringArray = (value: unknown, field: string): string[] => {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new Error(`${field} must be a non-empty array.`);
+  }
+  return value.map((item, index) => nonEmptyString(item, `${field}[${index}]`));
+};
+
+const knownLevel = (key: string, field: string): PiThinkingLevel => {
+  if (!(PI_THINKING_LEVELS as readonly string[]).includes(key)) {
+    throw new Error(
+      `${field} names an unknown thinking level "${key}". Known levels: ${PI_THINKING_LEVELS.join(", ")}.`,
+    );
+  }
+  return key as PiThinkingLevel;
+};
+
+const assertKnownLevels = (value: Record<string, unknown>, field: string): void => {
+  for (const key of Object.keys(value)) knownLevel(key, field);
+};
+
+const fullLevelMap = (value: unknown, field: string): ThinkingLevelMap => {
+  if (!isPlainObject(value)) throw new Error(`${field} must be an object.`);
+  assertKnownLevels(value, field);
+  const result = {} as Record<PiThinkingLevel, string | null>;
+  for (const level of PI_THINKING_LEVELS) {
+    if (!(level in value))
+      throw new Error(`${field} must name every thinking level. Missing: ${level}.`);
+    const mapped = value[level];
+    result[level] = mapped === null ? null : nonEmptyString(mapped, `${field}.${level}`);
+  }
+  return result;
+};
+
+const partialLevelMap = (
+  value: unknown,
+  field: string,
+): Partial<Record<PiThinkingLevel, string>> => {
+  if (!isPlainObject(value)) throw new Error(`${field} must be an object.`);
+  const entries = Object.entries(value);
+  if (entries.length === 0) throw new Error(`${field} must name at least one thinking level.`);
+  const result: Partial<Record<PiThinkingLevel, string>> = {};
+  for (const [key, mapped] of entries) {
+    result[knownLevel(key, field)] = nonEmptyString(mapped, `${field}.${key}`);
+  }
+  return result;
+};
+
+const requireArray = (value: unknown, field: string): unknown[] => {
+  if (!Array.isArray(value)) throw new Error(`${field} must be an array.`);
+  return value;
+};
+
+const requireProbedAt = (value: unknown, source: string): string => {
+  const probedAt = nonEmptyString(value, `${source}: probedAt`);
+  if (!/^\d{4}-\d{2}-\d{2}$/u.test(probedAt)) {
+    throw new Error(`${source}: probedAt must use the YYYY-MM-DD form.`);
+  }
+  return probedAt;
+};
+
+const parseJsonObject = (text: string, source: string): Record<string, unknown> => {
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new Error(`${source} is not valid JSON: ${reason}`);
+  }
+  if (!isPlainObject(value)) throw new Error(`${source} must hold a JSON object.`);
+  return value;
+};
+
+const parseProvider = (raw: unknown, source: string, index: number): ThinkingLevelsProvider => {
+  const field = `${source}: providers[${index}]`;
+  if (!isPlainObject(raw)) throw new Error(`${field} must be an object.`);
+  const rawEvidence = raw["evidence"];
+  const evidence =
+    rawEvidence === undefined ? undefined : nonEmptyString(rawEvidence, `${field}.evidence`);
+  return {
+    provider: nonEmptyString(raw["provider"], `${field}.provider`),
+    api: nonEmptyString(raw["api"], `${field}.api`),
+    parameter: nonEmptyString(raw["parameter"], `${field}.parameter`),
+    ...(evidence === undefined ? {} : { evidence }),
+    levelMap: fullLevelMap(raw["levelMap"], `${field}.levelMap`),
+    models: stringArray(raw["models"], `${field}.models`),
+  };
+};
+
+const parsePin = (raw: unknown, source: string, index: number): ThinkingLevelsPin => {
+  const field = `${source}: runPins[${index}]`;
+  if (!isPlainObject(raw)) throw new Error(`${field} must be an object.`);
+  return {
+    provider: nonEmptyString(raw["provider"], `${field}.provider`),
+    modelId: nonEmptyString(raw["modelId"], `${field}.modelId`),
+    reason: nonEmptyString(raw["reason"], `${field}.reason`),
+    levelMap: partialLevelMap(raw["levelMap"], `${field}.levelMap`),
+  };
+};
+
+/** Parse and validate a thinking-levels config. A bad file fails before any model call. */
+export const parseThinkingLevelsConfig = (text: string, source: string): ThinkingLevelsConfig => {
+  const value = parseJsonObject(text, source);
+  if (value["schema"] !== THINKING_LEVELS_SCHEMA) {
+    throw new Error(`${source} must declare schema "${THINKING_LEVELS_SCHEMA}".`);
+  }
+  const providers = requireArray(value["providers"], `${source}: providers`);
+  if (providers.length === 0) throw new Error(`${source}: providers must be a non-empty array.`);
+  const rawPins = value["runPins"];
+  const pins = rawPins === undefined ? [] : requireArray(rawPins, `${source}: runPins`);
+  return {
+    schema: THINKING_LEVELS_SCHEMA,
+    probedAt: requireProbedAt(value["probedAt"], source),
+    providers: providers.map((raw, index) => parseProvider(raw, source, index)),
+    runPins: pins.map((raw, index) => parsePin(raw, source, index)),
+  };
+};
+
+export const loadThinkingLevelsConfig = async (path: string): Promise<ThinkingLevelsConfig> =>
+  parseThinkingLevelsConfig(await readFile(path, "utf8"), path);
+
+const providerModelEntry = (model: PiModel, thinkingLevelMap: ThinkingLevelMap) => ({
+  id: model.id,
+  name: model.name,
+  api: model.api,
+  ...(model.baseUrl === undefined ? {} : { baseUrl: model.baseUrl }),
+  reasoning: model.reasoning,
+  thinkingLevelMap,
+  input: [...model.input],
+  cost: model.cost,
+  contextWindow: model.contextWindow,
+  maxTokens: model.maxTokens,
+  ...(model.samplingParams === undefined ? {} : { samplingParams: model.samplingParams }),
+  ...(model.headers === undefined ? {} : { headers: model.headers }),
+  ...(model.compat === undefined ? {} : { compat: model.compat }),
+});
+
+interface ProviderPlan {
+  readonly levelMaps: Map<string, ThinkingLevelMap>;
+  readonly kinds: Map<string, "provider" | "pin">;
+  readonly reasons: Map<string, string>;
+}
+
+const planProvider = (
+  runtime: ModelRuntime,
+  providerId: string,
+  config: ThinkingLevelsConfig,
+  known: ReadonlySet<string>,
+): ProviderPlan => {
+  const levelMaps = new Map<string, ThinkingLevelMap>();
+  const kinds = new Map<string, "provider" | "pin">();
+  const reasons = new Map<string, string>();
+  const baseLevelMap = (modelId: string): ThinkingLevelMap =>
+    levelMaps.get(modelId) ?? runtime.getModel(providerId, modelId)?.thinkingLevelMap ?? {};
+  const requireKnown = (modelId: string): void => {
+    if (!known.has(modelId)) throw new Error(`Unknown Pi model: ${providerId}/${modelId}`);
+  };
+  for (const block of config.providers) {
+    if (block.provider !== providerId) continue;
+    for (const modelId of block.models) {
+      requireKnown(modelId);
+      levelMaps.set(modelId, { ...baseLevelMap(modelId), ...block.levelMap });
+      kinds.set(modelId, "provider");
+    }
+  }
+  for (const pin of config.runPins) {
+    if (pin.provider !== providerId) continue;
+    requireKnown(pin.modelId);
+    levelMaps.set(pin.modelId, { ...baseLevelMap(pin.modelId), ...pin.levelMap });
+    kinds.set(pin.modelId, "pin");
+    reasons.set(pin.modelId, pin.reason);
+  }
+  return { levelMaps, kinds, reasons };
+};
+
+const applicationOf = (
+  plan: ProviderPlan,
+  providerId: string,
+  modelId: string,
+  levelMap: ThinkingLevelMap,
+): ThinkingLevelsApplication => {
+  const reason = plan.reasons.get(modelId);
+  return {
+    kind: plan.kinds.get(modelId) ?? "provider",
+    provider: providerId,
+    modelId,
+    levelMap,
+    ...(reason === undefined ? {} : { reason }),
+  };
+};
+
+const providerIdsOf = (config: ThinkingLevelsConfig): string[] => [
+  ...new Set([
+    ...config.providers.map(({ provider }) => provider),
+    ...config.runPins.map(({ provider }) => provider),
+  ]),
+];
+
+/**
+ * Apply a thinking-levels config to a runtime. Each named provider is registered again with the
+ * level map of the config, and every other model of that provider keeps its own entry. The
+ * function returns what it changed, so the run record can state the map in effect.
+ */
+export const applyThinkingLevels = (
+  runtime: ModelRuntime,
+  config: ThinkingLevelsConfig,
+): ThinkingLevelsApplication[] => {
+  const applications: ThinkingLevelsApplication[] = [];
+  for (const providerId of providerIdsOf(config)) {
+    const available = runtime.getModels(providerId);
+    if (available.length === 0) throw new Error(`Unknown Pi provider: ${providerId}`);
+    const plan = planProvider(runtime, providerId, config, new Set(available.map(({ id }) => id)));
+    runtime.registerProvider(providerId, {
+      models: available.map((model) =>
+        providerModelEntry(model, plan.levelMaps.get(model.id) ?? model.thinkingLevelMap ?? {}),
+      ),
+    });
+    for (const [modelId, levelMap] of plan.levelMaps) {
+      applications.push(applicationOf(plan, providerId, modelId, levelMap));
+    }
+  }
+  return applications;
+};
+
+const requireSupportedLevel = (model: PiModel, key: string, level: PiThinkingLevel): void => {
+  const supported = getSupportedThinkingLevels(model);
+  if (supported.includes(level)) return;
+  throw new Error(
+    `${key} cannot express thinking level ${level}. Supported levels: ${supported.join(", ")}. ` +
+      "Name the level for the model in the thinking-levels config, or pass a supported level.",
+  );
+};
+
+const resolutionSource = (
+  applications: ReadonlyArray<ThinkingLevelsApplication>,
+  provider: string,
+  modelId: string,
+): "config" | "pin" | "catalog" => {
+  const application = applications.find(
+    (entry) => entry.provider === provider && entry.modelId === modelId,
+  );
+  if (application === undefined) return "catalog";
+  return application.kind === "pin" ? "pin" : "config";
+};
+
+/**
+ * The provider value every seat model sends for one level. A model that cannot express the level
+ * stops the run, so a level never changes without a record and a silent clamp never happens.
+ */
+export const resolveThinkingLevels = (
+  runtime: ModelRuntime,
+  references: ReadonlyArray<PiModelReference>,
+  level: PiThinkingLevel,
+  applications: ReadonlyArray<ThinkingLevelsApplication> = [],
+): ThinkingLevelResolution[] => {
+  const resolutions: ThinkingLevelResolution[] = [];
+  const seen = new Set<string>();
+  for (const reference of references) {
+    const key = `${reference.provider}/${reference.modelId}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const model = runtime.getModel(reference.provider, reference.modelId);
+    if (model === undefined) throw new Error(`Unknown Pi model: ${key}`);
+    requireSupportedLevel(model, key, level);
+    resolutions.push({
+      provider: reference.provider,
+      modelId: reference.modelId,
+      requestedLevel: level,
+      providerValue: model.thinkingLevelMap?.[level] ?? level,
+      source: resolutionSource(applications, reference.provider, reference.modelId),
+    });
+  }
+  return resolutions;
 };
 
 export { ModelRuntime };
