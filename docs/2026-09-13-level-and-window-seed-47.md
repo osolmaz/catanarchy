@@ -9,7 +9,7 @@ This report covers sixteen games on board seed 47. Two model families, `openai/g
 
 The set exists to answer one question: is a level or window comparison against DeepSeek fair to a slower model? The answer changed during the set, because the games found a hidden time limit. A turn holds two time pools, and the second one is small. Raising the turn window did not help, and a larger grace helped only in part, because one turn key shared one grace pool. Two fresh games under a harness that gives every decision its own grace, and that replaces a decision with a neutral action, recorded no empty-pool failure at all.
 
-DeepSeek won most of the decided games. Terra won four games, and it led DeepSeek on points in three of its four cells. Sol won three of its six decided games.
+DeepSeek won most of the decided games. Terra won four games, and it led DeepSeek on points in three of its four cells. Sol won three of its four decided games.
 
 Two games for one cell are a behavioural case study. They are not a strength verdict. About 85 games are needed to detect a win-rate shift from 50% to 65%.
 
@@ -67,7 +67,7 @@ Terra won one game in the 10-minute `high` cell, one game in the 30-minute `max`
 
 Points are effective victory points: owned settlements, cities at two points, the two awards at two points each, and visible victory-point cards. The `sol-max30-g300-seed47-a` game is the clearest loss in the set. Sol's two seats reached 5 and 4 points against DeepSeek's 8 and 10.
 
-Eleven of the sixteen games are decided: DeepSeek won four, terra four, and sol three. Across the whole seed 47 series, which also holds the DeepSeek baseline, the Luna pairs, and the terra `max` pair, DeepSeek has won 11 games against a challenger, terra 4, and sol 3.
+Eleven of the sixteen games in this set are decided: DeepSeek won four, terra four, and sol three. Seventeen head-to-head games on seed 47 have finished: DeepSeek ten, terra four, and sol three. The series also holds four Luna games, which DeepSeek won, and one four-seat DeepSeek baseline game with no challenger.
 
 ## The finalization grace removed decisions
 
