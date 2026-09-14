@@ -1,0 +1,24 @@
+{
+  "schema": "catanarchy.thinking-levels.v1",
+  "probedAt": "2026-09-14",
+  "note": "Cell config. It holds the Hugging Face provider truth from config/thinking-levels.json and no run pin, so DeepSeek receives the level that the run asks for. Use it for the DeepSeek-raised cell only. The base file keeps the pin that holds DeepSeek at high for the rest of the series.",
+  "providers": [
+    {
+      "provider": "huggingface",
+      "api": "openai-completions",
+      "parameter": "reasoning_effort",
+      "evidence": "Probed on 2026-09-14 through the Novita route. The route accepted the seven names none, minimal, low, medium, high, xhigh, and max, and refused off, extreme, ultra, highest, bogus, and every number with HTTP 400.",
+      "levelMap": {
+        "off": "none",
+        "minimal": "minimal",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": "max"
+      },
+      "models": ["deepseek-ai/DeepSeek-V4.1-Flash:novita"]
+    }
+  ],
+  "runPins": []
+}

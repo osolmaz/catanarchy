@@ -1,0 +1,31 @@
+{
+  "schema": "catanarchy.thinking-levels.v1",
+  "probedAt": "2026-09-14",
+  "note": "Cell config. It holds the Hugging Face provider truth from config/thinking-levels.json with no DeepSeek pin, and it adds a pin that holds terra at high while the run asks for max. Use it for the terra-high against DeepSeek-max cell only.",
+  "providers": [
+    {
+      "provider": "huggingface",
+      "api": "openai-completions",
+      "parameter": "reasoning_effort",
+      "evidence": "Probed on 2026-09-14 through the Novita route. The route accepted the seven names none, minimal, low, medium, high, xhigh, and max, and refused off, extreme, ultra, highest, bogus, and every number with HTTP 400.",
+      "levelMap": {
+        "off": "none",
+        "minimal": "minimal",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": "max"
+      },
+      "models": ["deepseek-ai/DeepSeek-V4.1-Flash:novita"]
+    }
+  ],
+  "runPins": [
+    {
+      "provider": "openai",
+      "modelId": "gpt-5.6-terra",
+      "reason": "Hold terra at high, so a --thinking=max run raises DeepSeek to max while terra stays at the level of the high cell. Remove this pin to give terra the level the run asks for.",
+      "levelMap": { "max": "high" }
+    }
+  ]
+}
