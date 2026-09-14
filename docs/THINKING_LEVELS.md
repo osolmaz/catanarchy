@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The runner passes one `--thinking` level to every seat of a game. A model maps that level to a provider value, and the provider may accept a different set of values than the harness. This document records the level names, the mapping rule, the values the Novita route accepts for DeepSeek V4.1 Flash, and what the levels measured like in a repeated test. Read it with a launch record to know which effort a seat really sent.
+The runner passes one `--thinking` level to every seat of a game. A model maps that level to a provider value, and the provider may accept a different set of values than the harness. This document records the level names, the mapping rule, the values each route accepts, and what the levels measured like in a repeated test. The mapping lives in the version-controlled file `config/thinking-levels.json` and a run names it with `--thinking-levels=<path>`. Read this document with a launch record to know which effort a seat really sent.
 
 ## Level names
 
@@ -25,21 +25,63 @@ The model entry carries `thinkingLevelMap`. The adapters send the mapped value, 
 
 The Hugging Face provider takes the generic openai-completions branch, because `isDeepSeek` in `detectCompat` matches only a `deepseek` provider or a `deepseek.com` base URL. The Novita route arrives as provider `huggingface` with base URL `https://router.huggingface.co/v1`, so the detected compatibility is `thinkingFormat: "openai"` with `supportsReasoningEffort: true`, and the mapped value goes out unchanged.
 
-## Level maps in the run store
+## Level map in the repo config
 
-The run store is `/home/onur/.cache/catanarchy/models-store.json`.
+`config/thinking-levels.json` holds one provider block per route and one optional run pin per model. A provider block states what the route accepts, and a run pin states what this series chooses to send. The file records the probe date in `probedAt`, so a reader knows how old the evidence is.
 
 | Level     | luna, terra, sol | DeepSeek V4.1 Flash (Novita) |
 | --------- | ---------------- | ---------------------------- |
 | `off`     | `none`           | `none`                       |
-| `minimal` | not allowed      | not allowed                  |
+| `minimal` | not allowed      | `minimal`                    |
 | `low`     | `low`            | `low`                        |
-| `medium`  | `medium`         | not allowed                  |
+| `medium`  | `medium`         | `medium`                     |
 | `high`    | `high`           | `high`                       |
 | `xhigh`   | `xhigh`          | `xhigh`                      |
-| `max`     | `max`            | `high` (run-store pin)       |
+| `max`     | `max`            | `max`                        |
 
-The entry for DeepSeek holds `"max": "high"` by hand. That pin is the reason a `--thinking=max` run raises terra and sol only. To raise DeepSeek instead, change that one value in the store and leave every other entry alone.
+The table is the provider truth from the probes below. The OpenAI block maps `minimal` to `null`, because the route refuses it. The Hugging Face block maps every level to its own name, because the route accepts all seven.
+
+One run pin sits on top of that truth:
+
+| Provider      | Model                                    | Level | Sent   | Reason                                                   |
+| ------------- | ---------------------------------------- | ----- | ------ | -------------------------------------------------------- |
+| `huggingface` | `deepseek-ai/DeepSeek-V4.1-Flash:novita` | `max` | `high` | Hold DeepSeek at one level while the other seats change. |
+
+The pin is the reason a `--thinking=max` run raises terra and sol only. It is a design choice, not a provider limit, and the file names it as one. A run that wants to raise DeepSeek deletes the pin for one labelled cell.
+
+A run names the file:
+
+```
+apps/pi-cli/src/index.ts --thinking-levels=config/thinking-levels.json
+```
+
+The loader applies the config before the run starts, and the guard then refuses a level that a seat model cannot express. The error names the model and its supported levels, so a level never changes by accident:
+
+```
+openai/gpt-5.6-terra cannot express thinking level xhigh. Supported levels: off, low, medium, high.
+```
+
+A config that names a provider or a model the runtime does not hold also stops the run. The runner rejects an unknown seat model in the same way, so a typo in the config cannot pass as a quiet change.
+
+The `run.started` record carries `thinkingLevelsPath` and one resolution for each seat model, with the requested level, the provider value, and the source (`config`, `pin`, or the plain catalog).
+
+## Level maps in the run store
+
+Pi keeps its own model catalog in a cache store, `/home/onur/.cache/catanarchy/models-store.json`. That file is not version controlled and it can be rewritten on a catalog refresh, so it is not the place for a run setting.
+
+The store entry for the Novita route states that `low`, `medium`, and `minimal` are not allowed and that `max` is not allowed. The probe below refutes all four: the route accepts every name in the harness list. The config corrects the map for a run that names it. A run that names no config keeps the catalog map, and the guard then refuses a level the catalog cannot express instead of sending a clamped value.
+
+## Values the OpenAI route accepts
+
+A probe on 2026-09-14 sent one trivial request per candidate value to `https://api.openai.com/v1/responses` for `gpt-5.6-luna`, `gpt-5.6-terra`, and `gpt-5.6-sol`, as `reasoning.effort`. All three models answered the same way.
+
+| Sent value                                      | Answer            |
+| ----------------------------------------------- | ----------------- |
+| `none`, `low`, `medium`, `high`, `xhigh`, `max` | accepted          |
+| `minimal`                                       | HTTP 400, refused |
+| `bogus`                                         | HTTP 400, refused |
+
+The refusal names the model and the supported values: `Unsupported value: 'minimal' is not supported with the 'gpt-5.6-terra' model. Supported values are: 'none', 'low', 'medium', 'high', 'xhigh', and 'max'.` The config therefore maps `minimal` to `null` for this provider, which matches Pi's bundled catalog.
 
 ## Values the Novita route accepts
 
@@ -92,15 +134,15 @@ Every finished game sent `reasoning_effort: high` to the DeepSeek seats, in all 
 | terra and sol high cells | `--thinking=high`  | `high`         |
 | terra and sol max cells  | `--thinking=max`   | `high`         |
 
-The xhigh pair used a store copy that maps DeepSeek `xhigh` to `high`. The max cells used the pin described above.
+The xhigh pair used a store copy that maps DeepSeek `xhigh` to `high`. The max cells used the pin described above. That pin now lives in `config/thinking-levels.json`, and the launch record states the file path and the value each seat sent.
 
 A session file records the harness level in its `thinking_level_change` entry, not the value that went to the provider. A DeepSeek session from a max cell therefore says `thinkingLevel: "max"` while the request carried `high`. The `levels` block in each published `analysis.json` states the wire value.
 
 ## Repeating the probe
 
-The three probe tools live in `/home/onur/scratch/catanarchy-tools/`: `novita-effort-probe.py` (accept and reject, including numbers), `novita-effort-map.py` (the accepted set, then one hard prompt per accepted value), and `novita-effort-repeat.py` (five samples per level). Each reads `HF_TOKEN` from the environment through `launch-with-secrets.mjs` and never prints it.
+The probe tools live in `/home/onur/scratch/catanarchy-tools/`: `novita-effort-probe.py` (accept and reject, including numbers), `novita-effort-map.py` (the accepted set, then one hard prompt per accepted value), `novita-effort-repeat.py` (five samples per level), and `openai-effort-probe.py` (the OpenAI route, three models). Each reads its token from the environment through `launch-with-secrets.mjs` and never prints it.
 
-Their raw output is in `/home/onur/scratch/catanarchy-novita-effort-probe.json`, `/home/onur/scratch/catanarchy-novita-effort-map.json`, and `/home/onur/scratch/catanarchy-novita-effort-repeat.json`. The three probes together cost about $0.30.
+Their raw output is in `/home/onur/scratch/catanarchy-novita-effort-probe.json`, `/home/onur/scratch/catanarchy-novita-effort-map.json`, `/home/onur/scratch/catanarchy-novita-effort-repeat.json`, and `/home/onur/scratch/catanarchy-openai-effort-probe.json`. The probes together cost about $0.30.
 
 ## Related documents
 
