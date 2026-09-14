@@ -1,6 +1,6 @@
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { createGame, handleCommand, legalActions, observe } from "@catanarchy/engine";
 import {
   AgentDecisionError,
@@ -12,6 +12,7 @@ import {
 import {
   ActionSelectionGate,
   applyEnvironmentAuthentication,
+  applyThinkingLevels,
   assertModelsAvailable,
   buildDecisionPrompt,
   buildNegotiationPrompt,
@@ -20,18 +21,22 @@ import {
   createPiSeatAgent,
   extractAssistantText,
   InspectionGate,
+  loadThinkingLevelsConfig,
   ModelRuntime,
   NegotiationSelectionGate,
   negotiationActionFromToolInput,
   parseModelReference,
+  parseThinkingLevelsConfig,
   PhaseExhaustedError,
   PI_THINKING_LEVELS,
   PiCostBudget,
   pinOpenRouterProvider,
   resolveSelection,
+  resolveThinkingLevels,
   selectActionFromText,
   selectNegotiationFromText,
   timePoolDetailOf,
+  THINKING_LEVELS_SCHEMA,
   TurnBudget,
   withPiCostBudget,
   type PiDecisionChannel,
@@ -1146,5 +1151,289 @@ describe("Pi thinking levels", () => {
   it("reaches the deepest level Pi supports", () => {
     expect(PI_THINKING_LEVELS.at(-1)).toBe("max");
     expect(new Set(PI_THINKING_LEVELS).size).toBe(PI_THINKING_LEVELS.length);
+  });
+
+  it("parses the checked-in config and its DeepSeek pin", async () => {
+    const config = await loadThinkingLevelsConfig(resolve("config", "thinking-levels.json"));
+
+    expect(config.schema).toBe(THINKING_LEVELS_SCHEMA);
+    expect(config.probedAt).toMatch(/^\d{4}-\d{2}-\d{2}$/u);
+    expect(config.providers.map(({ provider }) => provider)).toEqual(["openai", "huggingface"]);
+    expect(config.providers[0]?.levelMap).toMatchObject({ off: "none", minimal: null, max: "max" });
+    expect(config.providers[0]?.models).toContain("gpt-5.6-terra");
+    expect(config.runPins).toHaveLength(1);
+    expect(config.runPins[0]?.provider).toBe("huggingface");
+    expect(config.runPins[0]?.modelId).toBe("deepseek-ai/DeepSeek-V4.1-Flash:novita");
+    expect(config.runPins[0]?.reason).toContain("Hold DeepSeek at high");
+    expect(config.runPins[0]?.levelMap).toEqual({ max: "high" });
+  });
+
+  it("refuses a config that breaks the schema", () => {
+    const levelMap = {
+      off: "none",
+      minimal: null,
+      low: "low",
+      medium: "medium",
+      high: "high",
+      xhigh: "xhigh",
+      max: "max",
+    };
+    const provider = {
+      provider: "openai",
+      api: "openai-responses",
+      parameter: "reasoning.effort",
+      levelMap,
+      models: ["gpt-5.6-terra"],
+    };
+    const config = {
+      schema: THINKING_LEVELS_SCHEMA,
+      probedAt: "2026-09-14",
+      providers: [provider],
+    };
+    const write = (value: unknown): string => JSON.stringify(value);
+
+    expect(() => parseThinkingLevelsConfig("{", "test.json")).toThrow("is not valid JSON");
+    expect(() => parseThinkingLevelsConfig("[]", "test.json")).toThrow("must hold a JSON object");
+    expect(() =>
+      parseThinkingLevelsConfig(write({ ...config, schema: "other" }), "test.json"),
+    ).toThrow(`must declare schema "${THINKING_LEVELS_SCHEMA}"`);
+    expect(() =>
+      parseThinkingLevelsConfig(write({ ...config, probedAt: "today" }), "test.json"),
+    ).toThrow("probedAt must use the YYYY-MM-DD form");
+    expect(() =>
+      parseThinkingLevelsConfig(write({ ...config, providers: [] }), "test.json"),
+    ).toThrow("providers must be a non-empty array");
+    const missing = { ...levelMap } as Record<string, unknown>;
+    delete missing["max"];
+    expect(() =>
+      parseThinkingLevelsConfig(
+        write({ ...config, providers: [{ ...provider, levelMap: missing }] }),
+        "test.json",
+      ),
+    ).toThrow("must name every thinking level. Missing: max");
+    expect(() =>
+      parseThinkingLevelsConfig(
+        write({ ...config, providers: [{ ...provider, levelMap: { ...levelMap, ultra: "max" } }] }),
+        "test.json",
+      ),
+    ).toThrow('unknown thinking level "ultra"');
+    expect(() =>
+      parseThinkingLevelsConfig(
+        write({ ...config, providers: [{ ...provider, models: [] }] }),
+        "test.json",
+      ),
+    ).toThrow("models must be a non-empty array");
+    const pin = {
+      provider: "openai",
+      modelId: "gpt-5.6-terra",
+      reason: "why",
+      levelMap: { max: "high" },
+    };
+    expect(() =>
+      parseThinkingLevelsConfig(write({ ...config, runPins: [pin] }), "test.json"),
+    ).not.toThrow();
+    expect(() =>
+      parseThinkingLevelsConfig(
+        write({ ...config, runPins: [{ ...pin, levelMap: {} }] }),
+        "test.json",
+      ),
+    ).toThrow("must name at least one thinking level");
+    expect(() =>
+      parseThinkingLevelsConfig(
+        write({ ...config, runPins: [{ ...pin, levelMap: { ultra: "max" } }] }),
+        "test.json",
+      ),
+    ).toThrow('unknown thinking level "ultra"');
+    expect(() =>
+      parseThinkingLevelsConfig(
+        write({ ...config, runPins: [{ ...pin, reason: "" }] }),
+        "test.json",
+      ),
+    ).toThrow("reason must be a non-empty string");
+  });
+
+  it("replaces the named level map and keeps every other model of the provider", () => {
+    const levelMap = {
+      off: "none",
+      minimal: null,
+      low: "low",
+      medium: "medium",
+      high: "high",
+      xhigh: "xhigh",
+      max: "max",
+    };
+    const model = {
+      id: "gpt-5.6-terra",
+      name: "Terra",
+      api: "openai-responses",
+      provider: "openai",
+      baseUrl: "https://api.openai.com/v1",
+      reasoning: true,
+      input: ["text"],
+      cost: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 1_000,
+      maxTokens: 100,
+      thinkingLevelMap: { high: "high" },
+    };
+    const other = { ...model, id: "gpt-5.6-sol", name: "Sol" };
+    const registerProvider = vi.fn<ModelRuntime["registerProvider"]>();
+    const runtime = {
+      getModels: () => [model, other],
+      getModel: () => model,
+      registerProvider,
+    } as unknown as ModelRuntime;
+    const source = "test.json";
+    const config = parseThinkingLevelsConfig(
+      JSON.stringify({
+        schema: THINKING_LEVELS_SCHEMA,
+        probedAt: "2026-09-14",
+        providers: [
+          {
+            provider: "openai",
+            api: "openai-responses",
+            parameter: "reasoning.effort",
+            levelMap,
+            models: [model.id],
+          },
+        ],
+      }),
+      source,
+    );
+
+    const applications = applyThinkingLevels(runtime, config);
+
+    expect(registerProvider).toHaveBeenCalledOnce();
+    expect(registerProvider.mock.calls[0]?.[0]).toBe("openai");
+    const registered = registerProvider.mock.calls[0]?.[1].models ?? [];
+    expect(registered.map(({ id }) => id)).toEqual([model.id, other.id]);
+    expect(registered[0]?.thinkingLevelMap).toEqual(levelMap);
+    expect(registered[1]?.thinkingLevelMap).toEqual({ high: "high" });
+    expect(applications).toEqual([
+      { kind: "provider", provider: "openai", modelId: model.id, levelMap },
+    ]);
+  });
+
+  it("stops a run when a model cannot express the requested level", () => {
+    const model = {
+      id: "gpt-5.6-terra",
+      name: "Terra",
+      api: "openai-responses",
+      provider: "openai",
+      baseUrl: "https://api.openai.com/v1",
+      reasoning: true,
+      input: ["text"],
+      cost: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 1_000,
+      maxTokens: 100,
+      thinkingLevelMap: { minimal: null, high: "high" },
+    };
+    const runtime = { getModel: () => model } as unknown as ModelRuntime;
+    const reference = { provider: "openai", modelId: model.id };
+
+    expect(() => resolveThinkingLevels(runtime, [reference], "xhigh")).toThrow(
+      "openai/gpt-5.6-terra cannot express thinking level xhigh. Supported levels: off, low, medium, high.",
+    );
+    expect(resolveThinkingLevels(runtime, [reference, reference], "high")).toEqual([
+      {
+        provider: "openai",
+        modelId: model.id,
+        requestedLevel: "high",
+        providerValue: "high",
+        source: "catalog",
+      },
+    ]);
+  });
+
+  it("stops when the config names an unknown provider or model", () => {
+    const model = { id: "gpt-5.6-terra", name: "Terra", provider: "openai" };
+    const registerProvider = vi.fn<ModelRuntime["registerProvider"]>();
+    const unknownProvider = {
+      getModels: () => [],
+      getModel: () => undefined,
+      registerProvider,
+    } as unknown as ModelRuntime;
+    const unknownModel = {
+      getModels: () => [model],
+      getModel: () => model,
+      registerProvider,
+    } as unknown as ModelRuntime;
+    const config = parseThinkingLevelsConfig(
+      JSON.stringify({
+        schema: THINKING_LEVELS_SCHEMA,
+        probedAt: "2026-09-14",
+        providers: [
+          {
+            provider: "openai",
+            api: "openai-responses",
+            parameter: "reasoning.effort",
+            levelMap: {
+              off: "none",
+              minimal: null,
+              low: "low",
+              medium: "medium",
+              high: "high",
+              xhigh: "xhigh",
+              max: "max",
+            },
+            models: ["gpt-5.6-nova"],
+          },
+        ],
+      }),
+      "test.json",
+    );
+
+    expect(() => applyThinkingLevels(unknownProvider, config)).toThrow(
+      "Unknown Pi provider: openai",
+    );
+    expect(() => applyThinkingLevels(unknownModel, config)).toThrow(
+      "Unknown Pi model: openai/gpt-5.6-nova",
+    );
+    expect(registerProvider).not.toHaveBeenCalled();
+  });
+
+  it("applies the checked-in pin to a runtime that holds the DeepSeek model", async () => {
+    const store = await mkdtemp(join(tmpdir(), "catanarchy-thinking-levels-"));
+    const runtime = await ModelRuntime.create({
+      modelsPath: resolve("config", "pi-models.json"),
+      modelsStorePath: join(store, "models-store.json"),
+      refreshOnCreate: false,
+    });
+    const config = await loadThinkingLevelsConfig(resolve("config", "thinking-levels.json"));
+    const reference = {
+      provider: "huggingface",
+      modelId: "deepseek-ai/DeepSeek-V4.1-Flash:novita",
+    };
+    const pinOnly = parseThinkingLevelsConfig(
+      JSON.stringify({
+        schema: config.schema,
+        probedAt: config.probedAt,
+        providers: config.providers.filter(({ provider }) => provider === "huggingface"),
+        runPins: config.runPins,
+      }),
+      "test.json",
+    );
+
+    const applications = applyThinkingLevels(runtime, pinOnly);
+
+    expect(applications).toHaveLength(1);
+    const applied = applications[0];
+    expect(applied?.kind).toBe("pin");
+    expect(applied?.provider).toBe("huggingface");
+    expect(applied?.modelId).toBe(reference.modelId);
+    expect(applied?.reason).toContain("Hold DeepSeek at high");
+    expect(applied?.levelMap).toMatchObject({ max: "high" });
+    expect(resolveThinkingLevels(runtime, [reference], "max", applications)).toEqual([
+      {
+        provider: "huggingface",
+        modelId: reference.modelId,
+        requestedLevel: "max",
+        providerValue: "high",
+        source: "pin",
+      },
+    ]);
+    expect(
+      resolveThinkingLevels(runtime, [reference], "xhigh", applications)[0]?.providerValue,
+    ).toBe("xhigh");
+    await rm(store, { recursive: true, force: true });
   });
 });

@@ -176,6 +176,16 @@ describe("run log", () => {
     const directory = await temporaryRunDirectory();
     const launch = {
       thinkingLevel: "max",
+      thinkingLevelsPath: "config/thinking-levels.json",
+      thinkingLevels: [
+        {
+          provider: "huggingface",
+          modelId: "deepseek-ai/DeepSeek-V4.1-Flash:novita",
+          requestedLevel: "max",
+          providerValue: "high",
+          source: "pin" as const,
+        },
+      ],
       turnTimeMs: 1_800_000,
       finalizationGraceMs: 300_000,
       decisionTimeoutMs: 2_160_000,
