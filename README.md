@@ -71,6 +71,7 @@ Use `npm run probe:pi -- --model=provider/model-id` for one live model decision.
 - [Mixed-seat seed 47 paired run report](docs/2026-09-12-mixed-seat-seed-47-pair.md)
 - [Terra seed 47 run report at thinking max](docs/2026-09-12-terra-seed-47.md)
 - [Level and time-window seed 47 run report](docs/2026-09-13-level-and-window-seed-47.md)
+- [Level cells seed 47 run report](docs/2026-09-14-level-cells-seed-47.md)
 - [Colonist compatibility profile](docs/COLONIST.md)
 
 ## Development
