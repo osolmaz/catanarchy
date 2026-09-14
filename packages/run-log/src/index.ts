@@ -102,6 +102,16 @@ type ActivityRunRecord = {
  */
 export interface RunLaunchConfiguration {
   readonly thinkingLevel: string;
+  /**
+   * The thinking-levels config file of the run, or `null` when the run used the loaded
+   * catalog with no config. Absent in a package from before the field existed.
+   */
+  readonly thinkingLevelsPath?: string | null;
+  /**
+   * The provider value each seat model sends for `thinkingLevel`. Absent in a package from
+   * before the field existed.
+   */
+  readonly thinkingLevels?: readonly RunThinkingLevelResolution[];
   /** The turn clock of one turn key. */
   readonly turnTimeMs: number;
   /** The finalization grace of one decision. */
@@ -117,6 +127,18 @@ export interface RunLaunchConfiguration {
   readonly maxMessageLength: number | null;
   readonly maxOpenOffers: number | null;
   readonly costCeilingUsd: number | null;
+}
+
+/**
+ * The provider value one seat model sends for the requested level, and where that value came
+ * from: the run config, a run pin in that config, or the loaded catalog with no config.
+ */
+export interface RunThinkingLevelResolution {
+  readonly provider: string;
+  readonly modelId: string;
+  readonly requestedLevel: string;
+  readonly providerValue: string;
+  readonly source: "config" | "pin" | "catalog";
 }
 
 export interface RunStartedRecord extends RunRecordBase {

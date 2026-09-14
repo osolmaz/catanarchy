@@ -13,16 +13,20 @@ import {
 } from "@catanarchy/harness";
 import {
   applyEnvironmentAuthentication,
+  applyThinkingLevels,
   assertModelsAvailable,
   createPiAgentFactory,
+  loadThinkingLevelsConfig,
   ModelRuntime,
   parseModelReference,
   PI_THINKING_LEVELS,
   PiCostBudget,
   pinOpenRouterProvider,
+  resolveThinkingLevels,
   withPiCostBudget,
   type PiAgentFactoryOptions,
   type PiModelReference,
+  type ThinkingLevelsApplication,
 } from "@catanarchy/pi-agent";
 import type { GameConfig } from "@catanarchy/protocol";
 import {
@@ -113,6 +117,10 @@ const modelsPath = argument("models-path");
 const modelsPathReport = modelsPath === undefined ? null : resolve(modelsPath);
 const openRouterProvider = argument("openrouter-provider");
 const openRouterProviderReport = openRouterProvider ?? null;
+/** The version-controlled thinking-levels config of the run, or null when the run uses none. */
+const thinkingLevelsPath = argument("thinking-levels");
+const thinkingLevelsPathReport =
+  thinkingLevelsPath === undefined ? null : resolve(thinkingLevelsPath);
 const modelReferences = (
   argument("models") ?? "openai/gpt-5.6-luna,huggingface/deepseek-ai/DeepSeek-V4-Flash"
 )
@@ -143,11 +151,13 @@ if (!Number.isSafeInteger(outerDecisionTimeoutMs) || outerDecisionTimeoutMs > 0x
 }
 
 /**
- * The settings this invocation runs with. The run record carries them, so a package
- * states its own thinking level, time pools, and limits.
+ * The settings this invocation runs with, except the resolved thinking levels, which need the
+ * model runtime. The run record carries them, so a package states its own thinking level, time
+ * pools, and limits.
  */
-const launchConfiguration: RunLaunchConfiguration = {
+const launchConfiguration: Omit<RunLaunchConfiguration, "thinkingLevels"> = {
   thinkingLevel,
+  thinkingLevelsPath: thinkingLevelsPathReport,
   turnTimeMs,
   finalizationGraceMs,
   decisionTimeoutMs: outerDecisionTimeoutMs,
@@ -323,6 +333,28 @@ const createModelRuntime = async (): Promise<ModelRuntime> => {
     modelsPath: resolve(modelsPath),
     modelsStorePath: resolve(cacheDirectory, "models-store.json"),
   });
+};
+
+/**
+ * Load the thinking-levels config and apply it to the runtime. A run that names no config keeps
+ * the loaded catalog. The returned list states what the config changed, and the run record
+ * carries it, so a package states the level map that produced it.
+ */
+const configureThinkingLevels = async (
+  runtime: ModelRuntime,
+): Promise<ReadonlyArray<ThinkingLevelsApplication>> => {
+  if (thinkingLevelsPathReport === null) return [];
+  const config = await loadThinkingLevelsConfig(thinkingLevelsPathReport);
+  const applications = applyThinkingLevels(runtime, config);
+  console.error(
+    JSON.stringify({
+      event: "thinking-levels-config",
+      path: thinkingLevelsPathReport,
+      probedAt: config.probedAt,
+      applications,
+    }),
+  );
+  return applications;
 };
 
 const waitForResumeSignal = async (): Promise<void> => {
@@ -505,11 +537,23 @@ const seatModelsFromManifest = (
   });
 };
 
-const runFresh = async (runtime: ModelRuntime): Promise<void> => {
+const runFresh = async (
+  runtime: ModelRuntime,
+  thinkingLevelsApplications: ReadonlyArray<ThinkingLevelsApplication>,
+): Promise<void> => {
   const references = modelReferences;
   configureProviderRouting(runtime, references);
   await applyEnvironmentAuthentication(runtime, references);
   await assertModelsAvailable(runtime, references);
+  const thinkingLevels = resolveThinkingLevels(
+    runtime,
+    references,
+    thinkingLevel,
+    thinkingLevelsApplications,
+  );
+  console.error(
+    JSON.stringify({ event: "live-test-thinking-levels", thinkingLevel, thinkingLevels }),
+  );
 
   const bounds = runBounds(config.players.length, maxDecisions);
   const estimate = estimateCost(runtime, references, bounds);
@@ -525,7 +569,7 @@ const runFresh = async (runtime: ModelRuntime): Promise<void> => {
     initialStateOrigin: { type: "generated", generatorId: STANDARD_BOARD_GENERATOR_ID, seed },
     piVersion,
     negotiationRounds: negotiationPolicy?.maxRounds ?? null,
-    launch: launchConfiguration,
+    launch: { ...launchConfiguration, thinkingLevels },
     seats: config.players.map((player, index) => ({
       seatId: player.id,
       agentType: "pi" as const,
@@ -693,11 +737,12 @@ const runResume = async (runtime: ModelRuntime): Promise<void> => {
 
 const main = async (): Promise<void> => {
   const runtime = await createModelRuntime();
+  const thinkingLevelsApplications = await configureThinkingLevels(runtime);
   if (subcommand === "resume") {
     await runResume(runtime);
     return;
   }
-  await runFresh(runtime);
+  await runFresh(runtime, thinkingLevelsApplications);
 };
 
 await main();

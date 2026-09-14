@@ -1,0 +1,46 @@
+{
+  "schema": "catanarchy.thinking-levels.v1",
+  "probedAt": "2026-09-14",
+  "providers": [
+    {
+      "provider": "openai",
+      "api": "openai-responses",
+      "parameter": "reasoning.effort",
+      "evidence": "Probed on 2026-09-14 against all three models. The API accepted none, low, medium, high, xhigh, and max, and it refused minimal for these models in its own words: \"Unsupported value: 'minimal' is not supported with the 'gpt-5.6-luna' model. Supported values are: 'none', 'low', 'medium', 'high', 'xhigh', and 'max'.\"",
+      "levelMap": {
+        "off": "none",
+        "minimal": null,
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": "max"
+      },
+      "models": ["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol"]
+    },
+    {
+      "provider": "huggingface",
+      "api": "openai-completions",
+      "parameter": "reasoning_effort",
+      "evidence": "Probed on 2026-09-14 through the Novita route. The route accepted the seven names none, minimal, low, medium, high, xhigh, and max, and refused off, extreme, ultra, highest, bogus, and every number with HTTP 400. The model card of DeepSeek V4.1 Flash describes a numeric effort from 1 to 100, and its own benchmarks use reasoning_effort=100, but this route does not take a number.",
+      "levelMap": {
+        "off": "none",
+        "minimal": "minimal",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": "max"
+      },
+      "models": ["deepseek-ai/DeepSeek-V4.1-Flash:novita"]
+    }
+  ],
+  "runPins": [
+    {
+      "provider": "huggingface",
+      "modelId": "deepseek-ai/DeepSeek-V4.1-Flash:novita",
+      "reason": "Hold DeepSeek at high, so a --thinking=max run raises the challenger only and the baseline stays the same across the seed 47 cells. Remove this pin to give DeepSeek the level the run asks for.",
+      "levelMap": { "max": "high" }
+    }
+  ]
+}
