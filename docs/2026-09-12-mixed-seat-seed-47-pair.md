@@ -305,8 +305,8 @@ A one-decision probe settled the provider question first:
 
 The probe used one sample per row, so the output counts carry sampling noise. Three findings came out of it:
 
-1. The Hugging Face router accepts `xhigh` and `max` for the DeepSeek model, although Novita documents only `low` and `high` for it.
-2. `max` is not usable for a full game. One setup decision took 28,110 output tokens and 120 seconds. A game at that rate would cost tens of dollars and take most of a day.
+1. The Hugging Face router accepts `xhigh` and `max` for the DeepSeek model, although Novita documents only `low` and `high` for it. A later probe found that the route takes seven names and refuses numbers, so the numeric effort of 1 to 100 in the model card is not reachable there. See [Thinking levels](THINKING_LEVELS.md).
+2. `max` looked unusable for a full game, because one setup decision took 28,110 output tokens and 120 seconds. A follow-up test with five samples per level shows that this row is an outlier: the `max` median is 8,012 reasoning tokens against 6,409 for `high`, and `high` produced a 19,816-token sample itself.
 3. Luna accepts `xhigh` on the OpenAI Responses API.
 
 The CLI holds one `--thinking` level for the whole game. To raise Luna alone, the run used a copy of the model store in which the DeepSeek entry maps `xhigh` to `high`. Every other value, including the cost table, is unchanged. The resolved level maps were checked with a read-only tool before the launch. The launch record is `/home/onur/scratch/catanarchy-luna-xhigh-seed47-launch.json`, and it holds the full flag list and the resolved maps.
@@ -375,7 +375,7 @@ Game A was a dead market at both levels. Game B traded normally at both levels. 
 - Two games per level cannot support a strength claim. The outcome did not change, and deeper thinking flipped no game.
 - Luna's victory points improved in both games, from 9 to 12 and from 10 to 15. Two games cannot separate that from luck, and an improvement in points while losing every game is not a win-rate result.
 - DeepSeek changed level between the pairs only in the sense that the store held it at `high`. Its calls and output rose with the longer games, so its column is not a clean control either.
-- The probe rows are single samples. The `max` figure in particular comes from one call.
+- The probe rows are single samples. The `max` figure in particular comes from one call, and [Thinking levels](THINKING_LEVELS.md) shows that five samples per level put `max` only about a quarter above `high`.
 
 ## Reproduction
 

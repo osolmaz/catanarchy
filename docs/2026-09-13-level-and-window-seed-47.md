@@ -17,24 +17,24 @@ Two games for one cell are a behavioural case study. They are not a strength ver
 
 The run IDs name the model family, the thinking level, and the turn window in minutes. `g300` marks the runs that asked for a 300-second finalization grace, and every other run used the 60-second default of that time. `fixed` marks the two games that ran on the harness with a per-decision grace of 300 seconds and a neutral replacement for a lost decision; the harness default is now the same 300 seconds for every run.
 
-| Run                         | Level  | Turn window | Grace | Status    | Turns | Decisions |     Cost | Active time |
-| --------------------------- | ------ | ----------: | ----: | --------- | ----: | --------: | -------: | ----------: |
-| `terra-high10-seed47-a`     | `high` |        10 m |  60 s | Completed |    95 |       773 | $12.4802 |     111.7 m |
-| `terra-high10-seed47-b`     | `high` |        10 m |  60 s | Completed |    95 |       788 | $13.1026 |     103.7 m |
-| `terra-max30-seed47-a`      | `max`  |        30 m |  60 s | Completed |    88 |       738 | $14.7280 |     253.5 m |
-| `terra-max30-seed47-b`      | `max`  |        30 m |  60 s | Partial   |    76 |       658 | $12.9164 |     253.7 m |
-| `terra-max30-g300-seed47-a` | `max`  |        30 m | 300 s | Completed |    59 |       488 | $10.2527 |     123.0 m |
-| `terra-max30-g300-seed47-b` | `max`  |        30 m | 300 s | Completed |    89 |       755 | $16.2961 |     464.7 m |
-| `terra-max30-fixed-seed47-a` | `max` |        30 m | 300 s | Completed |    85 |       700 | $16.0692 |     252.5 m |
-| `terra-max30-fixed-seed47-b` | `max` |        30 m | 300 s | Completed |    59 |       477 | $10.6637 |     123.4 m |
-| `sol-high10-seed47-a`       | `high` |        10 m |  60 s | Partial   |    53 |       413 | $11.2071 |      74.9 m |
-| `sol-high10-seed47-b`       | `high` |        10 m |  60 s | Partial   |    52 |       410 | $11.6985 |      75.0 m |
-| `sol-max30-seed47-a`        | `max`  |        30 m |  60 s | Partial   |    40 |       324 | $10.2411 |      74.5 m |
-| `sol-max30-seed47-b`        | `max`  |        30 m |  60 s | Partial   |    48 |       371 | $11.2931 |      74.1 m |
-| `sol-high10-g300-seed47-a`  | `high` |        10 m | 300 s | Completed |    78 |       646 | $21.1013 |     118.1 m |
-| `sol-high10-g300-seed47-b`  | `high` |        10 m | 300 s | Completed |    67 |       545 | $16.0662 |      93.8 m |
-| `sol-max30-g300-seed47-a`   | `max`  |        30 m | 300 s | Completed |    67 |       532 | $17.5278 |     118.9 m |
-| `sol-max30-g300-seed47-b`   | `max`  |        30 m | 300 s | Completed |    79 |       633 | $23.0266 |     147.6 m |
+| Run                          | Level  | Turn window | Grace | Status    | Turns | Decisions |     Cost | Active time |
+| ---------------------------- | ------ | ----------: | ----: | --------- | ----: | --------: | -------: | ----------: |
+| `terra-high10-seed47-a`      | `high` |        10 m |  60 s | Completed |    95 |       773 | $12.4802 |     111.7 m |
+| `terra-high10-seed47-b`      | `high` |        10 m |  60 s | Completed |    95 |       788 | $13.1026 |     103.7 m |
+| `terra-max30-seed47-a`       | `max`  |        30 m |  60 s | Completed |    88 |       738 | $14.7280 |     253.5 m |
+| `terra-max30-seed47-b`       | `max`  |        30 m |  60 s | Partial   |    76 |       658 | $12.9164 |     253.7 m |
+| `terra-max30-g300-seed47-a`  | `max`  |        30 m | 300 s | Completed |    59 |       488 | $10.2527 |     123.0 m |
+| `terra-max30-g300-seed47-b`  | `max`  |        30 m | 300 s | Completed |    89 |       755 | $16.2961 |     464.7 m |
+| `terra-max30-fixed-seed47-a` | `max`  |        30 m | 300 s | Completed |    85 |       700 | $16.0692 |     252.5 m |
+| `terra-max30-fixed-seed47-b` | `max`  |        30 m | 300 s | Completed |    59 |       477 | $10.6637 |     123.4 m |
+| `sol-high10-seed47-a`        | `high` |        10 m |  60 s | Partial   |    53 |       413 | $11.2071 |      74.9 m |
+| `sol-high10-seed47-b`        | `high` |        10 m |  60 s | Partial   |    52 |       410 | $11.6985 |      75.0 m |
+| `sol-max30-seed47-a`         | `max`  |        30 m |  60 s | Partial   |    40 |       324 | $10.2411 |      74.5 m |
+| `sol-max30-seed47-b`         | `max`  |        30 m |  60 s | Partial   |    48 |       371 | $11.2931 |      74.1 m |
+| `sol-high10-g300-seed47-a`   | `high` |        10 m | 300 s | Completed |    78 |       646 | $21.1013 |     118.1 m |
+| `sol-high10-g300-seed47-b`   | `high` |        10 m | 300 s | Completed |    67 |       545 | $16.0662 |      93.8 m |
+| `sol-max30-g300-seed47-a`    | `max`  |        30 m | 300 s | Completed |    67 |       532 | $17.5278 |     118.9 m |
+| `sol-max30-g300-seed47-b`    | `max`  |        30 m | 300 s | Completed |    79 |       633 | $23.0266 |     147.6 m |
 
 The four `sol-*-seed47-a/b` runs are partial because the operator stopped them to restart the same cells with the 300-second grace. Their packages are kept as labelled partial runs, and they carry the evidence for the grace comparison.
 
@@ -46,24 +46,24 @@ Every run used seed 47, four seats, one negotiation round, eight planning steps,
 
 Terra won one game in the 10-minute `high` cell, one game in the 30-minute `max` cell at the 60-second grace, one in each of the two `max` cells at the 300-second grace, and one of the two fresh games at the fixed harness. DeepSeek won the rest of the terra games. Sol won both of its `high` games, both at the 300-second grace, and one of its two `max` games.
 
-| Run                         | Winner            | terra | DeepSeek | sol | DeepSeek |
-| --------------------------- | ----------------- | ----: | -------: | --: | -------: |
-| `terra-high10-seed47-a`     | Orange (DeepSeek) |    18 |       15 |     |          |
-| `terra-high10-seed47-b`     | Orange (terra)    |    19 |       16 |     |          |
-| `terra-max30-seed47-a`      | Red (terra)       |    18 |       17 |     |          |
-| `terra-max30-seed47-b`      | partial game      |    16 |       17 |     |          |
-| `terra-max30-g300-seed47-a` | Orange (DeepSeek) |    15 |       17 |     |          |
-| `terra-max30-g300-seed47-b` | Blue (terra)      |    19 |       15 |     |          |
-| `terra-max30-fixed-seed47-a` | Blue (DeepSeek)  |    18 |       17 |     |          |
-| `terra-max30-fixed-seed47-b` | Orange (terra)   |    18 |        9 |     |          |
-| `sol-high10-seed47-a`       | partial game      |       |       10 |  13 |          |
-| `sol-high10-seed47-b`       | partial game      |       |       14 |   9 |          |
-| `sol-max30-seed47-a`        | partial game      |       |       10 |  12 |          |
-| `sol-max30-seed47-b`        | partial game      |       |       11 |  12 |          |
-| `sol-high10-g300-seed47-a`  | White (sol)       |       |       16 |  18 |          |
-| `sol-high10-g300-seed47-b`  | Orange (sol)      |       |       15 |  18 |          |
-| `sol-max30-g300-seed47-a`   | Orange (DeepSeek) |       |       18 |   9 |          |
-| `sol-max30-g300-seed47-b`   | Orange (sol)      |       |       13 |  18 |          |
+| Run                          | Winner            | terra | DeepSeek | sol | DeepSeek |
+| ---------------------------- | ----------------- | ----: | -------: | --: | -------: |
+| `terra-high10-seed47-a`      | Orange (DeepSeek) |    18 |       15 |     |          |
+| `terra-high10-seed47-b`      | Orange (terra)    |    19 |       16 |     |          |
+| `terra-max30-seed47-a`       | Red (terra)       |    18 |       17 |     |          |
+| `terra-max30-seed47-b`       | partial game      |    16 |       17 |     |          |
+| `terra-max30-g300-seed47-a`  | Orange (DeepSeek) |    15 |       17 |     |          |
+| `terra-max30-g300-seed47-b`  | Blue (terra)      |    19 |       15 |     |          |
+| `terra-max30-fixed-seed47-a` | Blue (DeepSeek)   |    18 |       17 |     |          |
+| `terra-max30-fixed-seed47-b` | Orange (terra)    |    18 |        9 |     |          |
+| `sol-high10-seed47-a`        | partial game      |       |       10 |  13 |          |
+| `sol-high10-seed47-b`        | partial game      |       |       14 |   9 |          |
+| `sol-max30-seed47-a`         | partial game      |       |       10 |  12 |          |
+| `sol-max30-seed47-b`         | partial game      |       |       11 |  12 |          |
+| `sol-high10-g300-seed47-a`   | White (sol)       |       |       16 |  18 |          |
+| `sol-high10-g300-seed47-b`   | Orange (sol)      |       |       15 |  18 |          |
+| `sol-max30-g300-seed47-a`    | Orange (DeepSeek) |       |       18 |   9 |          |
+| `sol-max30-g300-seed47-b`    | Orange (sol)      |       |       13 |  18 |          |
 
 Points are effective victory points: owned settlements, cities at two points, the two awards at two points each, and visible victory-point cards. The `sol-max30-g300-seed47-a` game is the clearest loss in the set. Sol's two seats reached 5 and 4 points against DeepSeek's 8 and 10.
 
@@ -77,24 +77,24 @@ A turn key holds two time pools in the Pi adapter. The exploration pool is the t
 
 When the exploration pool ends, inspection is disabled and the model gets a finalization prompt that asks for one selection. Prose instead of a tool call consumes the finalization pool, and the harness re-prompts inside it. When that pool is empty, the decision path returns an empty response with no model request and no tokens, and the attempt fails at once. The harness then replaces the decision. Before the fix it played the first legal action, which spends when a build, a trade, or a development card comes before `end-turn`. It now takes a neutral action where the rules allow one: it ends the turn, it rolls when the roll is owed, or it moves the robber. A forced phase picks with a hash of the decision identity, so a replacement carries no board information and does not favour one action.
 
-| Run                         | Turn window | Grace | Empty exploration | Empty finalization | No legal action |
-| --------------------------- | ----------: | ----: | ----------------: | -----------------: | --------------: |
-| `terra-max30-seed47-a`      |        30 m |  60 s |                 0 |                 17 |              21 |
-| `terra-max30-seed47-b`      |        30 m |  60 s |                 0 |                 22 |              22 |
-| `terra-high10-seed47-a`     |        10 m |  60 s |                 0 |                  0 |               3 |
-| `terra-high10-seed47-b`     |        10 m |  60 s |                 0 |                  1 |               4 |
-| `terra-max30-g300-seed47-a` |        30 m | 300 s |                 0 |                  0 |              13 |
-| `terra-max30-g300-seed47-b` |        30 m | 300 s |                 0 |                 14 |              36 |
-| `terra-max30-fixed-seed47-a` |       30 m | 300 s |                 0 |                  0 |              10 |
-| `terra-max30-fixed-seed47-b` |       30 m | 300 s |                 0 |                  0 |              10 |
-| `sol-high10-seed47-a`       |        10 m |  60 s |                 0 |                  0 |               7 |
-| `sol-high10-seed47-b`       |        10 m |  60 s |                 0 |                  0 |               4 |
-| `sol-max30-seed47-a`        |        30 m |  60 s |                 0 |                  0 |               7 |
-| `sol-max30-seed47-b`        |        30 m |  60 s |                 0 |                  0 |               6 |
-| `sol-high10-g300-seed47-a`  |        10 m | 300 s |                 0 |                  0 |               8 |
-| `sol-high10-g300-seed47-b`  |        10 m | 300 s |                 0 |                  0 |               7 |
-| `sol-max30-g300-seed47-a`   |        30 m | 300 s |                 0 |                  0 |               7 |
-| `sol-max30-g300-seed47-b`   |        30 m | 300 s |                 0 |                  0 |               6 |
+| Run                          | Turn window | Grace | Empty exploration | Empty finalization | No legal action |
+| ---------------------------- | ----------: | ----: | ----------------: | -----------------: | --------------: |
+| `terra-max30-seed47-a`       |        30 m |  60 s |                 0 |                 17 |              21 |
+| `terra-max30-seed47-b`       |        30 m |  60 s |                 0 |                 22 |              22 |
+| `terra-high10-seed47-a`      |        10 m |  60 s |                 0 |                  0 |               3 |
+| `terra-high10-seed47-b`      |        10 m |  60 s |                 0 |                  1 |               4 |
+| `terra-max30-g300-seed47-a`  |        30 m | 300 s |                 0 |                  0 |              13 |
+| `terra-max30-g300-seed47-b`  |        30 m | 300 s |                 0 |                 14 |              36 |
+| `terra-max30-fixed-seed47-a` |        30 m | 300 s |                 0 |                  0 |              10 |
+| `terra-max30-fixed-seed47-b` |        30 m | 300 s |                 0 |                  0 |              10 |
+| `sol-high10-seed47-a`        |        10 m |  60 s |                 0 |                  0 |               7 |
+| `sol-high10-seed47-b`        |        10 m |  60 s |                 0 |                  0 |               4 |
+| `sol-max30-seed47-a`         |        30 m |  60 s |                 0 |                  0 |               7 |
+| `sol-max30-seed47-b`         |        30 m |  60 s |                 0 |                  0 |               6 |
+| `sol-high10-g300-seed47-a`   |        10 m | 300 s |                 0 |                  0 |               8 |
+| `sol-high10-g300-seed47-b`   |        10 m | 300 s |                 0 |                  0 |               7 |
+| `sol-max30-g300-seed47-a`    |        30 m | 300 s |                 0 |                  0 |               7 |
+| `sol-max30-g300-seed47-b`    |        30 m | 300 s |                 0 |                  0 |               6 |
 
 Two kinds of evidence stand behind the empty-pool column. The runs from the `fixed` pair forward record the pool and the remaining time on a failed attempt, so an empty pool is a recorded fact there. The earlier runs carry no such field, and the count there comes from the recorded clock and the token usage: an attempt that returns in under 2 ms and spends no output tokens certainly made no model request. The two terra `max` games at the 60-second grace hold 17 and 22 of those, and one further attempt in each game spent no tokens after more than 2 ms. Those two attempts stay unclassified, and the session files hold no error entry for them.
 
@@ -118,24 +118,24 @@ One cell kept the 60-second grace. The terra `high` pair lost one negotiation de
 
 ## Cost
 
-| Run                         |     Cost | Per turn | Per minute | terra/sol | DeepSeek |
-| --------------------------- | -------: | -------: | ---------: | --------: | -------: |
-| `terra-high10-seed47-a`     | $12.4802 |   $0.131 |     $0.112 |  $10.3653 |  $2.1149 |
-| `terra-high10-seed47-b`     | $13.1026 |   $0.138 |     $0.126 |  $11.2787 |  $1.8239 |
-| `terra-max30-seed47-a`      | $14.7280 |   $0.167 |     $0.058 |  $13.1898 |  $1.5382 |
-| `terra-max30-seed47-b`      | $12.9164 |   $0.170 |     $0.051 |  $11.2402 |  $1.6762 |
-| `terra-max30-g300-seed47-a` | $10.2527 |   $0.174 |     $0.083 |   $8.8448 |  $1.4079 |
-| `terra-max30-g300-seed47-b` | $16.2961 |   $0.183 |     $0.035 |  $14.6721 |  $1.6240 |
+| Run                          |     Cost | Per turn | Per minute | terra/sol | DeepSeek |
+| ---------------------------- | -------: | -------: | ---------: | --------: | -------: |
+| `terra-high10-seed47-a`      | $12.4802 |   $0.131 |     $0.112 |  $10.3653 |  $2.1149 |
+| `terra-high10-seed47-b`      | $13.1026 |   $0.138 |     $0.126 |  $11.2787 |  $1.8239 |
+| `terra-max30-seed47-a`       | $14.7280 |   $0.167 |     $0.058 |  $13.1898 |  $1.5382 |
+| `terra-max30-seed47-b`       | $12.9164 |   $0.170 |     $0.051 |  $11.2402 |  $1.6762 |
+| `terra-max30-g300-seed47-a`  | $10.2527 |   $0.174 |     $0.083 |   $8.8448 |  $1.4079 |
+| `terra-max30-g300-seed47-b`  | $16.2961 |   $0.183 |     $0.035 |  $14.6721 |  $1.6240 |
 | `terra-max30-fixed-seed47-a` | $16.0692 |   $0.189 |     $0.064 |  $14.5307 |  $1.5386 |
 | `terra-max30-fixed-seed47-b` | $10.6637 |   $0.181 |     $0.086 |   $9.7109 |  $0.9528 |
-| `sol-high10-seed47-a`       | $11.2071 |   $0.211 |     $0.150 |  $10.0698 |  $1.1373 |
-| `sol-high10-seed47-b`       | $11.6985 |   $0.225 |     $0.156 |  $10.6163 |  $1.0822 |
-| `sol-max30-seed47-a`        | $10.2411 |   $0.256 |     $0.137 |   $9.4086 |  $0.8324 |
-| `sol-max30-seed47-b`        | $11.2931 |   $0.235 |     $0.152 |  $10.5151 |  $0.7779 |
-| `sol-high10-g300-seed47-a`  | $21.1013 |   $0.271 |     $0.179 |  $19.5073 |  $1.5940 |
-| `sol-high10-g300-seed47-b`  | $16.0662 |   $0.240 |     $0.171 |  $14.6535 |  $1.4128 |
-| `sol-max30-g300-seed47-a`   | $17.5278 |   $0.262 |     $0.147 |  $16.0242 |  $1.5036 |
-| `sol-max30-g300-seed47-b`   | $23.0266 |   $0.291 |     $0.156 |  $21.3584 |  $1.6683 |
+| `sol-high10-seed47-a`        | $11.2071 |   $0.211 |     $0.150 |  $10.0698 |  $1.1373 |
+| `sol-high10-seed47-b`        | $11.6985 |   $0.225 |     $0.156 |  $10.6163 |  $1.0822 |
+| `sol-max30-seed47-a`         | $10.2411 |   $0.256 |     $0.137 |   $9.4086 |  $0.8324 |
+| `sol-max30-seed47-b`         | $11.2931 |   $0.235 |     $0.152 |  $10.5151 |  $0.7779 |
+| `sol-high10-g300-seed47-a`   | $21.1013 |   $0.271 |     $0.179 |  $19.5073 |  $1.5940 |
+| `sol-high10-g300-seed47-b`   | $16.0662 |   $0.240 |     $0.171 |  $14.6535 |  $1.4128 |
+| `sol-max30-g300-seed47-a`    | $17.5278 |   $0.262 |     $0.147 |  $16.0242 |  $1.5036 |
+| `sol-max30-g300-seed47-b`    | $23.0266 |   $0.291 |     $0.156 |  $21.3584 |  $1.6683 |
 
 The sixteen runs cost $228.6705 together, and the two fresh games on the fixed harness cost $26.7329 of that. The DeepSeek seats cost $0.78 to $2.11 per game in every cell, so the difference between cells is the challenger's cost.
 
@@ -149,14 +149,14 @@ Costs are the recorded per-request usage from the run timeline, which is the sam
 
 `max` costs two to four times more per decision than `high` for both families, and it does not win more games.
 
-| Cell               | Level  | Games | Wins |     Cost | Cost per turn | Empty pools |  Median decision |
-| ------------------ | ------ | ----: | ---: | -------: | ------------: | ----------: | ---------------: |
-| `terra-high10`     | `high` |     2 |    1 | $25.5828 |        $0.134 |           1 | 2,912 / 2,950 ms |
-| `terra-max30`      | `max`  |     2 |    1 | $27.6444 |        $0.168 |          41 | 4,617 / 3,788 ms |
-| `terra-max30-g300` | `max`  |     2 |    1 | $26.5488 |        $0.179 |          14 | 5,235 / 4,073 ms |
-| `terra-max30-fixed` | `max` |     2 |    1 | $26.7329 |        $0.186 |           0 | 4,443 / 3,765 ms |
-| `sol-high10-g300`  | `high` |     2 |    2 | $37.1675 |        $0.256 |           0 | 5,322 / 5,369 ms |
-| `sol-max30-g300`   | `max`  |     2 |    1 | $40.5544 |        $0.277 |           0 | 8,616 / 7,951 ms |
+| Cell                | Level  | Games | Wins |     Cost | Cost per turn | Empty pools |  Median decision |
+| ------------------- | ------ | ----: | ---: | -------: | ------------: | ----------: | ---------------: |
+| `terra-high10`      | `high` |     2 |    1 | $25.5828 |        $0.134 |           1 | 2,912 / 2,950 ms |
+| `terra-max30`       | `max`  |     2 |    1 | $27.6444 |        $0.168 |          41 | 4,617 / 3,788 ms |
+| `terra-max30-g300`  | `max`  |     2 |    1 | $26.5488 |        $0.179 |          14 | 5,235 / 4,073 ms |
+| `terra-max30-fixed` | `max`  |     2 |    1 | $26.7329 |        $0.186 |           0 | 4,443 / 3,765 ms |
+| `sol-high10-g300`   | `high` |     2 |    2 | $37.1675 |        $0.256 |           0 | 5,322 / 5,369 ms |
+| `sol-max30-g300`    | `max`  |     2 |    1 | $40.5544 |        $0.277 |           0 | 8,616 / 7,951 ms |
 
 The last column gives the median decision time of the challenger over all of its decisions, game and negotiation together, for game A and then game B.
 
@@ -186,7 +186,7 @@ npx tsx apps/pi-cli/src/index.ts \
   --negotiation-rounds=1 --max-planning-steps=8
 ```
 
-Swap the run ID, the run directory, the models, and the two time values for the other cells. The sol cells use `--models=openai/gpt-5.6-sol,huggingface/deepseek-ai/DeepSeek-V4.1-Flash:novita` and a $420 ceiling. The store at `/home/onur/.cache/catanarchy/models-store.json` maps DeepSeek `max` to `high`, because DeepSeek at `max` spends 28,110 tokens and 120 seconds on a single setup decision. A ceiling must exceed the worst-case cost of one request, or the harness refuses the run before the first model call; that request is $212.16 for a terra seat and $378.25 for a sol seat, so the effective stop is the ceiling minus that value.
+Swap the run ID, the run directory, the models, and the two time values for the other cells. The sol cells use `--models=openai/gpt-5.6-sol,huggingface/deepseek-ai/DeepSeek-V4.1-Flash:novita` and a $420 ceiling. The store at `/home/onur/.cache/catanarchy/models-store.json` maps DeepSeek `max` to `high`, so a `--thinking=max` run raises the challenger only. The 28,110-token figure given here earlier came from one sample and is an outlier; see [Thinking levels](THINKING_LEVELS.md). A ceiling must exceed the worst-case cost of one request, or the harness refuses the run before the first model call; that request is $212.16 for a terra seat and $378.25 for a sol seat, so the effective stop is the ceiling minus that value.
 
 ## Limits
 
